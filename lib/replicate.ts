@@ -5,10 +5,20 @@ import type { SearchResult } from "@/lib/tavily";
 
 const DEFAULT_MODEL = "meta/meta-llama-3-8b-instruct";
 
-export async function summarize(
-  question: string,
-  sources: SearchResult[],
-): Promise<string> {
+export type Turn = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type SummarizeInput = {
+  game?: string;
+  platform?: string;
+  question: string;
+  sources: SearchResult[];
+  history?: Turn[];
+};
+
+export async function summarize(input: SummarizeInput): Promise<string> {
   const token = process.env.REPLICATE_API_TOKEN;
   if (!token) {
     throw new Error("REPLICATE_API_TOKEN is not configured");
@@ -24,7 +34,7 @@ export async function summarize(
     model as `${string}/${string}` | `${string}/${string}:${string}`,
     {
       input: {
-        prompt: buildPrompt(question, sources),
+        prompt: buildPrompt(input),
         prompt_template: "{prompt}",
         max_tokens: 700,
         temperature: 0.2,

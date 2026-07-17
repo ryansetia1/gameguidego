@@ -1,21 +1,67 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 type Source = {
   title: string;
   url: string;
 };
 
-type Guide = {
-  summary: string;
-  sources: Source[];
+type Message = {
+  role: "user" | "assistant";
+  content: string;
+  sources?: Source[];
 };
 
+const PLATFORMS: { group: string; items: string[] }[] = [
+  {
+    group: "Nintendo",
+    items: [
+      "NES",
+      "SNES",
+      "Nintendo 64",
+      "GameCube",
+      "Wii",
+      "Wii U",
+      "Nintendo Switch",
+      "Nintendo Switch 2",
+      "Game Boy",
+      "Game Boy Color",
+      "Game Boy Advance",
+      "Nintendo DS",
+      "Nintendo 3DS",
+    ],
+  },
+  {
+    group: "PlayStation",
+    items: [
+      "PlayStation (PS1)",
+      "PlayStation 2",
+      "PlayStation 3",
+      "PlayStation 4",
+      "PlayStation 5",
+      "PSP",
+      "PS Vita",
+    ],
+  },
+  {
+    group: "Xbox",
+    items: ["Xbox", "Xbox 360", "Xbox One", "Xbox Series X|S"],
+  },
+  {
+    group: "Sega",
+    items: ["Sega Genesis / Mega Drive", "Sega Saturn", "Dreamcast"],
+  },
+  {
+    group: "Lainnya",
+    items: ["PC", "Mobile (iOS/Android)", "Arcade"],
+  },
+];
+
 const examples = [
-  "Cara mengalahkan Emerald Weapon di FF7",
-  "Lokasi Lionheart di FF8",
-  "Puzzle Cloister of Trials FFX",
+  { game: "The Legend of Zelda: Link's Awakening", platform: "Game Boy", q: "Bagaimana cara masuk ke dungeon pertama?" },
+  { game: "Final Fantasy VII", platform: "PlayStation (PS1)", q: "Cara mengalahkan Emerald Weapon" },
+  { game: "Elden Ring", platform: "PC", q: "Build terbaik untuk pemula" },
 ];
 
 function hostname(url: string) {
@@ -27,22 +73,34 @@ function hostname(url: string) {
 }
 
 export default function Home() {
-  const [query, setQuery] = useState("");
-  const [guide, setGuide] = useState<Guide | null>(null);
+  const [game, setGame] = useState("");
+  const [platform, setPlatform] = useState("");
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const feedRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    feedRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, loading]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const question = input.trim();
+    if (question.length < 2 || loading) return;
+
     setError("");
-    setGuide(null);
     setLoading(true);
+    const history = messages.slice(-10).map(({ role, content }) => ({ role, content }));
+    setMessages((prev) => [...prev, { role: "user", content: question }]);
+    setInput("");
 
     try {
       const response = await fetch("/api/solve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ game, platform, question, history }),
       });
       const data: unknown = await response.json();
 
@@ -51,9 +109,7 @@ export default function Home() {
         !data ||
         typeof data !== "object" ||
         !("summary" in data) ||
-        typeof data.summary !== "string" ||
-        !("sources" in data) ||
-        !Array.isArray(data.sources)
+        typeof data.summary !== "string"
       ) {
         const message =
           data &&
@@ -65,7 +121,14 @@ export default function Home() {
         throw new Error(message);
       }
 
-      setGuide({ summary: data.summary, sources: data.sources as Source[] });
+      const sources =
+        "sources" in data && Array.isArray(data.sources)
+          ? (data.sources as Source[])
+          : [];
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: data.summary as string, sources },
+      ]);
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -76,6 +139,8 @@ export default function Home() {
       setLoading(false);
     }
   }
+
+  const started = messages.length > 0;
 
   return (
     <main>
@@ -92,59 +157,164 @@ export default function Home() {
         </span>
       </nav>
 
-      <section className="hero">
-        <p className="eyebrow">COMPANION UNTUK PETUALANG</p>
-        <h1>
-          Macet? <em>Lanjut main.</em>
-        </h1>
-        <p className="intro">
-          Ceritakan titik buntumu. Kami mencari panduan di web dan merangkumnya
-          menjadi langkah yang langsung bisa dimainkan.
-        </p>
+      {!started && (
+        <section className="hero">
+          <p className="eyebrow">COMPANION UNTUK PETUALANG</p>
+          <h1>
+            Macet? <em>Lanjut main.</em>
+          </h1>
+          <p className="intro">
+            Pilih game dan platformmu, ceritakan titik buntumu, lalu tanya lanjutan
+            sepuasnya. Kami mencari panduan di web dan merangkumnya jadi langkah
+            yang siap dimainkan.
+          </p>
+        </section>
+      )}
+
+      <section className="setup" aria-label="Konteks game">
+        <div className="field">
+          <label htmlFor="game">Nama game</label>
+          <input
+            id="game"
+            name="game"
+            value={game}
+            onChange={(event) => setGame(event.target.value)}
+            placeholder="mis. The Legend of Zelda: Link's Awakening"
+            maxLength={120}
+            autoComplete="off"
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="platform">Platform</label>
+          <select
+            id="platform"
+            name="platform"
+            value={platform}
+            onChange={(event) => setPlatform(event.target.value)}
+          >
+            <option value="">Pilih platform (opsional)</option>
+            {PLATFORMS.map((section) => (
+              <optgroup key={section.group} label={section.group}>
+                {section.items.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </div>
       </section>
 
-      <section className="search-panel" aria-labelledby="search-title">
-        <form onSubmit={handleSubmit}>
-          <label id="search-title" htmlFor="query">
-            Di mana kamu terjebak?
-          </label>
-          <div className="textarea-wrap">
-            <textarea
-              id="query"
-              name="query"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Contoh: Bagaimana cara membuka pintu kuil di Zanarkand?"
-              minLength={3}
-              maxLength={300}
-              rows={4}
-              required
-              disabled={loading}
-            />
-            <span className="counter" aria-hidden="true">
-              {query.length}/300
-            </span>
-          </div>
-
-          <div className="examples" aria-label="Contoh pertanyaan">
+      {!started && (
+        <div className="examples-block" aria-label="Contoh">
+          <span className="examples-label">Coba contoh</span>
+          <div className="examples">
             {examples.map((example) => (
               <button
-                key={example}
+                key={example.q}
                 type="button"
-                onClick={() => setQuery(example)}
+                onClick={() => {
+                  setGame(example.game);
+                  setPlatform(example.platform);
+                  setInput(example.q);
+                }}
                 disabled={loading}
               >
-                {example}
+                <strong>{example.game}</strong>
+                <span>{example.q}</span>
               </button>
             ))}
           </div>
+        </div>
+      )}
 
+      {started && (
+        <section className="feed" aria-live="polite">
+          {messages.map((message, index) =>
+            message.role === "user" ? (
+              <div className="turn user" key={index}>
+                <p>{message.content}</p>
+              </div>
+            ) : (
+              <article className="turn guide" key={index}>
+                <div className="guide-tag">
+                  <span aria-hidden="true">◆</span> RUTE DITEMUKAN
+                </div>
+                <div className="answer">{message.content}</div>
+                {message.sources && message.sources.length > 0 && (
+                  <footer>
+                    <h2>Sumber</h2>
+                    <ol>
+                      {message.sources.map((source, i) => (
+                        <li key={source.url}>
+                          <a href={source.url} target="_blank" rel="noreferrer">
+                            <span className="source-number">
+                              {String(i + 1).padStart(2, "0")}
+                            </span>
+                            <span>
+                              <strong>{source.title}</strong>
+                              <small>{hostname(source.url)}</small>
+                            </span>
+                            <span className="source-arrow" aria-hidden="true">
+                              ↗
+                            </span>
+                          </a>
+                        </li>
+                      ))}
+                    </ol>
+                  </footer>
+                )}
+              </article>
+            ),
+          )}
+
+          {loading && (
+            <div className="turn guide loading-card">
+              <span className="scan-line" aria-hidden="true" />
+              <p>Menjelajahi walkthrough dan forum pemain...</p>
+            </div>
+          )}
+
+          {error && (
+            <div className="error-card" role="alert">
+              <span aria-hidden="true">!</span>
+              <p>{error}</p>
+            </div>
+          )}
+          <div ref={feedRef} />
+        </section>
+      )}
+
+      <form className={`composer${started ? " docked" : ""}`} onSubmit={handleSubmit}>
+        <div className="composer-inner">
+          <textarea
+            id="query"
+            name="query"
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
+            placeholder={
+              started
+                ? "Tanya lanjutan... (mis. lalu setelah bos itu ke mana?)"
+                : "Di mana kamu terjebak?"
+            }
+            rows={started ? 1 : 3}
+            maxLength={300}
+            required
+            disabled={loading}
+          />
           <button
             className="submit"
             type="submit"
-            disabled={loading || query.trim().length < 3}
+            disabled={loading || input.trim().length < 2}
+            aria-label="Kirim pertanyaan"
           >
-            <span>{loading ? "Mencari jalan keluar" : "Temukan jalan keluar"}</span>
             {loading ? (
               <span className="loader" aria-hidden="true" />
             ) : (
@@ -153,58 +323,8 @@ export default function Home() {
               </span>
             )}
           </button>
-        </form>
-      </section>
-
-      <div className="status" aria-live="polite">
-        {loading && (
-          <div className="loading-card">
-            <span className="scan-line" aria-hidden="true" />
-            <p>Menjelajahi walkthrough dan forum pemain...</p>
-          </div>
-        )}
-
-        {error && (
-          <div className="error-card" role="alert">
-            <span aria-hidden="true">!</span>
-            <p>{error}</p>
-          </div>
-        )}
-
-        {guide && (
-          <article className="guide">
-            <header>
-              <p>
-                <span aria-hidden="true">◆</span> RUTE DITEMUKAN
-              </p>
-              <span>AI SUMMARY</span>
-            </header>
-            <div className="answer">{guide.summary}</div>
-
-            <footer>
-              <h2>Sumber penelusuran</h2>
-              <ol>
-                {guide.sources.map((source, index) => (
-                  <li key={source.url}>
-                    <a href={source.url} target="_blank" rel="noreferrer">
-                      <span className="source-number">
-                        {String(index + 1).padStart(2, "0")}
-                      </span>
-                      <span>
-                        <strong>{source.title}</strong>
-                        <small>{hostname(source.url)}</small>
-                      </span>
-                      <span className="source-arrow" aria-hidden="true">
-                        ↗
-                      </span>
-                    </a>
-                  </li>
-                ))}
-              </ol>
-            </footer>
-          </article>
-        )}
-      </div>
+        </div>
+      </form>
 
       <p className="disclaimer">
         Panduan dirangkum oleh AI. Periksa sumber untuk detail versi game.
