@@ -22,6 +22,10 @@ pencarian web Tavily dipakai sebagai bukti pendukung.
 - Confidence gate: kalau tidak ada satu pun sumber yang jelas relevan, sumber
   dikosongkan dan model menjawab dari pengetahuannya sendiri (atau jujur bilang
   tidak tahu) daripada dipaksa memakai snippet yang setengah relevan.
+- Rewrite query follow-up: pertanyaan lanjutan (mis. "setelah itu", "poin 3")
+  ditulis ulang oleh LLM jadi query pencarian standalone berbahasa Inggris
+  sebelum search, supaya tetap tepat sasaran. Pertanyaan pertama yang sudah
+  mandiri tidak kena extra call ini.
 - Pengetahuan model sebagai sumber utama, web sebagai pendukung untuk info yang
   mungkin di luar knowledge cutoff. Jika pencarian kosong, model tetap menjawab
   dari pengetahuannya.
@@ -69,12 +73,15 @@ lalu ajukan pertanyaan dan tanyakan lanjutannya.
 ## Alur
 
 1. Browser mengirim `{ game, platform, question, history }` ke `POST /api/solve`.
-2. Route server merangkai kueri, lalu menjalankan pencarian berjenjang Tavily
-   (`advanced`, best-effort), membersihkan snippet, memfilter berdasarkan skor
-   relevansi, dan mengambil 3 sumber terkuat.
-3. `system_instruction` (persona + aturan) dan `prompt` (game/platform, riwayat
+2. Untuk pertanyaan lanjutan, route menulis ulang pertanyaan jadi query mandiri
+   berbahasa Inggris (pakai LLM) supaya konteks percakapan ("poin 3") ikut
+   terbawa; pertanyaan pertama dipakai apa adanya.
+3. Route menjalankan pencarian berjenjang Tavily (`advanced`, best-effort),
+   membersihkan snippet, memfilter berdasarkan skor relevansi, dan mengambil 3
+   sumber terkuat (atau nol kalau tidak ada yang jelas relevan).
+4. `system_instruction` (persona + aturan) dan `prompt` (game/platform, riwayat
    percakapan, dan bukti web) dikirim terpisah ke model Gemini di Replicate.
-4. Browser menerima jawaban dan tautan sumber terpisah, lalu menambahkannya ke
+5. Browser menerima jawaban dan tautan sumber terpisah, lalu menambahkannya ke
    riwayat chat.
 
 API key hanya digunakan di server dan tidak dikirim ke browser. Teks sumber dan

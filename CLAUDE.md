@@ -23,6 +23,8 @@ searchable platform selector, and multi-turn follow-up chat.
   the field degrades to free text. `lib/games.js#mapGames` shapes IGDB rows.
 - `app/api/solve/route.ts`: validates/sanitizes `{ game, platform, question,
   history }` at the trust boundary (history capped to 10, content truncated).
+  For follow-ups (history present) it calls `resolveQuestion` to rewrite the
+  query into a standalone form before searching; first questions skip that call.
   Search is best-effort (skipped if no `TAVILY_API_KEY`, failures swallowed); the
   model still answers. Only `REPLICATE_API_TOKEN` is mandatory.
 - `lib/tavily.ts`: `searchGuides(query)` runs tiered searches (GameFAQs ->
@@ -35,12 +37,16 @@ searchable platform selector, and multi-turn follow-up chat.
   and caps at 3. Covered by `npm run check`.
 - `lib/clean.js`: `cleanSnippet(text)` strips markdown link soup, bare URLs,
   GameFAQs CTAs, and Q&A vote/user lines. Covered by `npm run check`.
-- `lib/replicate.ts`: Replicate adapter (`summarize(input)`); sends
+- `lib/replicate.ts`: Replicate adapter. `summarize(input)` sends
   `system_instruction` + `prompt` separately with Gemini fields
-  (`max_output_tokens`, `thinking_budget: 0`). Exports the `Turn` type.
+  (`max_output_tokens`, `thinking_budget: 0`). `resolveQuestion({ question,
+  history })` does a small, low-token call to rewrite a follow-up into a
+  standalone English search query, falling back to the raw question on any
+  failure. Exports the `Turn` type.
 - `lib/prompt.js`: exports `SYSTEM_INSTRUCTION` (persona + rules: knowledge-first,
-  web-as-support, injection safety) and `buildPrompt({ game, platform, question,
-  sources, history })` (dynamic context). Covered by `npm run check`.
+  web-as-support, injection safety), `buildPrompt({ game, platform, question,
+  sources, history })`, plus `REWRITE_INSTRUCTION` + `buildRewritePrompt({
+  question, history })` for query rewriting. Covered by `npm run check`.
 - `lib/games.js`: `mapGames(results)` maps raw IGDB rows to `{ id, name, year }`
   (year derived from unix `first_release_date`), dropping malformed entries.
   Covered by `npm run check`.
@@ -53,6 +59,9 @@ searchable platform selector, and multi-turn follow-up chat.
   not token count.
 - Every turn re-runs the tiered search (up to 4 sequential Tavily calls, early
   exit); there is no caching. `advanced` depth costs ~2x credits vs `basic`.
+- Follow-ups add one extra Gemini call (`resolveQuestion`) before search, so
+  they run two sequential model calls. `max_output_tokens` there must stay
+  generous (~200); too tight a cap returns empty even with thinking off.
 - Relevance filtering can't separate same-series wrong-game guides (RE0 vs RE
   Code: Veronica score alike); the top-3 trim plus the "ignore off-game
   snippets" system rule mitigate it rather than fully solving it.

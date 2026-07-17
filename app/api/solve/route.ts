@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { summarize, type Turn } from "@/lib/replicate";
+import { resolveQuestion, summarize, type Turn } from "@/lib/replicate";
 import { searchGuides, type SearchResult } from "@/lib/tavily";
 
 export const runtime = "nodejs";
@@ -65,7 +65,14 @@ export async function POST(request: Request) {
     // its own knowledge if it returns nothing or fails.
     let sources: SearchResult[] = [];
     if (process.env.TAVILY_API_KEY) {
-      const searchQuery = [game, platform, question, "walkthrough guide"]
+      // Follow-ups reference earlier turns ("after that", "poin 3"), which make
+      // a poor search query. Rewrite them into a standalone query first; first
+      // questions are already standalone, so skip the extra model call.
+      const searchTopic =
+        history.length > 0
+          ? await resolveQuestion({ question, history })
+          : question;
+      const searchQuery = [game, platform, searchTopic, "walkthrough guide"]
         .filter(Boolean)
         .join(" ");
       try {

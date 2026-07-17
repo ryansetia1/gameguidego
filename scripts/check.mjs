@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 
 import { cleanSnippet } from "../lib/clean.js";
 import { mapGames } from "../lib/games.js";
-import { SYSTEM_INSTRUCTION, buildPrompt } from "../lib/prompt.js";
+import {
+  REWRITE_INSTRUCTION,
+  SYSTEM_INSTRUCTION,
+  buildPrompt,
+  buildRewritePrompt,
+} from "../lib/prompt.js";
 import { selectSources } from "../lib/rank.js";
 
 // System instruction carries the persona + safety rules.
@@ -63,6 +68,25 @@ assert.equal(games.length, 2);
 assert.deepEqual(games[0], { id: 1, name: "Final Fantasy VII", year: "1997" });
 assert.equal(games[1].year, "");
 assert.deepEqual(mapGames("not-an-array"), []);
+
+// Follow-up query rewrite: instruction stays English/standalone, and the
+// prompt carries the conversation so references can be resolved.
+assert.match(REWRITE_INSTRUCTION, /standalone web-search query in English/);
+const rewritePrompt = buildRewritePrompt({
+  question: "Setelah poin 3 ngapain",
+  history: [
+    { role: "user", content: "Abis lawan kepiting kemana ya" },
+    { role: "assistant", content: "Ambil Hookshot lalu naik ke lantai atas." },
+  ],
+});
+assert.match(rewritePrompt, /Conversation so far/);
+assert.match(rewritePrompt, /Player: Abis lawan kepiting kemana ya/);
+assert.match(rewritePrompt, /Latest question:\nSetelah poin 3 ngapain/);
+// A first question (no history) omits the conversation block.
+assert.doesNotMatch(
+  buildRewritePrompt({ question: "How do I get Rapidash?" }),
+  /Conversation so far/,
+);
 
 // Source selection: confidence gate + relevance window + cap.
 /** @param {number} score */
