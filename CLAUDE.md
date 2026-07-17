@@ -26,8 +26,15 @@ searchable platform selector, and multi-turn follow-up chat.
   Search is best-effort (skipped if no `TAVILY_API_KEY`, failures swallowed); the
   model still answers. Only `REPLICATE_API_TOKEN` is mandatory.
 - `lib/tavily.ts`: `searchGuides(query)` runs tiered searches (GameFAQs ->
-  trusted walkthrough providers -> forums -> general), excludes video/social
-  domains, dedupes, and stops once enough results are collected.
+  trusted walkthrough providers -> forums -> general) with `search_depth:
+  "advanced"`, excludes video/social domains, dedupes by URL+title, cleans each
+  snippet via `cleanSnippet`, then hands results to `selectSources`.
+- `lib/rank.js`: `selectSources(results)` applies a confidence gate (returns
+  `[]` when even the best score is below `CONFIDENCE_MIN`, so the model answers
+  from knowledge alone), keeps results within `SCORE_WINDOW` of the top score,
+  and caps at 3. Covered by `npm run check`.
+- `lib/clean.js`: `cleanSnippet(text)` strips markdown link soup, bare URLs,
+  GameFAQs CTAs, and Q&A vote/user lines. Covered by `npm run check`.
 - `lib/replicate.ts`: Replicate adapter (`summarize(input)`); sends
   `system_instruction` + `prompt` separately with Gemini fields
   (`max_output_tokens`, `thinking_budget: 0`). Exports the `Turn` type.
@@ -45,7 +52,15 @@ searchable platform selector, and multi-turn follow-up chat.
 - Chat history is sent as plain text inside the prompt and trimmed by turn count,
   not token count.
 - Every turn re-runs the tiered search (up to 4 sequential Tavily calls, early
-  exit); there is no caching.
+  exit); there is no caching. `advanced` depth costs ~2x credits vs `basic`.
+- Relevance filtering can't separate same-series wrong-game guides (RE0 vs RE
+  Code: Veronica score alike); the top-3 trim plus the "ignore off-game
+  snippets" system rule mitigate it rather than fully solving it.
+- The `CONFIDENCE_MIN`/`SCORE_WINDOW` thresholds in `lib/rank.js` are heuristics
+  calibrated on a handful of real queries, not a learned cutoff; tune them there
+  if answers cite too much or fall back to knowledge too often.
+- Tavily still returns arbitrary page chunks (control lists, TOCs), not the
+  section that answers the question; the model leans on its own knowledge.
 - Game autocomplete uses IGDB (RAWG was tried first but proved unreliable). The
   Twitch token cache is per server instance, not shared across instances.
 

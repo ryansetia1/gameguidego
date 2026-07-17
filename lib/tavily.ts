@@ -1,9 +1,13 @@
+import { cleanSnippet } from "@/lib/clean";
+import { selectSources } from "@/lib/rank";
+
 const TAVILY_URL = "https://api.tavily.com/search";
 
 export type SearchResult = {
   title: string;
   url: string;
   content: string;
+  score: number;
 };
 
 // Video/social results the text LLM cannot read; always excluded.
@@ -41,8 +45,12 @@ const TIERS: string[][] = [
   [],
 ];
 
-const MIN_RESULTS = 4;
-const MAX_RESULTS = 6;
+// Enough collected results to stop querying further tiers; final relevance
+// gating/trimming happens in selectSources.
+const MIN_RESULTS = 3;
+const CONTENT_CAP = 800;
+// Snippets shorter than this after cleaning are almost always pure navigation.
+const MIN_CONTENT = 60;
 
 async function runSearch(
   apiKey: string,
@@ -57,13 +65,15 @@ async function runSearch(
     },
     body: JSON.stringify({
       query,
-      search_depth: "basic",
+      // "advanced" extracts more relevant page chunks and re-ranks better than
+      // "basic" (which let an unrelated game outrank the correct guides).
+      search_depth: "advanced",
       max_results: 5,
       include_answer: false,
       exclude_domains: EXCLUDE_DOMAINS,
       ...(includeDomains.length ? { include_domains: includeDomains } : {}),
     }),
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(12_000),
   });
 
   if (!response.ok) {
@@ -96,11 +106,20 @@ async function runSearch(
       const url = new URL(result.url);
       if (url.protocol !== "http:" && url.protocol !== "https:") return [];
 
+      const content = cleanSnippet(result.content).slice(0, CONTENT_CAP);
+      if (content.length < MIN_CONTENT) return [];
+
+      const score =
+        "score" in result && typeof result.score === "number"
+          ? result.score
+          : 0;
+
       return [
         {
-          title: result.title.trim() || url.hostname,
+          title: cleanSnippet(result.title) || url.hostname,
           url: url.toString(),
-          content: result.content.trim().slice(0, 1_200),
+          content,
+          score,
         },
       ];
     } catch {
@@ -126,14 +145,20 @@ export async function searchGuides(query: string): Promise<SearchResult[]> {
     }
 
     for (const result of tier) {
-      const key = result.url.replace(/\/+$/, "").toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
+      // Dedupe by URL and by title: GameFAQs splits one guide across several
+      // URLs, so the same walkthrough can otherwise appear multiple times.
+      const urlKey = `u:${result.url.replace(/\/+$/, "").toLowerCase()}`;
+      const titleKey = `t:${result.title.toLowerCase()}`;
+      if (seen.has(urlKey) || seen.has(titleKey)) continue;
+      seen.add(urlKey);
+      seen.add(titleKey);
       collected.push(result);
     }
 
     if (collected.length >= MIN_RESULTS) break;
   }
 
-  return collected.slice(0, MAX_RESULTS);
+  // Confidence gate + trim: returns [] when nothing is clearly relevant, so the
+  // model answers from its own knowledge instead of a weak snippet.
+  return selectSources(collected);
 }

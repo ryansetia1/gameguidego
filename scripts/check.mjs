@@ -1,11 +1,31 @@
 import assert from "node:assert/strict";
 
+import { cleanSnippet } from "../lib/clean.js";
 import { mapGames } from "../lib/games.js";
 import { SYSTEM_INSTRUCTION, buildPrompt } from "../lib/prompt.js";
+import { selectSources } from "../lib/rank.js";
 
 // System instruction carries the persona + safety rules.
 assert.match(SYSTEM_INSTRUCTION, /untrusted data/);
 assert.match(SYSTEM_INSTRUCTION, /SUPPORTING evidence/);
+// ...and steers the model toward concrete, noise-tolerant answers.
+assert.match(SYSTEM_INSTRUCTION, /ignore anything that is not about/i);
+assert.match(SYSTEM_INSTRUCTION, /Be concrete/);
+
+// Snippet cleaning strips link soup, CTAs, and Q&A vote/user noise while
+// keeping the real prose.
+const dirty =
+  "What do you need help on? Would you recommend this Guide? " +
+  "[Boards](https://gamefaqs.gamespot.com/boards)[News](https://x.com/n) " +
+  "lightning012345 - 17 years ago - report Push the bookcase to reveal the book of evil.";
+const cleaned = cleanSnippet(dirty);
+assert.doesNotMatch(cleaned, /help on/i);
+assert.doesNotMatch(cleaned, /recommend this guide/i);
+assert.doesNotMatch(cleaned, /https?:/);
+assert.doesNotMatch(cleaned, /years ago/i);
+assert.match(cleaned, /Boards News/);
+assert.match(cleaned, /Push the bookcase to reveal the book of evil\./);
+assert.equal(cleanSnippet(42), "");
 
 const prompt = buildPrompt({
   game: "Link's Awakening",
@@ -43,5 +63,30 @@ assert.equal(games.length, 2);
 assert.deepEqual(games[0], { id: 1, name: "Final Fantasy VII", year: "1997" });
 assert.equal(games[1].year, "");
 assert.deepEqual(mapGames("not-an-array"), []);
+
+// Source selection: confidence gate + relevance window + cap.
+/** @param {number} score */
+const src = (score) => ({
+  title: `t${score}`,
+  url: `https://x/${score}`,
+  content: "x",
+  score,
+});
+// A clearly-relevant top result keeps close matches, drops the far tail, caps
+// at 3, and sorts strongest-first.
+const picked = selectSources([
+  src(0.62),
+  src(0.75),
+  src(0.7),
+  src(0.45), // below floor (0.75 - 0.1 = 0.65) -> dropped
+]);
+assert.deepEqual(
+  picked.map((r) => r.score),
+  [0.75, 0.7],
+);
+// Confidence gate: if even the best match is weak, return nothing so the model
+// answers from its own knowledge.
+assert.deepEqual(selectSources([src(0.49), src(0.3)]), []);
+assert.deepEqual(selectSources([]), []);
 
 console.log("Self-check passed.");

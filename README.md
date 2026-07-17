@@ -15,6 +15,13 @@ pencarian web Tavily dipakai sebagai bukti pendukung.
 - Pencarian berjenjang: GameFAQs sebagai sumber utama, lalu penyedia walkthrough
   tepercaya, lalu forum, baru pencarian umum. Domain video/sosial (YouTube,
   Twitch, dll.) dikecualikan karena model teks tidak bisa membacanya.
+- Penyaringan noise: ekstraksi konten pakai Tavily `advanced`, hasil difilter
+  berdasarkan skor relevansi (membuang game lain yang tidak nyambung), snippet
+  dibersihkan dari link/menu/boilerplate, hasil didedup per judul+URL, dan hanya
+  3 sumber terkuat yang dikirim ke model.
+- Confidence gate: kalau tidak ada satu pun sumber yang jelas relevan, sumber
+  dikosongkan dan model menjawab dari pengetahuannya sendiri (atau jujur bilang
+  tidak tahu) daripada dipaksa memakai snippet yang setengah relevan.
 - Pengetahuan model sebagai sumber utama, web sebagai pendukung untuk info yang
   mungkin di luar knowledge cutoff. Jika pencarian kosong, model tetap menjawab
   dari pengetahuannya.
@@ -63,7 +70,8 @@ lalu ajukan pertanyaan dan tanyakan lanjutannya.
 
 1. Browser mengirim `{ game, platform, question, history }` ke `POST /api/solve`.
 2. Route server merangkai kueri, lalu menjalankan pencarian berjenjang Tavily
-   (best-effort) dan berhenti begitu sumber cukup.
+   (`advanced`, best-effort), membersihkan snippet, memfilter berdasarkan skor
+   relevansi, dan mengambil 3 sumber terkuat.
 3. `system_instruction` (persona + aturan) dan `prompt` (game/platform, riwayat
    percakapan, dan bukti web) dikirim terpisah ke model Gemini di Replicate.
 4. Browser menerima jawaban dan tautan sumber terpisah, lalu menambahkannya ke
