@@ -1183,9 +1183,28 @@ export default function Home() {
     setEditingIndex(null);
     setEditingText("");
     conversationGame.current = game.name;
-    // Don't focus the game field: the game is already chosen, and focusing it
-    // highlights it + fires a needless autocomplete lookup. Let the user tap the
-    // question composer themselves.
+
+    void (async () => {
+      try {
+        const response = await fetch(`/api/steam/release-year?appId=${game.appId}`);
+        if (!response.ok) return;
+        const data: { year?: unknown } = await response.json();
+        if (typeof data.year !== "string" || !data.year) return;
+        if (conversationGame.current !== game.name) return;
+        setReleaseYear(data.year);
+        const id = activeChatIdRef.current;
+        const supabase = getSupabase();
+        if (id && supabase && user) {
+          await supabase
+            .from("chats")
+            .update({ release_year: data.year, updated_at: new Date().toISOString() })
+            .eq("id", id);
+          void loadChats();
+        }
+      } catch {
+        // best-effort — chat works without a year
+      }
+    })();
   }
 
   // Message image attachments: compress + preview locally now, upload to Storage

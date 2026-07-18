@@ -29,6 +29,7 @@ import {
   steamIdFromClaimedId,
   steamIdFromMetadata,
   steamLibraryCoverUrl,
+  yearFromSteamReleaseDate,
 } from "../lib/steam.js";
 import { signSteamSession, verifySteamSession } from "../lib/steam-session.js";
 import {
@@ -160,6 +161,9 @@ assert.equal(
 assert.equal(steamIdFromMetadata({ steam_id: "76561198000000000" }), "76561198000000000");
 assert.equal(steamIdFromMetadata({ steam_id: 76561198000000000 }), "76561198000000000");
 assert.match(steamLibraryCoverUrl(570), /\/570\/library_600x900\.jpg$/);
+assert.equal(yearFromSteamReleaseDate("Nov 1, 2004"), "2004");
+assert.equal(yearFromSteamReleaseDate("2020"), "2020");
+assert.equal(yearFromSteamReleaseDate(""), "");
 
 const signed = signSteamSession("76561198000000000");
 assert.equal(verifySteamSession(signed), "76561198000000000");

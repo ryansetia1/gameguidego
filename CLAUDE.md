@@ -85,7 +85,8 @@ and simply cannot save.
   Returns `{ results: [{ title, url, snippet }], available }`; `available: false`
   when neither `TAVILY_API_KEY` nor `SERPER_API_KEY` is set.
 - `lib/steam.js`: Steam OpenID login URL + verification, owned-games fetch
-  (`IPlayerService/GetOwnedGames`), Steam CDN library cover URLs, and
+  (`IPlayerService/GetOwnedGames`), Steam CDN library cover URLs,
+  `fetchSteamReleaseYear` (Store appdetails — owned-games has no release date), and
   `steamIdFromMetadata` (reads the linked `steam_id` from Supabase `user_metadata`).
   Steam is **not a sign-in method** — it is a *link* action on an already
   signed-in Supabase account, so there is no "Continue with Steam" in the
