@@ -684,9 +684,9 @@ h1 em {
 .spoiler-reveals {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   border-top: 1px solid var(--line);
-  padding: 14px 18px 0;
+  padding: 16px 18px 20px;
 }
 
 details.spoiler-reveal {
@@ -737,10 +737,10 @@ details.spoiler-reveal[open] > summary::after {
 
 details.spoiler-reveal p {
   margin: 0;
-  padding: 0 14px 14px;
+  padding: 6px 16px 18px;
   color: var(--text-subtle);
   font-size: 0.92rem;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 details.sources {
