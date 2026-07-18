@@ -15,7 +15,14 @@ import { parseBlocks, parseInline } from "../lib/markdown.js";
 import { buildSpoilerBlock, coerceSpoilerPrefs, loadSpoilerPrefs } from "../lib/spoiler-prefs.js";
 import { coerceDisplayName, displayNameFromMetadata } from "../lib/profile.js";
 import { coerceThemeMode, themeFromUserMetadata } from "../lib/theme.js";
-import { coerceVoiceLang, voiceLangFromUserMetadata } from "../lib/voice.js";
+import {
+  coerceVoiceLang,
+  isBenignSpeechError,
+  prefersChunkedSpeechRecognition,
+  shouldRetrySpeechError,
+  voiceLangFromUserMetadata,
+} from "../lib/voice.js";
+import { supportsLiveVoiceMeter } from "../lib/voice-meter.js";
 import { buildGuideDiscoveryQuery } from "../lib/guide-search.js";
 import {
   steamIdFromClaimedId,
@@ -111,6 +118,14 @@ assert.equal(coerceVoiceLang(42), "");
 assert.equal(voiceLangFromUserMetadata({ voice_lang: "ja-JP" }), "ja-JP");
 assert.equal(voiceLangFromUserMetadata({ voice_lang: "bogus" }), "");
 assert.equal(voiceLangFromUserMetadata({}), "");
+
+assert.equal(shouldRetrySpeechError("no-speech"), true);
+assert.equal(shouldRetrySpeechError("network"), true);
+assert.equal(shouldRetrySpeechError("not-allowed"), false);
+assert.equal(isBenignSpeechError("aborted"), true);
+assert.equal(isBenignSpeechError("network"), false);
+assert.equal(typeof prefersChunkedSpeechRecognition(), "boolean");
+assert.equal(typeof supportsLiveVoiceMeter(), "boolean");
 
 assert.equal(
   buildGuideDiscoveryQuery("Suikoden", "PlayStation", ""),

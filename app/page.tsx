@@ -389,6 +389,7 @@ export default function Home() {
   const spoilerPrefs = effectiveSpoilerPrefs(globalSpoilerMajor, gameSpoilerMajor);
   const [attachOpen, setAttachOpen] = useState(false);
   const [voiceListening, setVoiceListening] = useState(false);
+  const [voiceAnalyser, setVoiceAnalyser] = useState<AnalyserNode | null>(null);
   const [librarySearch, setLibrarySearch] = useState("");
   const [confirmState, setConfirmState] = useState<{
     message: string;
@@ -1622,15 +1623,21 @@ export default function Home() {
                         : chats;
                       return (
                         <>
-                          <input
-                            type="search"
-                            className="library-search"
-                            placeholder="Search saved games…"
-                            value={librarySearch}
-                            onChange={(event) => setLibrarySearch(event.target.value)}
-                            autoComplete="off"
-                            aria-label="Search saved games"
-                          />
+                          <div className="library-search-wrap">
+                            <label className="library-search-label" htmlFor="saved-library-search">
+                              Search
+                            </label>
+                            <input
+                              id="saved-library-search"
+                              type="search"
+                              className="library-search"
+                              placeholder="Search saved games…"
+                              value={librarySearch}
+                              onChange={(event) => setLibrarySearch(event.target.value)}
+                              autoComplete="off"
+                              aria-label="Search saved games"
+                            />
+                          </div>
                           {shown.length === 0 ? (
                             <p className="library-empty">
                               No games match “{librarySearch.trim()}”.
@@ -2069,7 +2076,7 @@ export default function Home() {
               <article className="turn guide" key={index}>
                 <div className="guide-head">
                   <div className="guide-tag icon-inline">
-                    <IconDiamond /> ROUTE FOUND
+                    <IconDiamond /> ANSWER
                   </div>
                   <button
                     type="button"
@@ -2213,7 +2220,7 @@ export default function Home() {
               required
               disabled={composerLocked}
             />
-            <VoiceVisualizer active={voiceListening} />
+            <VoiceVisualizer active={voiceListening} analyser={voiceAnalyser} />
           </div>
           {showCombinedExtras ? (
             <ComposerExtras
@@ -2221,6 +2228,7 @@ export default function Home() {
               disabled={composerLocked}
               attachDisabled={pendingImages.length >= MAX_MESSAGE_IMAGES}
               onListeningChange={setVoiceListening}
+              onMeterChange={setVoiceAnalyser}
               onTranscript={(text) =>
                 setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
               }
@@ -2296,6 +2304,7 @@ export default function Home() {
                 user={user}
                 disabled={composerLocked}
                 onListeningChange={setVoiceListening}
+                onMeterChange={setVoiceAnalyser}
                 onTranscript={(text) =>
                   setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
                 }

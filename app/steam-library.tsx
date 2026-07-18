@@ -183,15 +183,21 @@ export function SteamLibrary({ open, onClose, onPick, cacheKey = "" }: Props) {
           ) : (
             <>
               {games.length > 0 && (
-                <input
-                  type="search"
-                  className="library-search"
-                  placeholder="Search your games…"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  autoComplete="off"
-                  aria-label="Search Steam games"
-                />
+                <div className="library-search-wrap">
+                  <label className="library-search-label" htmlFor="steam-library-search">
+                    Search
+                  </label>
+                  <input
+                    id="steam-library-search"
+                    type="search"
+                    className="library-search"
+                    placeholder="Search your games…"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    autoComplete="off"
+                    aria-label="Search Steam games"
+                  />
+                </div>
               )}
               {filtered.length === 0 ? (
                 <p className="library-empty">No games match “{query.trim()}”.</p>

@@ -13,6 +13,7 @@ type Props = {
   attachDisabled?: boolean;
   onTranscript: (text: string) => void;
   onListeningChange?: (listening: boolean) => void;
+  onMeterChange?: (analyser: AnalyserNode | null) => void;
   onSelectImages: (files: FileList | null) => void;
 };
 
@@ -26,6 +27,7 @@ export function ComposerExtras({
   attachDisabled,
   onTranscript,
   onListeningChange,
+  onMeterChange,
   onSelectImages,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -34,7 +36,7 @@ export function ComposerExtras({
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  const voice = useVoiceInput({ user, disabled, onTranscript, onListeningChange });
+  const voice = useVoiceInput({ user, disabled, onTranscript, onListeningChange, onMeterChange });
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -86,6 +88,7 @@ export function ComposerExtras({
         className={`composer-attach composer-extras${voice.listening ? " listening" : ""}`}
         title={voice.listening ? "Stop listening" : "Add photo or voice"}
         aria-label={voice.listening ? "Stop listening" : "Add photo or voice"}
+        aria-pressed={voice.listening}
         aria-expanded={menuOpen}
         aria-haspopup="menu"
         disabled={disabled}
