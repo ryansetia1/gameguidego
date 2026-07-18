@@ -1120,6 +1120,14 @@ details.sources small {
   color: var(--placeholder);
 }
 
+.composer textarea:disabled {
+  cursor: not-allowed;
+}
+
+.composer textarea:disabled::placeholder {
+  opacity: 0.45;
+}
+
 .submit {
   display: grid;
   flex: none;
@@ -1143,7 +1151,10 @@ details.sources small {
 .submit:disabled {
   background: var(--disabled-bg);
   color: var(--disabled-text);
+  border-color: var(--line);
+  opacity: 0.5;
   cursor: not-allowed;
+  transform: none;
 }
 
 .arrow {
@@ -1916,6 +1927,9 @@ details.sources small {
 }
 
 .composer-attach:disabled {
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+  border-color: var(--line);
   opacity: 0.5;
   cursor: not-allowed;
 }

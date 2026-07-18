@@ -1324,7 +1324,7 @@ export default function Home() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const question = input.trim();
-    if (question.length < 2 || loading) return;
+    if (!game.trim() || question.length < 2 || loading) return;
 
     const switching =
       messages.length > 0 &&
@@ -1380,6 +1380,8 @@ export default function Home() {
   }
 
   const started = messages.length > 0;
+  const hasGame = Boolean(game.trim());
+  const composerLocked = loading || !hasGame;
   const lastUserIndex = messages.map((m) => m.role).lastIndexOf("user");
 
   return (
@@ -2162,12 +2164,18 @@ export default function Home() {
                 }
               }}
               placeholder={
-                voiceListening ? "" : started ? "Ask a follow-up..." : "Where are you stuck?"
+                voiceListening
+                  ? ""
+                  : !hasGame
+                    ? "Enter a game name first"
+                    : started
+                      ? "Ask a follow-up..."
+                      : "Where are you stuck?"
               }
               rows={1}
               maxLength={300}
               required
-              disabled={loading}
+              disabled={composerLocked}
             />
             <VoiceVisualizer active={voiceListening} />
           </div>
@@ -2180,7 +2188,7 @@ export default function Home() {
                 aria-label="Attach images"
                 aria-expanded={attachOpen}
                 aria-haspopup="menu"
-                disabled={loading || pendingImages.length >= MAX_MESSAGE_IMAGES}
+                disabled={composerLocked || pendingImages.length >= MAX_MESSAGE_IMAGES}
                 onClick={() => setAttachOpen((open) => !open)}
               >
                 <span aria-hidden="true">📎</span>
@@ -2215,7 +2223,7 @@ export default function Home() {
                 accept="image/*"
                 multiple
                 hidden
-                disabled={loading || pendingImages.length >= MAX_MESSAGE_IMAGES}
+                disabled={composerLocked || pendingImages.length >= MAX_MESSAGE_IMAGES}
                 onChange={(event) => {
                   void selectMessageImages(event.target.files);
                   event.target.value = "";
@@ -2227,7 +2235,7 @@ export default function Home() {
                 accept="image/*"
                 capture="environment"
                 hidden
-                disabled={loading || pendingImages.length >= MAX_MESSAGE_IMAGES}
+                disabled={composerLocked || pendingImages.length >= MAX_MESSAGE_IMAGES}
                 onChange={(event) => {
                   void selectMessageImages(event.target.files);
                   event.target.value = "";
@@ -2237,7 +2245,7 @@ export default function Home() {
           )}
           <VoiceInput
             user={user}
-            disabled={loading}
+            disabled={composerLocked}
             onListeningChange={setVoiceListening}
             onTranscript={(text) =>
               setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
@@ -2256,7 +2264,7 @@ export default function Home() {
             <button
               className="submit"
               type="submit"
-              disabled={input.trim().length < 2}
+              disabled={composerLocked || input.trim().length < 2}
               aria-label="Send question"
             >
               <span className="arrow" aria-hidden="true">
