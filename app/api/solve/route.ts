@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getCachedSearch, setCachedSearch } from "@/lib/search-cache";
-import { resolveQuestion, summarize, type Turn } from "@/lib/replicate";
+import { censorSpoilers, resolveQuestion, summarize, type Turn } from "@/lib/replicate";
 import { coerceSpoilerPrefs } from "@/lib/spoiler-prefs";
 import { coerceDisplayName } from "@/lib/profile.js";
 import { searchGuides, type SearchResult } from "@/lib/tavily";
@@ -121,7 +121,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const { answer, highlights, spoilers } = await summarize({
+    let { answer, highlights, spoilers, spoilerRisk } = await summarize({
       game,
       platform,
       question,
@@ -132,10 +132,23 @@ export async function POST(request: Request) {
       playerName,
     });
 
+    // Spoilers OFF + the model flagged its own answer as risky -> run the
+    // second-pass censor to strip any major reveal that leaked into the answer.
+    // Best-effort: on failure censorSpoilers returns null and we keep the
+    // (prompt-guarded) original. Most turns never reach this branch.
+    if (!spoilerPrefs.major && spoilerRisk) {
+      const cleaned = await censorSpoilers({ answer, highlights });
+      if (cleaned) {
+        answer = cleaned.answer;
+        highlights = cleaned.highlights;
+      }
+    }
+
     return NextResponse.json({
       answer,
       highlights,
-      spoilers,
+      // Never ship spoiler reveals when the player has them OFF.
+      spoilers: spoilerPrefs.major ? spoilers : [],
       sources: sources.map(({ title, url }) => ({ title, url })),
     });
   } catch (error) {

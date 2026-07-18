@@ -261,6 +261,13 @@ const prose = parseSummary("Just walk north.");
 assert.equal(prose.answer, "Just walk north.");
 assert.deepEqual(prose.highlights, []);
 assert.deepEqual(prose.spoilers, []);
+// spoilerRisk flag drives the OFF-only second-pass censor.
+assert.equal(prose.spoilerRisk, true); // unparseable JSON -> treat as risky
+assert.equal(parsed.spoilerRisk, false); // clean JSON, no flag -> safe
+assert.equal(
+  parseSummary('{"answer":"He dies.","spoilerRisk":true}').spoilerRisk,
+  true,
+);
 
 // The model routinely emits pretty-printed JSON with RAW newlines inside the
 // answer string (invalid JSON); parseSummary must tolerate it, not fall back to
