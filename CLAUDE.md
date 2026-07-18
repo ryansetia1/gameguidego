@@ -70,13 +70,28 @@ and simply cannot save.
   `discoverGuideLinks` (tiered Tavily/Serper, no answer-time confidence gate).
   Returns `{ results: [{ title, url, snippet }], available }`; `available: false`
   when neither `TAVILY_API_KEY` nor `SERPER_API_KEY` is set.
-- `lib/steam.js`: Steam OpenID login URL + verification, `steam_id` in Supabase
-  `user_metadata`, owned-games fetch (`IPlayerService/GetOwnedGames`), and Steam CDN
-  library cover URLs. `app/api/steam/login` + `callback` handle OpenID; `pending`
-  cookie links Steam to the signed-in user; `GET /api/steam/library` (Bearer token)
-  returns the user's games sorted by playtime. `app/steam-library.tsx` grid UI;
-  picking a game opens/resumes a PC chat with Steam cover art. Requires
-  `STEAM_API_KEY`; user's Steam **Game details** must be Public.
+- `lib/steam.js`: Steam OpenID login URL + verification, owned-games fetch
+  (`IPlayerService/GetOwnedGames`), Steam CDN library cover URLs, and
+  `steamIdFromMetadata` (reads the linked `steam_id` from Supabase `user_metadata`).
+  Steam is **not a sign-in method** — it is a *link* action on an already
+  signed-in Supabase account, so there is no "Continue with Steam" in the
+  logged-out auth modal (removed as misleading); the entry point is "Connect
+  Steam" in the sidebar, shown only when signed in. `lib/steam-session.js` signs
+  a device-scoped `gg_steam` HMAC cookie (30-day, keyed by `AUTH_SECRET` or
+  `STEAM_API_KEY`) holding the verified numeric SteamID — Steam OpenID never
+  returns an email, so accounts never merge by email.
+  Flow: `app/api/steam/login` -> Steam OpenID -> `callback` verifies and sets the
+  `gg_steam` cookie, then redirects `/?steam=linked`. The client links **only**
+  on that explicit return (`linkSteamToAccount` writes `steam_id` via
+  `POST /api/steam/link`); the sign-in effect merely *refreshes* status and never
+  auto-links, so a leftover device cookie can't silently attach to the next user.
+  `signOut` clears `gg_steam` (`DELETE /api/steam/pending`). `GET /api/steam/me`
+  and `GET /api/steam/library` (Bearer token) trust **only** the account's linked
+  Steam when authenticated — the cookie is used solely in the token-less transient
+  right after the OpenID return — so a shared browser can't leak one user's
+  library to another. `app/steam-library.tsx` grid UI; picking a game opens/resumes
+  a PC chat with Steam cover art. Requires `STEAM_API_KEY`; user's Steam
+  **Game details** must be Public.
 - `app/api/games/route.ts`: TheGamesDB proxy. Runs
   `Games/ByGameName?include=boxart,platform` with `THEGAMESDB_API_KEY` and returns
   `{ games, available }` (each game has `cover` + raw `platform` name). Missing key

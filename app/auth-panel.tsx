@@ -107,19 +107,9 @@ export function AuthPanel({ onClose }: Props) {
         <button type="button" className="auth-google" onClick={onGoogle} disabled={busy}>
           Continue with Google
         </button>
-
-        <button
-          type="button"
-          className="auth-steam"
-          disabled={busy}
-          onClick={() => {
-            onClose();
-            window.location.href = "/api/steam/login";
-          }}
-        >
-          Continue with Steam
-        </button>
-        <p className="auth-steam-hint">Sign in with email or Google first to save chats, then link Steam.</p>
+        {/* Steam is a link action, not a sign-in — offered as "Connect Steam" in
+            the sidebar once signed in, so it's kept out of this logged-out modal. */}
+        <p className="auth-steam-hint">Playing on Steam? Sign in here first, then link your Steam library from the menu.</p>
 
         <div className="auth-divider">
           <span>or</span>

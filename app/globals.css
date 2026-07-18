@@ -6,8 +6,8 @@
   --text-subtle: #4c5753;
   --placeholder: #767f7a;
   --line: #c9cdc3;
-  --signal: #d8ff4f;
-  --signal-dark: #263900;
+  --signal: #00ffaa;
+  --signal-dark: #004d35;
   --on-signal: #17211f;
   --spoiler-hint: #8f4a44;
   --spoiler-surface: #f6eeec;
@@ -108,8 +108,8 @@ main {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #65a30d;
-  box-shadow: 0 0 0 4px rgba(101, 163, 13, 0.14);
+  background: #00b37e;
+  box-shadow: 0 0 0 4px rgba(0, 179, 126, 0.14);
 }
 
 .hero {
@@ -548,7 +548,7 @@ h1 em {
 }
 
 .guide-tag span {
-  color: #7fac18;
+  color: #008f66;
 }
 
 .answer {
@@ -633,7 +633,7 @@ h1 em {
 }
 
 .highlight-item {
-  border-left-color: #7fac18;
+  border-left-color: #008f66;
 }
 
 .highlight-recruit {
@@ -964,7 +964,7 @@ details.sources small {
 }
 
 .submit:hover:not(:disabled) {
-  background: #e4ff7d;
+  background: #5cffce;
   transform: translateY(-2px);
 }
 
@@ -2152,19 +2152,7 @@ details.sources small {
 }
 
 .auth-google,
-.auth-steam {
-  width: 100%;
-  min-height: 46px;
-  border: 1.5px solid var(--ink);
-  background: var(--paper-strong);
-  color: var(--ink);
-  font-size: 0.9rem;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.auth-google:hover:not(:disabled),
-.auth-steam:hover:not(:disabled) {
+.auth-google:hover:not(:disabled) {
   background: var(--signal);
 }
 
@@ -2246,12 +2234,11 @@ details.sources small {
 }
 
 .auth-submit:hover:not(:disabled) {
-  background: #e4ff7d;
+  background: #5cffce;
 }
 
 .auth-submit:disabled,
-.auth-google:disabled,
-.auth-steam:disabled {
+.auth-google:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -2373,7 +2360,7 @@ details.sources small {
   --text-subtle: #c8cfca;
   --placeholder: #9aa39d;
   --line: #3a4340;
-  --signal-dark: #c2ef5a;
+  --signal-dark: #5cffce;
   --spoiler-hint: #c99a95;
   --spoiler-surface: #221a19;
   --danger: #f08070;
@@ -2447,7 +2434,7 @@ details.sources small {
     --text-subtle: #c8cfca;
     --placeholder: #9aa39d;
     --line: #3a4340;
-    --signal-dark: #c2ef5a;
+    --signal-dark: #5cffce;
     --spoiler-hint: #c99a95;
     --spoiler-surface: #221a19;
     --danger: #f08070;

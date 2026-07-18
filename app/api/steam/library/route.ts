@@ -26,17 +26,21 @@ export async function GET(request: Request) {
   }
 
   let accountSteamId: string | null = null;
+  let authed = false;
   if (token && url && anonKey) {
     const supabase = createClient(url, anonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
     const { data, error } = await supabase.auth.getUser();
     if (!error && data.user) {
+      authed = true;
       accountSteamId = steamIdFromMetadata(data.user.user_metadata);
     }
   }
 
-  const steamId = accountSteamId ?? cookieSteamId;
+  // Signed-in requests serve ONLY the account's own linked Steam; a device
+  // cookie from another user must never leak someone else's library.
+  const steamId = authed ? accountSteamId : cookieSteamId;
   if (!steamId) {
     return NextResponse.json({
       games: [],

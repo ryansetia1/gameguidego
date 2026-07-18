@@ -471,15 +471,17 @@ export default function Home() {
     }
   }, [linkSteamToAccount, refreshSteamStatus]);
 
+  // On sign-in, only REFRESH status (surfaces an already-linked account's Steam).
+  // Linking happens solely on the explicit `?steam=linked` return above, so a
+  // leftover device cookie can never silently attach to whoever signs in next.
   useEffect(() => {
     if (!user) return;
     void (async () => {
       const supabase = getSupabase();
       const token = (await supabase?.auth.getSession())?.data.session?.access_token;
       await refreshSteamStatus(token);
-      await linkSteamToAccount();
     })();
-  }, [linkSteamToAccount, refreshSteamStatus, user]);
+  }, [refreshSteamStatus, user]);
 
   useEffect(() => {
     if (!menuOpenId) return;
@@ -858,6 +860,13 @@ export default function Home() {
 
   async function signOut() {
     await getSupabase()?.auth.signOut();
+    // Clear the device Steam session too — otherwise the leftover gg_steam
+    // cookie auto-links to the next account signed in on this browser
+    // (shared-device library leak).
+    await fetch("/api/steam/pending", { method: "DELETE", credentials: "include" }).catch(
+      () => {},
+    );
+    setSteamId(null);
     setSidebarOpen(false);
     setMenuOpenId(null);
   }

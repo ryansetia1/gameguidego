@@ -22,15 +22,22 @@ export async function GET(request: Request) {
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   let accountSteamId: string | null = null;
+  let authed = false;
   if (token && url && anonKey) {
     const supabase = createClient(url, anonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
     const { data } = await supabase.auth.getUser();
-    accountSteamId = steamIdFromMetadata(data.user?.user_metadata);
+    if (data.user) {
+      authed = true;
+      accountSteamId = steamIdFromMetadata(data.user.user_metadata);
+    }
   }
 
-  const steamId = accountSteamId ?? cookieSteamId;
+  // Authenticated context trusts ONLY the account's linked Steam — never a
+  // device cookie left by another user. The cookie is for the token-less
+  // transient right after the OpenID return, before linking persists.
+  const steamId = authed ? accountSteamId : cookieSteamId;
   return NextResponse.json({
     steamId,
     connected: Boolean(steamId),
