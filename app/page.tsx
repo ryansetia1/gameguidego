@@ -1078,7 +1078,7 @@ export default function Home() {
           {user && (
             <button
               type="button"
-              className="burger"
+              className="nav-icon-btn burger"
               aria-label="Open your games"
               aria-expanded={sidebarOpen}
               onClick={() => {
@@ -1093,7 +1093,7 @@ export default function Home() {
           )}
           <a className="brand" href="#" aria-label="Game Guide Guru, home">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img className="brand-mark" src="/logo.png" alt="" width={30} height={30} />
+            <img className="brand-mark" src="/logo.png" alt="" width={38} height={38} />
             <span>GAME GUIDE GURU</span>
           </a>
         </div>

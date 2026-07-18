@@ -69,6 +69,7 @@ export function ProfileMenu({
   onSignOut,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const [themeOpen, setThemeOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const wrapRef = useRef<HTMLDivElement>(null);
   const pushedThemeRef = useRef(false);
@@ -104,17 +105,21 @@ export function ProfileMenu({
   }, [onSpoilerChange, user]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open && !themeOpen) return;
     function onPointerDown(event: PointerEvent) {
-      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+      if (!wrapRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+        setThemeOpen(false);
+      }
     }
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
+  }, [open, themeOpen]);
 
   function pickTheme(next: ThemeMode) {
     setThemeMode(next);
     saveTheme(next);
+    setThemeOpen(false);
     if (user) void persistThemeForUser(next);
   }
 
@@ -134,88 +139,108 @@ export function ProfileMenu({
   const avatarUrl = user ? avatarUrlFromUser(user) : null;
   const displayName = user ? displayNameFromMetadata(user.user_metadata) : "";
   const initial = user ? avatarInitialFromUser(user) : "?";
+  const themeIcon = THEME_OPTIONS.find((option) => option.mode === themeMode)?.icon ?? "◐";
 
   return (
-    <div className="profile-menu-wrap" ref={wrapRef}>
-      <button
-        type="button"
-        className="profile-menu-trigger"
-        aria-label={user ? "Account menu" : "Sign in"}
-        aria-expanded={open}
-        aria-haspopup="menu"
-        onClick={() => {
-          if (!user && supabaseReady) {
-            onSignIn();
-            return;
-          }
-          setOpen((value) => !value);
-        }}
-      >
-        {avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img className="profile-avatar" src={avatarUrl} alt="" />
-        ) : (
-          <span className="profile-avatar profile-avatar-fallback" aria-hidden="true">
-            {user ? initial : "◌"}
-          </span>
+    <div className="nav-account-wrap" ref={wrapRef}>
+      <div className="theme-toggle-wrap">
+        <button
+          type="button"
+          className="nav-icon-btn theme-toggle"
+          aria-label="Theme"
+          aria-expanded={themeOpen}
+          aria-haspopup="menu"
+          onClick={() => {
+            setOpen(false);
+            setThemeOpen((value) => !value);
+          }}
+        >
+          <span aria-hidden="true">{themeIcon}</span>
+        </button>
+
+        {themeOpen && (
+          <div className="theme-toggle-menu" role="menu" aria-label="Theme">
+            {THEME_OPTIONS.map((option) => (
+              <button
+                key={option.mode}
+                type="button"
+                role="menuitemradio"
+                aria-checked={themeMode === option.mode}
+                className={themeMode === option.mode ? "active" : undefined}
+                onClick={() => pickTheme(option.mode)}
+              >
+                <span aria-hidden="true">{option.icon}</span> {option.label}
+              </button>
+            ))}
+          </div>
         )}
-      </button>
+      </div>
 
-      {open && user && (
-        <div className="profile-menu" role="menu">
-          <div className="profile-menu-head">
-            <strong>{displayName || user.email || "Your account"}</strong>
-            {displayName && user.email && <small>{user.email}</small>}
-          </div>
-
-          <Link
-            href="/profile"
-            className="profile-menu-item"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-          >
-            Profile
-          </Link>
-
-          <label className="profile-menu-item profile-menu-toggle">
-            <span>{GLOBAL_SPOILER_TOGGLE_LABEL}</span>
-            <input
-              type="checkbox"
-              checked={spoilerMajor}
-              onChange={toggleSpoiler}
-              aria-label={GLOBAL_SPOILER_TOGGLE_LABEL}
-            />
-          </label>
-
-          <div className="profile-menu-section" role="group" aria-label="Theme">
-            <span className="profile-menu-section-label">Theme</span>
-            <div className="profile-menu-theme">
-              {THEME_OPTIONS.map((option) => (
-                <button
-                  key={option.mode}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={themeMode === option.mode}
-                  className={themeMode === option.mode ? "active" : undefined}
-                  onClick={() => pickTheme(option.mode)}
-                >
-                  <span aria-hidden="true">{option.icon}</span>
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
+      {user ? (
+        <div className="profile-menu-wrap">
           <button
             type="button"
-            className="profile-menu-item profile-menu-signout"
-            role="menuitem"
-            onClick={handleSignOut}
+            className="nav-icon-btn profile-menu-trigger"
+            aria-label="Account menu"
+            aria-expanded={open}
+            aria-haspopup="menu"
+            onClick={() => {
+              setThemeOpen(false);
+              setOpen((value) => !value);
+            }}
           >
-            Sign out
+            {avatarUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img className="profile-avatar" src={avatarUrl} alt="" />
+            ) : (
+              <span className="profile-avatar profile-avatar-fallback" aria-hidden="true">
+                {initial}
+              </span>
+            )}
           </button>
+
+          {open && (
+            <div className="profile-menu" role="menu">
+              <div className="profile-menu-head">
+                <strong>{displayName || user.email || "Your account"}</strong>
+                {displayName && user.email && <small>{user.email}</small>}
+              </div>
+
+              <Link
+                href="/profile"
+                className="profile-menu-item"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+              >
+                Profile
+              </Link>
+
+              <label className="profile-menu-item profile-menu-toggle">
+                <span>{GLOBAL_SPOILER_TOGGLE_LABEL}</span>
+                <input
+                  type="checkbox"
+                  checked={spoilerMajor}
+                  onChange={toggleSpoiler}
+                  aria-label={GLOBAL_SPOILER_TOGGLE_LABEL}
+                />
+              </label>
+
+              <button
+                type="button"
+                className="profile-menu-item profile-menu-signout"
+                role="menuitem"
+                onClick={handleSignOut}
+              >
+                Sign out
+              </button>
+            </div>
+          )}
         </div>
-      )}
+      ) : supabaseReady ? (
+        <button type="button" className="nav-button" onClick={onSignIn}>
+          Sign in
+        </button>
+      ) : null}
     </div>
   );
 }

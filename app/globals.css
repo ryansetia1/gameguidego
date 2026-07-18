@@ -15,6 +15,7 @@
   --disabled-bg: #e0e2d9;
   --disabled-text: #5f6762;
   --font-sans: var(--font-rubik), "Rubik", system-ui, sans-serif;
+  --nav-icon: 38px;
 }
 
 * {
@@ -87,8 +88,8 @@ main {
 
 .brand-mark {
   display: block;
-  width: 30px;
-  height: 30px;
+  width: var(--nav-icon);
+  height: var(--nav-icon);
   object-fit: contain;
 }
 
@@ -999,11 +1000,6 @@ details.sources small {
   position: relative;
 }
 
-.theme-toggle {
-  min-width: 44px;
-  padding: 0 10px;
-}
-
 .theme-toggle-menu {
   position: absolute;
   top: calc(100% + 6px);
@@ -1040,11 +1036,41 @@ details.sources small {
   align-items: center;
 }
 
-.nav-button {
+.nav-account-wrap {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.nav-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--nav-icon);
+  height: var(--nav-icon);
+  padding: 0;
   border: 1.5px solid var(--ink);
   background: var(--paper-strong);
   color: var(--ink);
-  padding: 8px 11px;
+  font-family: var(--font-sans);
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.nav-icon-btn:hover {
+  background: var(--signal);
+}
+
+.nav-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--nav-icon);
+  border: 1.5px solid var(--ink);
+  background: var(--paper-strong);
+  color: var(--ink);
+  padding: 0 11px;
   font-family: var(--font-sans);
   font-size: 0.6rem;
   font-weight: 700;
@@ -1060,31 +1086,20 @@ details.sources small {
 .nav-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
 }
 
 .burger {
-  display: flex;
   flex-direction: column;
-  justify-content: center;
   gap: 4px;
-  flex-shrink: 0;
-  width: 40px;
-  height: 36px;
-  padding: 0 9px;
-  border: 1.5px solid var(--ink);
-  background: var(--paper-strong);
-  cursor: pointer;
 }
 
 .burger span {
+  display: block;
+  width: 16px;
   height: 2px;
   background: var(--ink);
-}
-
-.burger:hover {
-  background: var(--signal);
 }
 
 .sidebar-backdrop {
@@ -2318,6 +2333,7 @@ details.sources small {
 .turn-action:hover:not(:disabled),
 .submit,
 .nav-button:hover,
+.nav-icon-btn:hover,
 .burger:hover,
 .sidebar-new,
 .sidebar-new:hover,
@@ -2511,20 +2527,7 @@ details.sources small {
 }
 
 .profile-menu-trigger {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  padding: 0;
-  border: 1.5px solid var(--ink);
-  background: var(--paper-strong);
-  cursor: pointer;
   overflow: hidden;
-}
-
-.profile-menu-trigger:hover {
-  background: var(--signal);
 }
 
 .profile-avatar {
