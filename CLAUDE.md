@@ -179,10 +179,12 @@ and simply cannot save.
   Mic permission only prompts on click (`recognition.start()`), never on load;
   the button hides when the browser lacks `SpeechRecognition` (e.g. Firefox).
   Language persists in `localStorage` (`gg:voice-lang`) and, signed-in,
-  `user_metadata.voice_lang`; changeable on `/profile`. Final-result only for
-  cross-device stability (iOS Safari drops interim). Singleton recognition
-  instance, 250ms delayed onend restart, iOS uses `continuous: false` + manual
-  restart, stops on tab background. `warmUpMicrophone()` acquires then releases
+  `user_metadata.voice_lang`; changeable on `/profile`. Stop uses
+  `recognition.stop()` (not `abort`) so finals flush into the composer; desktop
+  enables interim capture for the last chunk on stop, iOS stays final-only.
+  Singleton recognition instance, 250ms delayed onend restart, iOS uses
+  `continuous: false` + manual restart, stops on tab background.
+  `warmUpMicrophone()` acquires then releases
   the mic before recognition (primes iOS); live level meters are CSS-only because
   holding getUserMedia during recognition blocks SpeechRecognition. `coerceVoiceLang`
   + speech retry helpers covered by `npm run check`.

@@ -41,7 +41,8 @@ async function persistVoiceLangForUser(code: string) {
  *
  * ponytail: singleton instance (no re-new per start), delayed onend restart,
  * iOS uses continuous=false + manual restart, visibility stop on background.
- * Final-result only — interimResults off for iOS stability.
+ * User stop calls recognition.stop() (not abort) so finals flush; desktop keeps
+ * interimResults for a last-chunk capture on stop.
  */
 export function useVoiceInput({
   user,
@@ -58,6 +59,8 @@ export function useVoiceInput({
   const sessionRef = useRef(0);
   const restartTimerRef = useRef(0);
   const networkRetriesRef = useRef(0);
+  const lastInterimRef = useRef("");
+  const stopFallbackTimerRef = useRef(0);
   const onTranscriptRef = useRef(onTranscript);
   const onListeningChangeRef = useRef(onListeningChange);
   const stopRef = useRef<() => void>(() => {});
@@ -95,27 +98,77 @@ export function useVoiceInput({
     }
   }, []);
 
-  const teardown = useCallback(
-    (invalidateSession: boolean) => {
-      clearRestartTimer();
-      if (invalidateSession) sessionRef.current += 1;
-      listeningIntentRef.current = false;
-      networkRetriesRef.current = 0;
-      const recognition = recognitionRef.current;
-      recognitionRef.current = null;
+  const clearStopFallback = useCallback(() => {
+    if (stopFallbackTimerRef.current) {
+      clearTimeout(stopFallbackTimerRef.current);
+      stopFallbackTimerRef.current = 0;
+    }
+  }, []);
+
+  const flushInterim = useCallback(() => {
+    const pending = lastInterimRef.current.trim();
+    lastInterimRef.current = "";
+    if (pending) onTranscriptRef.current(pending);
+  }, []);
+
+  const finishStop = useCallback(() => {
+    clearRestartTimer();
+    clearStopFallback();
+    recognitionRef.current = null;
+    setListening(false);
+    sessionRef.current += 1;
+  }, [clearRestartTimer, clearStopFallback]);
+
+  const hardTeardown = useCallback(() => {
+    clearRestartTimer();
+    clearStopFallback();
+    listeningIntentRef.current = false;
+    networkRetriesRef.current = 0;
+    lastInterimRef.current = "";
+    const recognition = recognitionRef.current;
+    recognitionRef.current = null;
+    setListening(false);
+    sessionRef.current += 1;
+    try {
+      recognition?.abort();
+    } catch {
+      // ignore
+    }
+  }, [clearRestartTimer, clearStopFallback]);
+
+  const requestStop = useCallback(() => {
+    clearRestartTimer();
+    listeningIntentRef.current = false;
+    const recognition = recognitionRef.current;
+    if (!recognition) {
       setListening(false);
+      return;
+    }
+    setListening(false);
+    clearStopFallback();
+    stopFallbackTimerRef.current = window.setTimeout(() => {
+      stopFallbackTimerRef.current = 0;
+      if (recognitionRef.current !== recognition) return;
+      flushInterim();
+      finishStop();
+    }, 750);
+    try {
+      // stop() lets the engine flush a final result; abort() drops it.
+      recognition.stop();
+    } catch {
+      flushInterim();
       try {
-        recognition?.abort();
+        recognition.abort();
       } catch {
         // ignore
       }
-    },
-    [clearRestartTimer],
-  );
+      finishStop();
+    }
+  }, [clearRestartTimer, clearStopFallback, flushInterim, finishStop]);
 
   const stop = useCallback(() => {
-    teardown(true);
-  }, [teardown]);
+    requestStop();
+  }, [requestStop]);
 
   stopRef.current = stop;
 
@@ -137,6 +190,7 @@ export function useVoiceInput({
   useEffect(() => {
     return () => {
       clearRestartTimer();
+      clearStopFallback();
       sessionRef.current += 1;
       listeningIntentRef.current = false;
       try {
@@ -146,7 +200,7 @@ export function useVoiceInput({
       }
       recognitionRef.current = null;
     };
-  }, [clearRestartTimer]);
+  }, [clearRestartTimer, clearStopFallback]);
 
   function getRecognitionInstance(SpeechRecognition: new () => any) {
     if (!recognitionRef.current) {
@@ -170,25 +224,30 @@ export function useVoiceInput({
         recognition.start();
       } catch {
         if (session !== sessionRef.current) return;
-        teardown(true);
+        hardTeardown();
       }
     }, SPEECH_RESTART_MS);
   }
 
   function bindRecognition(recognition: any, session: number, code: string) {
+    const chunked = prefersChunkedSpeechRecognition();
     recognition.lang = code;
-    recognition.interimResults = false;
-    recognition.continuous = !prefersChunkedSpeechRecognition();
+    recognition.interimResults = !chunked;
+    recognition.continuous = !chunked;
     recognition.maxAlternatives = 1;
     recognition.onresult = (event: any) => {
       if (session !== sessionRef.current) return;
       networkRetriesRef.current = 0;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const chunk = event.results[i];
-        if (!chunk?.isFinal) continue;
         const transcript = chunk[0]?.transcript;
-        if (typeof transcript === "string" && transcript.trim()) {
-          onTranscriptRef.current(transcript.trim());
+        if (typeof transcript !== "string" || !transcript.trim()) continue;
+        const text = transcript.trim();
+        if (chunk.isFinal) {
+          lastInterimRef.current = "";
+          onTranscriptRef.current(text);
+        } else {
+          lastInterimRef.current = text;
         }
       }
     };
@@ -200,20 +259,20 @@ export function useVoiceInput({
         if (err === "network") {
           networkRetriesRef.current += 1;
           if (networkRetriesRef.current > SPEECH_NETWORK_RETRY_MAX) {
-            teardown(true);
+            hardTeardown();
             return;
           }
         }
         scheduleRestart(recognition, session);
         return;
       }
-      teardown(true);
+      hardTeardown();
     };
     recognition.onend = () => {
       if (session !== sessionRef.current) return;
       if (!listeningIntentRef.current) {
-        recognitionRef.current = null;
-        setListening(false);
+        flushInterim();
+        finishStop();
         return;
       }
       scheduleRestart(recognition, session);
@@ -227,6 +286,7 @@ export function useVoiceInput({
     sessionRef.current += 1;
     const session = sessionRef.current;
     networkRetriesRef.current = 0;
+    lastInterimRef.current = "";
     try {
       recognitionRef.current?.abort();
     } catch {
@@ -242,7 +302,7 @@ export function useVoiceInput({
       setListening(true);
     } catch {
       if (session !== sessionRef.current) return;
-      teardown(true);
+      hardTeardown();
     }
   }
 
