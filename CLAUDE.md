@@ -195,8 +195,9 @@ and simply cannot save.
 - `lib/llm-log.ts` + `lib/llm-db-log.ts`: best-effort log of each model call's system
   instruction, prompt, raw response, `duration_ms`, and Replicate `predict_time_ms`
   (token counts null — Replicate does not expose Gemini usage). File tail in
-  `llm-log.json` (dev / `LLM_LOG=1`); optional Supabase table `public.llm_calls`
-  (`db/llm-calls.sql`, `LLM_DB_LOG=1` in prod). Insert-only RLS — no client reads.
+  `llm-log.json` (dev / `LLM_LOG=1`); Supabase table `public.llm_calls`
+  (`db/llm-calls.sql`) when `NEXT_PUBLIC_SUPABASE_*` are set (`LLM_DB_LOG=0`
+  disables). Insert-only RLS — no client reads.
 - `lib/games.js`: `mapGames(payload)` maps a TheGamesDB `ByGameName?include=boxart`
   payload to `{ id, name, year, cover }` (year from `release_date`, cover built
   from the front box-art in the `include` block), dropping malformed entries.
@@ -320,9 +321,8 @@ Server-only secrets (never expose via `NEXT_PUBLIC_`, never commit `.env.local`)
 - `REPLICATE_MODEL` (optional, default `google/gemini-2.5-flash`).
 - `LLM_LOG` (optional; `1` enables the `llm-log.json` model-call log in
   production — it is on automatically in dev). `LLM_LOG_PATH` overrides the path.
-- `LLM_DB_LOG` (optional; `1` writes each model call to `public.llm_calls` in
-  Supabase — on automatically in dev when Supabase vars are set). Apply
-  `db/llm-calls.sql` first. Insert-only RLS; inspect via Supabase dashboard.
+- `LLM_DB_LOG` (optional; `0` disables writes to `public.llm_calls`. On by default
+  when Supabase vars are set — apply `db/llm-calls.sql` first. Insert-only RLS).
 - `THEGAMESDB_API_KEY` (optional; enables game-name autocomplete + box art via
   TheGamesDB). Missing key => the field degrades to free text. IGDB (Twitch
   `TWITCH_CLIENT_ID`/`SECRET`) is the intended eventual upgrade but not wired now.

@@ -3,10 +3,9 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-// Off in production unless explicitly enabled; always attempts when LLM_DB_LOG=1.
+// Log when Supabase vars are set. Set LLM_DB_LOG=0 to disable (e.g. local tests).
 const ENABLED =
-  process.env.LLM_DB_LOG === "1" ||
-  (process.env.NODE_ENV !== "production" && Boolean(url && anonKey));
+  process.env.LLM_DB_LOG !== "0" && Boolean(url && anonKey);
 
 let client: SupabaseClient | null = null;
 
@@ -45,7 +44,7 @@ export async function logLlmCallToDb(entry: LlmDbLogEntry): Promise<void> {
   const supabase = getClient();
   if (!supabase) return;
   try {
-    await supabase.from("llm_calls").insert({
+    const { error } = await supabase.from("llm_calls").insert({
       kind: entry.kind,
       model: entry.model.slice(0, 120),
       system_instruction: entry.system.slice(0, 100_000),
@@ -59,7 +58,10 @@ export async function logLlmCallToDb(entry: LlmDbLogEntry): Promise<void> {
       platform: entry.platform?.slice(0, 80) ?? null,
       user_id: entry.userId ?? null,
     });
-  } catch {
-    // Table missing, RLS, or quota — swallow so answers still return.
+    if (error) {
+      console.error("llm_calls insert failed:", error.message, error.code);
+    }
+  } catch (caught) {
+    console.error("llm_calls insert error:", caught);
   }
 }
