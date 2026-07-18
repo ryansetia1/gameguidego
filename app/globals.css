@@ -211,8 +211,25 @@ h1 em {
   animation: rise 480ms 60ms ease-out backwards;
 }
 
+/* Setup: cover column (tile + upload beneath) on the left, the required fields
+   (game name + platform) stacked on the right. */
+.setup-main {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.setup-fields {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .field-cover {
-  align-self: flex-start;
+  flex: none;
+  width: 92px;
 }
 
 .field {
@@ -1234,6 +1251,18 @@ details.sources small {
   border-bottom: 1px solid var(--line);
 }
 
+/* Sticky-bottom inside .sidebar-scroll: sits right under the last game when the
+   list fits (normal flow, empty space below it), and pins to the viewport bottom
+   only once the list overflows and scrolls. No margin-top:auto — that would push
+   it to the bottom of the scroll area and re-open the gap. */
+.sidebar-footer {
+  position: sticky;
+  bottom: 0;
+  padding: 12px 14px max(12px, env(safe-area-inset-bottom));
+  border-top: 1.5px solid var(--ink);
+  background: var(--paper-strong);
+}
+
 .sidebar-new,
 .sidebar-library-btn,
 .sidebar-steam-btn {
@@ -1503,11 +1532,19 @@ details.sources small {
   }
 }
 
+/* Scroll region holding the game list + the New game footer. The footer is
+   sticky-bottom: it sits right under the last game when the list fits, and pins
+   to the bottom only once the list overflows and scrolls. */
+.sidebar-scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
 .sidebar-list {
   margin: 0;
   padding: 0;
-  flex: 1;
-  overflow-y: auto;
   list-style: none;
 }
 
@@ -1962,8 +1999,7 @@ details.sources small {
   gap: 16px;
   align-items: flex-start;
   margin-top: 30px;
-  padding: 16px 16px 16px 16px;
-  padding-top: 44px;
+  padding: 16px;
   border: 1.5px solid var(--ink);
   background: var(--paper-strong);
   animation: rise 480ms 60ms ease-out backwards;
@@ -2003,6 +2039,8 @@ details.sources small {
 
 .game-card-meta h2 {
   margin: 0;
+  /* Clear the corner kebab so a long title doesn't run under it. */
+  padding-right: 40px;
   font-size: 1.15rem;
   overflow-wrap: anywhere;
 }
@@ -2022,35 +2060,52 @@ details.sources small {
   overflow-wrap: anywhere;
 }
 
-/* Cover field in the editable setup. */
+/* Cover field in the editable setup: tile with a centered upload button. The
+   column stretches to the fields' height (align-items:stretch on .setup-main) and
+   the tile fills from the game-name input down to the platform field's bottom. */
 .cover-edit {
   display: flex;
-  gap: 12px;
-  align-items: center;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
 }
 
-.cover-edit-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: flex-start;
+.cover-drop {
+  position: relative;
+  flex: 1;
+  min-height: 108px;
+  width: 100%;
+}
+
+.cover-setup {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .cover-upload {
-  display: inline-block;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: calc(100% - 10px);
   border: 1.5px solid var(--ink);
   background: var(--paper-strong);
-  padding: 8px 12px;
+  padding: 7px 9px;
+  text-align: center;
   font-family: var(--font-sans);
-  font-size: 0.62rem;
+  font-size: 0.56rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
+  line-height: 1.25;
   text-transform: uppercase;
   cursor: pointer;
 }
 
 .cover-upload:hover {
   background: var(--signal);
+  color: var(--on-signal);
 }
 
 .cover-clear {
@@ -2078,6 +2133,12 @@ details.sources small {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
+}
+
+/* Preferred guide + Spoilers split the full width evenly. */
+.opt-row > * {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .opt-row > .opt-details {
@@ -2297,6 +2358,7 @@ details.sources small {
   display: flex;
   align-items: center;
   gap: 12px;
+  cursor: pointer;
   padding: 8px 10px;
   border: 1.5px solid var(--ink);
   background: var(--paper-strong);

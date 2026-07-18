@@ -639,36 +639,35 @@ export default function Home() {
     return () => document.removeEventListener("keydown", onKey);
   }, [confirmState]);
 
-  // Mobile edge-swipe: from the left edge → sidebar; from the right edge → the
-  // last-opened library (Steam if connected + last used, else saved). Signed-in
-  // only; ignored while an overlay is open or a message is being edited.
-  // ponytail: fixed edge/threshold heuristics; free in the installed PWA (no
-  // browser back-gesture to fight there).
+  // Mobile edge-swipe. Closed: swipe in from the left edge → sidebar; from the
+  // right edge → last-opened library (Steam if connected + last used, else saved).
+  // Open: swipe back the other way to dismiss (left → close sidebar, right → close
+  // library). Signed-in only; ignored while a modal (auth/confirm) or an inline
+  // edit is active. ponytail: fixed edge/threshold heuristics; free in the
+  // installed PWA (no browser back-gesture to fight there).
   useEffect(() => {
     if (typeof window === "undefined" || !user) return;
     const EDGE = 24;
     const THRESHOLD = 60;
-    const blocked =
-      sidebarOpen ||
-      libraryOpen ||
-      steamLibraryOpen ||
-      authOpen ||
-      confirmState !== null ||
-      editingGame ||
-      editingIndex !== null;
+    const modalOpen =
+      authOpen || confirmState !== null || editingGame || editingIndex !== null;
+    const overlayOpen = sidebarOpen || libraryOpen || steamLibraryOpen;
     let startX = 0;
     let startY = 0;
     let tracking = false;
 
     function onStart(event: TouchEvent) {
-      if (blocked || event.touches.length !== 1) {
+      if (modalOpen || event.touches.length !== 1) {
         tracking = false;
         return;
       }
       const t = event.touches[0];
-      tracking = t.clientX <= EDGE || t.clientX >= window.innerWidth - EDGE;
       startX = t.clientX;
       startY = t.clientY;
+      // Overlay open → any horizontal swipe on the panel can dismiss it; closed →
+      // only start tracking from a screen edge.
+      tracking =
+        overlayOpen || t.clientX <= EDGE || t.clientX >= window.innerWidth - EDGE;
     }
 
     function onEnd(event: TouchEvent) {
@@ -678,6 +677,16 @@ export default function Home() {
       const dx = t.clientX - startX;
       const dy = t.clientY - startY;
       if (Math.abs(dx) < THRESHOLD || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      // Dismiss an open panel with the reverse swipe.
+      if (sidebarOpen) {
+        if (dx < 0) dismissOverlay();
+        return;
+      }
+      if (libraryOpen || steamLibraryOpen) {
+        if (dx > 0) dismissOverlay();
+        return;
+      }
+      // Nothing open → edge-swipe opens.
       if (startX <= EDGE && dx > 0) {
         setSidebarOpen(true);
         pushOverlayHistory();
@@ -1446,9 +1455,6 @@ export default function Home() {
               </button>
             </div>
             <div className="sidebar-actions">
-              <button type="button" className="sidebar-new" onClick={newGame}>
-                + New game
-              </button>
               <button
                 type="button"
                 className="sidebar-library-btn"
@@ -1471,6 +1477,7 @@ export default function Home() {
                 </button>
               )}
             </div>
+            <div className="sidebar-scroll">
             {chats.length === 0 ? (
               <p className="sidebar-empty">No saved games yet.</p>
             ) : (
@@ -1532,6 +1539,12 @@ export default function Home() {
                 ))}
               </ul>
             )}
+            <div className="sidebar-footer">
+              <button type="button" className="sidebar-new" onClick={newGame}>
+                + New game
+              </button>
+            </div>
+            </div>
           </aside>
 
           {libraryOpen && (
@@ -1655,11 +1668,26 @@ export default function Home() {
       )}
 
       {started && showSticky && (
-        <div className="sticky-header">
+        <div
+          className="sticky-header"
+          onClick={scrollToTop}
+          role="button"
+          tabIndex={0}
+          aria-label="Scroll to top"
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              scrollToTop();
+            }
+          }}
+        >
           <button
             type="button"
             className="sticky-back"
-            onClick={goHome}
+            onClick={(event) => {
+              event.stopPropagation();
+              goHome();
+            }}
             aria-label="Back to home"
           >
             ←
@@ -1752,12 +1780,12 @@ export default function Home() {
         </section>
       ) : (
         <section className="setup" aria-label="Game context" ref={topRef}>
+          <div className="setup-main">
           {coverEnabled && (
             <div className="field field-cover">
-              <span className="field-label">Cover</span>
               <div className="cover-edit">
-                <CoverThumb cover={cover} name={game} className="cover-md" />
-                <div className="cover-edit-actions">
+                <div className="cover-drop">
+                  <CoverThumb cover={cover} name={game} className="cover-setup" />
                   <label className="cover-upload">
                     {cover ? "Replace" : "Upload cover"}
                     <input
@@ -1772,36 +1800,39 @@ export default function Home() {
                       }}
                     />
                   </label>
-                  {cover && (
-                    <button
-                      type="button"
-                      className="cover-clear"
-                      onClick={() => void clearCover()}
-                      disabled={uploadingCover || loading}
-                    >
-                      Clear
-                    </button>
-                  )}
                 </div>
+                {cover && (
+                  <button
+                    type="button"
+                    className="cover-clear"
+                    onClick={() => void clearCover()}
+                    disabled={uploadingCover || loading}
+                  >
+                    Clear
+                  </button>
+                )}
                 {pendingCover && <span className="cover-pending">Uploads when you send</span>}
               </div>
             </div>
           )}
-          <div className="field field-game">
-            <label htmlFor="game">Game name</label>
-            <GameAutocomplete
-              value={game}
-              onChange={handleGameChange}
-              onPick={pickGame}
-              showCover={coverEnabled}
-              disabled={loading}
-            />
+          <div className="setup-fields">
+            <div className="field field-game">
+              <label htmlFor="game">Game name</label>
+              <GameAutocomplete
+                value={game}
+                onChange={handleGameChange}
+                onPick={pickGame}
+                showCover={coverEnabled}
+                disabled={loading}
+              />
+            </div>
+            <div className="field field-platform">
+              <span className="field-label" id="platform-label">
+                Platform
+              </span>
+              <PlatformSelect value={platform} onChange={setPlatform} />
+            </div>
           </div>
-          <div className="field field-platform">
-            <span className="field-label" id="platform-label">
-              Platform
-            </span>
-            <PlatformSelect value={platform} onChange={setPlatform} />
           </div>
           <div className="opt-row">
             <GuideLinkField
