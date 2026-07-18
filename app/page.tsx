@@ -362,6 +362,7 @@ export default function Home() {
   const topRef = useRef<HTMLElement>(null);
   const jumpRef = useRef(false);
   const chatHistoryPushed = useRef(false);
+  const steamLinkHandledRef = useRef(false);
   const conversationGame = useRef("");
   const activeChatIdRef = useRef<string | null>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
@@ -458,27 +459,29 @@ export default function Home() {
     const token = sessionData.session?.access_token;
     if (!token) return false;
 
-    const status = await refreshSteamStatus(token);
-    if (!status.steamId) return false;
-
+    // The gg_steam cookie set by the OpenID callback holds the verified SteamID;
+    // /api/steam/link reads it server-side. Do NOT pre-check /api/steam/me — when
+    // authenticated it deliberately ignores the cookie and returns null (the
+    // account isn't linked yet), which would abort the link before it starts.
     const linkResponse = await fetch("/api/steam/link", {
       method: "POST",
       credentials: "include",
       headers: { Authorization: `Bearer ${token}` },
     });
-    const linkPayload: { ok?: boolean; error?: string } = await linkResponse.json();
+    const linkPayload: { ok?: boolean; error?: string; steamId?: string } =
+      await linkResponse.json();
     if (!linkResponse.ok || !linkPayload.ok) {
       if (linkPayload.error !== "no_steam_session") {
         setError("Could not save Steam to your account. Your library still works on this device.");
       }
-      return Boolean(status.connected);
+      return false;
     }
 
     const { data } = await supabase.auth.refreshSession();
     if (data.session?.user) setUser(data.session.user);
-    setSteamId(status.steamId);
+    if (linkPayload.steamId) setSteamId(linkPayload.steamId);
     return true;
-  }, [refreshSteamStatus, user]);
+  }, [user]);
 
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
@@ -549,25 +552,30 @@ export default function Home() {
     const steam = params.get("steam");
     if (!steam) return;
 
-    params.delete("steam");
-    const rest = params.toString();
-    window.history.replaceState(
-      {},
-      "",
-      `${window.location.pathname}${rest ? `?${rest}` : ""}`,
-    );
+    const stripParam = () => {
+      params.delete("steam");
+      const rest = params.toString();
+      window.history.replaceState(
+        {},
+        "",
+        `${window.location.pathname}${rest ? `?${rest}` : ""}`,
+      );
+    };
 
     if (steam === "error") {
+      stripParam();
       setError("Steam sign-in failed. Try again.");
       return;
     }
     if (steam === "linked") {
-      void (async () => {
-        await refreshSteamStatus();
-        await linkSteamToAccount();
-      })();
+      // Linking needs the signed-in Supabase user, whose session loads async.
+      // Wait for it before consuming the param, or we'd strip it and no-op.
+      if (!user || steamLinkHandledRef.current) return;
+      steamLinkHandledRef.current = true;
+      stripParam();
+      void linkSteamToAccount();
     }
-  }, [linkSteamToAccount, refreshSteamStatus]);
+  }, [user, linkSteamToAccount]);
 
   // On sign-in, only REFRESH status (surfaces an already-linked account's Steam).
   // Linking happens solely on the explicit `?steam=linked` return above, so a
@@ -1305,10 +1313,7 @@ export default function Home() {
                     <button
                       type="button"
                       className="sidebar-open"
-                      onClick={() => {
-                        openChat(chat);
-                        if (sidebarOpen) dismissOverlay();
-                      }}
+                      onClick={() => openChat(chat)}
                     >
                       <CoverThumb
                         cover={chat.cover_url ?? ""}
