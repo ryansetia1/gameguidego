@@ -15,13 +15,13 @@ const rubik = Rubik({
 const themeInitScript = `(function(){try{var t=localStorage.getItem("gg:theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;}catch(e){}})();`;
 
 export const metadata: Metadata = {
-  title: "GameGuide Guru",
+  title: "Game Guide Guru",
   description: "Find your way out when your adventure gets stuck.",
-  applicationName: "GameGuide Guru",
+  applicationName: "Game Guide Guru",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "GameGuide Guru",
+    title: "Game Guide Guru",
   },
 };
 

@@ -139,11 +139,21 @@ h1 em {
   display: block;
   color: var(--signal-dark);
   font-weight: 400;
-  text-decoration: underline;
-  text-decoration-color: var(--signal);
-  text-decoration-thickness: 0.26em;
-  text-underline-offset: -0.16em;
-  text-decoration-skip-ink: none;
+  font-style: italic;
+  text-decoration: none;
+  padding-bottom: 0.08em;
+  background-image: linear-gradient(var(--signal), var(--signal));
+  background-repeat: no-repeat;
+  background-size: 100% 0.22em;
+  background-position: left bottom 0.02em;
+}
+
+:root[data-theme="dark"] h1 em {
+  color: var(--ink);
+  text-shadow:
+    0 1px 0 #14181a,
+    0 2px 0 #14181a,
+    0 3px 6px rgba(20, 24, 26, 0.85);
 }
 
 .intro {
@@ -2351,6 +2361,14 @@ details.sources small {
 
   :root:not([data-theme="light"]) .combo-search:focus {
     background: #2a3134;
+  }
+
+  :root:not([data-theme="light"]) h1 em {
+    color: var(--ink);
+    text-shadow:
+      0 1px 0 #14181a,
+      0 2px 0 #14181a,
+      0 3px 6px rgba(20, 24, 26, 0.85);
   }
 
   :root:not([data-theme="light"]) .theme-toggle-menu button.active {
