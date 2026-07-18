@@ -29,6 +29,8 @@ import {
 import { getSupabase, type Chat } from "@/lib/supabase";
 import { steamIdFromMetadata } from "@/lib/steam.js";
 
+const STEAM_LINK_PENDING_KEY = "gg:steam-link-pending";
+
 type Source = {
   title: string;
   url: string;
@@ -358,6 +360,14 @@ export default function Home() {
 
     if (steam === "error") {
       setError("Steam sign-in failed. Try again.");
+      return;
+    }
+    if (steam === "linked") {
+      try {
+        window.sessionStorage.setItem(STEAM_LINK_PENDING_KEY, "1");
+      } catch {
+        // private mode
+      }
     }
   }, []);
 
@@ -368,21 +378,57 @@ export default function Home() {
     if (!supabase) return;
 
     void (async () => {
-      if (steamIdFromMetadata(user.user_metadata)) return;
-
-      const response = await fetch("/api/steam/pending", { credentials: "include" });
-      const payload: { steamId?: string | null } = await response.json();
-      if (!payload.steamId) return;
-
-      const { error: linkError } = await supabase.auth.updateUser({
-        data: { steam_id: payload.steamId },
-      });
-      await fetch("/api/steam/pending", { method: "DELETE", credentials: "include" });
-
-      if (linkError) {
-        setError("Could not link Steam to your account.");
+      if (steamIdFromMetadata(user.user_metadata)) {
+        try {
+          window.sessionStorage.removeItem(STEAM_LINK_PENDING_KEY);
+        } catch {
+          // ignore
+        }
         return;
       }
+
+      let pending = false;
+      try {
+        pending = window.sessionStorage.getItem(STEAM_LINK_PENDING_KEY) === "1";
+      } catch {
+        // ignore
+      }
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        setError("Sign in to link Steam.");
+        return;
+      }
+
+      const linkResponse = await fetch("/api/steam/link", {
+        method: "POST",
+        credentials: "include",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const linkPayload: { ok?: boolean; steamId?: string; error?: string } =
+        await linkResponse.json();
+
+      if (!linkResponse.ok || !linkPayload.ok) {
+        if (pending && linkPayload.error === "no_pending") {
+          setError("Steam connected, but the link expired. Click Connect Steam again.");
+        } else {
+          setError("Could not link Steam to your account.");
+        }
+        try {
+          window.sessionStorage.removeItem(STEAM_LINK_PENDING_KEY);
+        } catch {
+          // ignore
+        }
+        return;
+      }
+
+      try {
+        window.sessionStorage.removeItem(STEAM_LINK_PENDING_KEY);
+      } catch {
+        // ignore
+      }
+
       const { data } = await supabase.auth.getUser();
       if (data.user) setUser(data.user);
     })();
@@ -646,6 +692,11 @@ export default function Home() {
   }
 
   function connectSteam() {
+    if (!user) {
+      setError("Sign in first, then connect Steam.");
+      setAuthOpen(true);
+      return;
+    }
     window.location.href = "/api/steam/login";
   }
 

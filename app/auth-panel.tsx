@@ -113,11 +113,13 @@ export function AuthPanel({ onClose }: Props) {
           className="auth-steam"
           disabled={busy}
           onClick={() => {
+            onClose();
             window.location.href = "/api/steam/login";
           }}
         >
           Continue with Steam
         </button>
+        <p className="auth-steam-hint">Sign in with email or Google first to save chats, then link Steam.</p>
 
         <div className="auth-divider">
           <span>or</span>

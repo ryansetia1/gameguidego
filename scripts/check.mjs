@@ -99,6 +99,7 @@ assert.equal(
   "76561198000000000",
 );
 assert.equal(steamIdFromMetadata({ steam_id: "76561198000000000" }), "76561198000000000");
+assert.equal(steamIdFromMetadata({ steam_id: 76561198000000000 }), "76561198000000000");
 assert.match(steamLibraryCoverUrl(570), /\/570\/library_600x900\.jpg$/);
 
 // Empty search must not crash and must tell the model to fall back to knowledge.

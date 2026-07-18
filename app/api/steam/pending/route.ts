@@ -1,13 +1,13 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-export const runtime = "nodejs";
+import { PENDING_STEAM_COOKIE } from "@/lib/steam.js";
 
-const PENDING_COOKIE = "pending_steam_id";
+export const runtime = "nodejs";
 
 export async function GET() {
   const cookieStore = await cookies();
-  const steamId = cookieStore.get(PENDING_COOKIE)?.value ?? "";
+  const steamId = cookieStore.get(PENDING_STEAM_COOKIE)?.value ?? "";
   if (!/^\d{5,}$/.test(steamId)) {
     return NextResponse.json({ steamId: null });
   }
@@ -15,7 +15,13 @@ export async function GET() {
 }
 
 export async function DELETE() {
-  const cookieStore = await cookies();
-  cookieStore.delete(PENDING_COOKIE);
-  return NextResponse.json({ ok: true });
+  const response = NextResponse.json({ ok: true });
+  response.cookies.set(PENDING_STEAM_COOKIE, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 0,
+    path: "/",
+  });
+  return response;
 }

@@ -2075,6 +2075,14 @@ details.sources small {
   background: var(--signal);
 }
 
+.auth-steam-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
 .auth-divider {
   display: flex;
   align-items: center;
