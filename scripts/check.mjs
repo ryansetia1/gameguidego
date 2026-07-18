@@ -12,7 +12,8 @@ import {
 } from "../lib/prompt.js";
 import { selectSources } from "../lib/rank.js";
 import { parseBlocks, parseInline } from "../lib/markdown.js";
-import { buildSpoilerBlock, coerceSpoilerPrefs } from "../lib/spoiler-prefs.js";
+import { buildSpoilerBlock, coerceSpoilerPrefs, loadSpoilerPrefs } from "../lib/spoiler-prefs.js";
+import { coerceDisplayName, displayNameFromMetadata } from "../lib/profile.js";
 import { coerceThemeMode, themeFromUserMetadata } from "../lib/theme.js";
 import { buildGuideDiscoveryQuery } from "../lib/guide-search.js";
 import {
@@ -78,6 +79,18 @@ const spoilerPrompt = buildPrompt({
 assert.match(spoilerPrompt, /Major spoiler settings/);
 assert.match(spoilerPrompt, /BLOCKED/);
 assert.match(spoilerPrompt, /reply in this exact language/i);
+
+const namedPrompt = buildPrompt({
+  game: "Zelda",
+  question: "Where is the dungeon?",
+  sources: [],
+  playerName: "Ryan",
+});
+assert.match(namedPrompt, /Player display name: Ryan/);
+
+assert.equal(coerceDisplayName("  Ryan  "), "Ryan");
+assert.equal(displayNameFromMetadata({ display_name: "Ayu" }), "Ayu");
+assert.equal(loadSpoilerPrefs().major, false);
 
 assert.equal(coerceSpoilerPrefs({ major: true }).major, true);
 assert.equal(coerceSpoilerPrefs({ story: true, recruits: false }).major, true);
@@ -234,6 +247,9 @@ assert.equal(withSpoilers.spoilers.length, 1);
 assert.equal(withSpoilers.spoilers[0].detail, "The village burns.");
 assert.deepEqual(coerceSpoilers([{ title: "x" }]), []);
 assert.deepEqual(coerceSpoilers([{ detail: "Reveal" }]), [{ detail: "Reveal" }]);
+assert.deepEqual(coerceSpoilers([{ detail: "Line one.\n\n1. Step" }]), [
+  { detail: "Line one.\n\n1. Step" },
+]);
 
 const fenced = parseSummary(
   '```json\n{"answer":"Done.","highlights":[{"kind":"tip","title":"Save first","detail":""}]}\n```',

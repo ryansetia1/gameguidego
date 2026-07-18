@@ -15,7 +15,7 @@ and simply cannot save.
 ## Architecture
 
 - `app/page.tsx`: English client chat UI (game field, platform, optional
- preferred-guide link, per-game major-spoiler toggle in `localStorage`, message feed,
+ preferred-guide link, global major-spoiler toggle (profile menu + `user_metadata.spoiler_major`), message feed,
  docked composer) and `/api/solve` consumer.
   Keeps `messages` state and sends the last 10 messages (5 turns) as `history`
   plus `preferredUrl` and `spoilerPrefs` (`major`, default off). Also owns Supabase auth state, the "Your games" menu
@@ -33,8 +33,9 @@ and simply cannot save.
   opens a 2-column cover-art grid,   per-message image attachments (signed-in only: compressed client-side, one
   paperclip menu beside Send for photo library or camera, uploaded to the `covers` bucket at send time, sent
   to Gemini via Replicate's `images` field`; edit/retry drops truncated turns'
-  Storage images), System/Light/Dark theme toggle (`gg:theme` in `localStorage`;
-  signed-in users also sync via Supabase Auth `user_metadata.theme`),
+  Storage images), profile avatar menu (theme, spoilers, sign out) and `/profile`
+  page for `user_metadata.display_name` (LLM uses it in prompts), theme via
+  `gg:theme` / `user_metadata.theme`,
   light-markdown rendering of answers (`lib/markdown.js`: bold/lists/headings),
   a dismissable examples strip
   (remembered in `localStorage`), and auto-scroll (smooth on new turns, instant
@@ -83,8 +84,9 @@ and simply cannot save.
   `lib/games.js#mapGames` shapes the payload. Provider swap to IGDB later is this
   file + `mapGames` only.
 - `app/api/solve/route.ts`: validates/sanitizes `{ game, platform, question,
-  history, preferredUrl, spoilerPrefs }` at the trust boundary (history capped to 10, content
-  truncated, `preferredUrl` must be http/https, `spoilerPrefs` coerced to booleans). Always calls `resolveQuestion`
+  history, preferredUrl, spoilerPrefs, playerName }` at the trust boundary (history capped to 10, content
+  truncated, `preferredUrl` must be http/https, `spoilerPrefs` coerced to booleans,
+  `playerName` from `display_name`, max 32 chars). Always calls `resolveQuestion`
   to rewrite the query into standalone English before searching. Wraps the search
   in a cache (`lib/search-cache.ts`) keyed by `searchQuery + preferredUrl`.
   Search is best-effort (skipped if no `TAVILY_API_KEY`, failures swallowed); the
@@ -129,8 +131,9 @@ and simply cannot save.
   question, history })` does a small, low-token call to rewrite any question into
   a standalone English search query, falling back to the raw question on any
   failure. Exports the `Turn`, `Highlight`, and `SummaryResult` types.
-- `lib/spoiler-prefs.js`: per-game **major spoiler** toggle (`major`, default off)
-  in `localStorage` (`gg:spoiler-prefs`; migrates the old three-toggle shape),
+- `lib/profile.js`: `display_name` / avatar helpers for the profile menu and page.
+- `lib/spoiler-prefs.js`: global **major spoiler** toggle (`major`, default off)
+  in `localStorage` (`gg:spoiler-major`; signed-in users sync `user_metadata.spoiler_major`),
   `buildSpoilerBlock` + `buildSpoilerOutputRules` for the summarize prompt (LLM
   filters to genuinely major twists; routine walkthrough stays in `answer`),
   `coerceSpoilerPrefs` at the API trust boundary. Covered by `npm run check`.

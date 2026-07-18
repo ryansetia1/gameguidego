@@ -111,6 +111,7 @@ export type SummarizeInput = {
   history?: Turn[];
   images?: string[];
   spoilerPrefs?: SpoilerPrefs;
+  playerName?: string;
 };
 
 export async function summarize(input: SummarizeInput): Promise<SummaryResult> {

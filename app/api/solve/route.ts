@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getCachedSearch, setCachedSearch } from "@/lib/search-cache";
 import { resolveQuestion, summarize, type Turn } from "@/lib/replicate";
 import { coerceSpoilerPrefs } from "@/lib/spoiler-prefs";
+import { coerceDisplayName } from "@/lib/profile.js";
 import { searchGuides, type SearchResult } from "@/lib/tavily";
 
 export const runtime = "nodejs";
@@ -77,6 +78,7 @@ export async function POST(request: Request) {
   const history = parseHistory(record.history);
   const images = parseImages(record.images);
   const spoilerPrefs = coerceSpoilerPrefs(record.spoilerPrefs);
+  const playerName = coerceDisplayName(record.playerName);
 
   if (question.length < 2) {
     return NextResponse.json(
@@ -127,6 +129,7 @@ export async function POST(request: Request) {
       history,
       images,
       spoilerPrefs,
+      playerName,
     });
 
     return NextResponse.json({

@@ -8,7 +8,7 @@ import { GameAutocomplete } from "./game-autocomplete";
 import { GuideLinkField } from "./guide-link-field";
 import { PlatformSelect } from "./platform-select";
 import { SteamLibrary, type SteamGame } from "./steam-library";
-import { ThemeToggle } from "./theme-toggle";
+import { ProfileMenu } from "./profile-menu";
 import {
   KINDS,
   KIND_LABELS,
@@ -21,11 +21,12 @@ import { parseBlocks } from "@/lib/markdown.js";
 import { tgdbPlatformToLabel } from "@/lib/platforms.js";
 import {
   DEFAULT_SPOILER_PREFS,
-  SPOILER_TOGGLE_LABEL,
   loadSpoilerPrefs,
   saveSpoilerPrefs,
+  spoilerMajorFromUserMetadata,
   type SpoilerPrefs,
 } from "@/lib/spoiler-prefs.js";
+import { displayNameFromMetadata } from "@/lib/profile.js";
 import { getSupabase, type Chat } from "@/lib/supabase";
 import { steamIdFromMetadata } from "@/lib/steam.js";
 
@@ -231,27 +232,6 @@ function groupHighlights(highlights: Highlight[]) {
     const items = highlights.filter((h) => h.kind === kind);
     return items.length ? [{ kind, items }] : [];
   });
-}
-
-function SpoilerToggle({
-  prefs,
-  onChange,
-  compact = false,
-}: {
-  prefs: SpoilerPrefs;
-  onChange: (value: boolean) => void;
-  compact?: boolean;
-}) {
-  return (
-    <label className={`spoiler-toggle${compact ? " spoiler-toggle-compact" : ""}`}>
-      <input
-        type="checkbox"
-        checked={prefs.major === true}
-        onChange={(event) => onChange(event.target.checked)}
-      />
-      <span>{SPOILER_TOGGLE_LABEL}</span>
-    </label>
-  );
 }
 
 export default function Home() {
@@ -493,28 +473,28 @@ export default function Home() {
   }, [attachOpen]);
 
   useEffect(() => {
-    if (!game.trim()) {
-      setSpoilerPrefs(DEFAULT_SPOILER_PREFS);
-      return;
+    setSpoilerPrefs(loadSpoilerPrefs());
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const remote = spoilerMajorFromUserMetadata(user.user_metadata);
+    if (remote !== null) {
+      setSpoilerPrefs({ major: remote });
+      saveSpoilerPrefs({ major: remote });
     }
-    setSpoilerPrefs(loadSpoilerPrefs(game));
-  }, [game]);
+  }, [user]);
+
+  const updateSpoilerPref = useCallback((value: boolean) => {
+    const next = { major: value };
+    setSpoilerPrefs(next);
+    saveSpoilerPrefs(next);
+  }, []);
 
   useEffect(() => {
     if (editingIndex === null) return;
     editTextareaRef.current?.focus();
   }, [editingIndex]);
-
-  const updateSpoilerPref = useCallback(
-    (value: boolean) => {
-      setSpoilerPrefs((prev) => {
-        const next = { major: value };
-        if (game.trim()) saveSpoilerPrefs(game, next);
-        return next;
-      });
-    },
-    [game],
-  );
 
   // Show the compact sticky header once the game card/fields scroll out of view.
   useEffect(() => {
@@ -946,6 +926,7 @@ export default function Home() {
           preferredUrl,
           images,
           spoilerPrefs,
+          playerName: user ? displayNameFromMetadata(user.user_metadata) : "",
         }),
       });
       const data: unknown = await response.json();
@@ -1076,23 +1057,18 @@ export default function Home() {
         </div>
 
         <div className="nav-actions">
-          <ThemeToggle user={user} />
-          {user ? (
-            <button type="button" className="nav-button" onClick={signOut}>
-              Sign out
-            </button>
-          ) : supabaseReady ? (
-            <button
-              type="button"
-              className="nav-button"
-              onClick={() => {
-                setAuthOpen(true);
-                pushOverlayHistory();
-              }}
-            >
-              Sign in
-            </button>
-          ) : (
+          <ProfileMenu
+            user={user}
+            supabaseReady={supabaseReady}
+            spoilerMajor={spoilerPrefs.major}
+            onSpoilerChange={updateSpoilerPref}
+            onSignIn={() => {
+              setAuthOpen(true);
+              pushOverlayHistory();
+            }}
+            onSignOut={() => void signOut()}
+          />
+          {!user && !supabaseReady && (
             <span className="live-badge">
               <span aria-hidden="true" />
               WEB LIVE
@@ -1354,13 +1330,6 @@ export default function Home() {
                 Preferred guide ↗
               </a>
             )}
-            <div className="spoiler-panel">
-              <SpoilerToggle
-                prefs={spoilerPrefs}
-                onChange={updateSpoilerPref}
-                compact
-              />
-            </div>
           </div>
         </section>
       ) : (
@@ -1423,14 +1392,6 @@ export default function Home() {
             platform={platform}
             disabled={loading}
           />
-          <div className="field field-wide spoiler-field">
-            <span className="field-label">Spoilers</span>
-            <p className="field-hint">
-              Off by default — enable only if you want major plot twists shown in a
-              collapsed section.
-            </p>
-            <SpoilerToggle prefs={spoilerPrefs} onChange={updateSpoilerPref} />
-          </div>
           {editingGame && (
             <div className="field field-wide setup-done">
               <button type="button" className="nav-button" onClick={() => void saveGameMeta()}>
