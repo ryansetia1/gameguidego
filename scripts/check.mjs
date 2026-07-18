@@ -30,6 +30,7 @@ import {
   steamIdFromMetadata,
   steamLibraryCoverUrl,
   yearFromSteamReleaseDate,
+  yearFromUnixSeconds,
 } from "../lib/steam.js";
 import { signSteamSession, verifySteamSession } from "../lib/steam-session.js";
 import {
@@ -164,6 +165,8 @@ assert.match(steamLibraryCoverUrl(570), /\/570\/library_600x900\.jpg$/);
 assert.equal(yearFromSteamReleaseDate("Nov 1, 2004"), "2004");
 assert.equal(yearFromSteamReleaseDate("2020"), "2020");
 assert.equal(yearFromSteamReleaseDate(""), "");
+assert.equal(yearFromUnixSeconds(1373389200), "2013");
+assert.equal(yearFromUnixSeconds(0), "");
 
 const signed = signSteamSession("76561198000000000");
 assert.equal(verifySteamSession(signed), "76561198000000000");
