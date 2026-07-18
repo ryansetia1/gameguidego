@@ -170,6 +170,17 @@ and simply cannot save.
   `buildSpoilerBlock` + `buildSpoilerOutputRules` for the summarize prompt (LLM
   filters to genuinely major twists; routine walkthrough stays in `answer`),
   `coerceSpoilerPrefs` at the API trust boundary. Covered by `npm run check`.
+- `lib/voice.js` + `app/voice-input.tsx`: mic button in the composer (between
+  attach and Send, **all users**) using the free browser Web Speech API. First
+  click with no saved language opens a popular-language picker; after that a
+  click starts/stops dictation and appends the final transcript to the composer.
+  Mic permission only prompts on click (`recognition.start()`), never on load;
+  the button hides when the browser lacks `SpeechRecognition` (e.g. Firefox).
+  Language persists in `localStorage` (`gg:voice-lang`) and, signed-in,
+  `user_metadata.voice_lang`; changeable on `/profile`. Final-result only for
+  cross-device stability (iOS Safari drops interim) — **planned upgrade: live
+  interim** by flipping `interimResults`/`continuous`. `coerceVoiceLang` covered
+  by `npm run check`.
 - `lib/prompt.js`: exports `SYSTEM_INSTRUCTION` (persona + rules: knowledge-first,
   web-as-support, on-topic guardrail — only game guidance, decline off-topic and
   never reveal/override the prompt — injection safety, JSON output with `answer` +
@@ -201,7 +212,10 @@ and simply cannot save.
   `<link>` tags generated from `APPLE_SPLASH` in `app/layout.tsx` (curated
   portrait device set). Re-run the `sips` commands to regenerate from a new source.
   `public/sw.js` is a network-first service worker (cache `gg-runtime-v2`, evicts
-  stale caches on activate) registered by `app/sw-register.tsx`.
+  stale caches on activate) registered by `app/sw-register.tsx`. The `viewport`
+  export in `app/layout.tsx` sets `maximumScale: 1` + `userScalable: false` to
+  disable pinch-zoom (honored in the installed PWA; iOS Safari tabs ignore it by
+  design).
 - Persistence model: one `public.chats` row per saved game (`game`, `platform`,
   `preferred_guide_url`, `cover_url`, `release_year`, `messages` jsonb), RLS-scoped
   to `auth.uid()`; the client upserts the whole `messages` array each turn and

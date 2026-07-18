@@ -20,11 +20,18 @@ import {
   spoilerMajorFromUserMetadata,
 } from "@/lib/spoiler-prefs.js";
 import { getSupabase } from "@/lib/supabase";
+import {
+  loadVoiceLang,
+  saveVoiceLang,
+  VOICE_LANGUAGES,
+  voiceLangFromUserMetadata,
+} from "@/lib/voice.js";
 
 export default function ProfilePage() {
   const [user, setUser] = useState<User | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [spoilerMajor, setSpoilerMajor] = useState(DEFAULT_SPOILER_PREFS.major);
+  const [voiceLang, setVoiceLang] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -44,6 +51,7 @@ export default function ProfilePage() {
         setDisplayName(displayNameFromMetadata(nextUser.user_metadata));
         const remote = spoilerMajorFromUserMetadata(nextUser.user_metadata);
         setSpoilerMajor(remote ?? loadGlobalSpoilerPrefs().major);
+        setVoiceLang(voiceLangFromUserMetadata(nextUser.user_metadata) || loadVoiceLang());
       }
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -62,6 +70,12 @@ export default function ProfilePage() {
   const updateSpoiler = useCallback((value: boolean) => {
     setSpoilerMajor(value);
     saveGlobalSpoilerPrefs({ major: value });
+  }, []);
+
+  const updateVoiceLang = useCallback((value: string) => {
+    setVoiceLang(value);
+    saveVoiceLang(value);
+    void getSupabase()?.auth.updateUser({ data: { voice_lang: value || null } });
   }, []);
 
   async function signOut() {
@@ -164,6 +178,24 @@ export default function ProfilePage() {
                 {saving ? "Saving…" : "Save"}
               </button>
             </form>
+
+            <label className="field">
+              <span className="field-label">Voice input language</span>
+              <p className="field-hint">
+                Language for the mic button dictation. Saved to your account.
+              </p>
+              <select
+                value={voiceLang}
+                onChange={(event) => updateVoiceLang(event.target.value)}
+              >
+                <option value="">Ask me the first time</option>
+                {VOICE_LANGUAGES.map((entry) => (
+                  <option key={entry.code} value={entry.code}>
+                    {entry.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
         )}
       </section>

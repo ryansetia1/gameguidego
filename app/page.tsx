@@ -9,6 +9,7 @@ import { GuideLinkField } from "./guide-link-field";
 import { PlatformSelect } from "./platform-select";
 import { SteamLibrary, type SteamGame } from "./steam-library";
 import { ProfileMenu } from "./profile-menu";
+import { VoiceInput } from "./voice-input";
 import {
   KINDS,
   KIND_LABELS,
@@ -2177,6 +2178,13 @@ export default function Home() {
               />
             </div>
           )}
+          <VoiceInput
+            user={user}
+            disabled={loading}
+            onTranscript={(text) =>
+              setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
+            }
+          />
           {loading ? (
             <button
               className="submit submit-stop"

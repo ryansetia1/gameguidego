@@ -15,6 +15,7 @@ import { parseBlocks, parseInline } from "../lib/markdown.js";
 import { buildSpoilerBlock, coerceSpoilerPrefs, loadSpoilerPrefs } from "../lib/spoiler-prefs.js";
 import { coerceDisplayName, displayNameFromMetadata } from "../lib/profile.js";
 import { coerceThemeMode, themeFromUserMetadata } from "../lib/theme.js";
+import { coerceVoiceLang, voiceLangFromUserMetadata } from "../lib/voice.js";
 import { buildGuideDiscoveryQuery } from "../lib/guide-search.js";
 import {
   steamIdFromClaimedId,
@@ -101,6 +102,15 @@ assert.equal(coerceThemeMode("dark"), "dark");
 assert.equal(coerceThemeMode("nope"), null);
 assert.equal(themeFromUserMetadata({ theme: "light" }), "light");
 assert.equal(themeFromUserMetadata({}), null);
+
+// Voice language is set on the SpeechRecognition instance, so only known
+// BCP-47 tags may pass the trust boundary; anything else becomes "".
+assert.equal(coerceVoiceLang("id-ID"), "id-ID");
+assert.equal(coerceVoiceLang("xx-XX"), "");
+assert.equal(coerceVoiceLang(42), "");
+assert.equal(voiceLangFromUserMetadata({ voice_lang: "ja-JP" }), "ja-JP");
+assert.equal(voiceLangFromUserMetadata({ voice_lang: "bogus" }), "");
+assert.equal(voiceLangFromUserMetadata({}), "");
 
 assert.equal(
   buildGuideDiscoveryQuery("Suikoden", "PlayStation", ""),

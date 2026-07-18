@@ -248,7 +248,8 @@ h1 em {
   color: var(--muted);
 }
 
-.field input:not([type="checkbox"]):not([type="radio"]) {
+.field input:not([type="checkbox"]):not([type="radio"]),
+.field select {
   width: 100%;
   min-height: 48px;
   border: 1.5px solid var(--ink);
@@ -1848,6 +1849,24 @@ details.sources small {
 
 .composer-attach-menu button:hover {
   background: var(--signal);
+}
+
+/* Voice mic: reuses .composer-attach; pulses while listening. */
+.composer-mic.listening {
+  background: var(--signal);
+  animation: mic-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+  50% {
+    box-shadow: 0 0 0 4px var(--signal);
+  }
+}
+
+/* 14 languages — cap height and scroll instead of overflowing the viewport. */
+.composer-lang-menu {
+  max-height: 240px;
+  overflow-y: auto;
 }
 
 .spoiler-field .field-hint {

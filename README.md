@@ -35,6 +35,11 @@ answers in whatever language you ask your question in.
   next to the send button; images are compressed in-browser, stored in Supabase,
   and sent to Gemini as visual context. **Library**: a 2-column cover-art grid of
   your saved games. **Dark mode** follows your system preference automatically.
+- **Voice input** (all users): a mic button beside Send dictates your question
+  via the browser's built-in speech recognition. Pick a language the first time
+  (change it later on `/profile`); it's saved per-device and, when signed in, to
+  your account. The mic only asks permission when you tap it, and the button
+  hides on browsers without speech support.
 - Multi-turn follow-up chat: up to the last 5 exchanges are sent as context, so
   follow-ups like "and after that boss?" are understood.
 - Tiered search: GameFAQs first, then trusted walkthrough providers, then forums,
