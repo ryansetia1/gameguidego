@@ -172,35 +172,31 @@ and simply cannot save.
   `buildSpoilerBlock` + `buildSpoilerOutputRules` for the summarize prompt (LLM
   filters to genuinely major twists; routine walkthrough stays in `answer`),
   `coerceSpoilerPrefs` at the API trust boundary. Covered by `npm run check`.
-- `lib/voice.js` + `app/voice-input.tsx`: mic button in the composer (between
-  attach and Send, **all users**) using the free browser Web Speech API. First
-  click with no saved language opens a popular-language picker; after that a
-  click starts/stops dictation; the transcript is buffered while listening and
-  appended to the composer once on stop (not live). Mic permission only prompts on click (`recognition.start()`), never on load;
-  the button hides when the browser lacks `SpeechRecognition` (e.g. Firefox).
-  Language persists in `localStorage` (`gg:voice-lang`) and, signed-in,
-  `user_metadata.voice_lang`; changeable on `/profile`. Final-only
-  (`interimResults: false`); desktop uses `continuous: true` and rebuilds one
-  string from cumulative finals, iOS uses `continuous: false` + delayed restart
-  with `results[0]` per cycle (e469d89-stable path). Transcript buffers while
-  listening and appends to the composer once on stop. `warmUpMicrophone()` on
-  first start only. `mergeSpeechParts` dedupes iOS phrase joins. Live level meters
-  are CSS-only because holding getUserMedia during recognition blocks
-  SpeechRecognition. `coerceVoiceLang` + speech retry helpers covered by `npm run check`.
+- `lib/voice.js` + `app/voice-input.tsx`: composer mic via the free Web Speech API
+  (**all users**). Buffered-until-stop dictation; platform-split capture (desktop
+  `continuous` + rebuild finals, iOS `continuous: false` + `results[0]` + restart).
+  `lib/voice-meter.js` warm-up only; `app/voice-visualizer.tsx` CSS bars. Language
+  in `gg:voice-lang` / `user_metadata.voice_lang`. Mobile signed-in uses
+  `app/composer-extras.tsx` (+ menu). **Full agent notes:**
+  [`docs/voice-input.md`](docs/voice-input.md).
 - `lib/prompt.js`: exports `SYSTEM_INSTRUCTION` (persona + rules: knowledge-first,
   web-as-support, on-topic guardrail — only game guidance, decline off-topic and
   never reveal/override the prompt — injection safety, JSON output with `answer` +
   optional `highlights`), `buildPrompt({ game, platform, question, sources,
-  history, imageCount })` (adds a visual-context note when images are attached),
+  history, imageCount, spoilerPrefs, playerName })` (adds a visual-context note when
+  images are attached; `playerName` only on the first turn — follow-ups get a
+  no-greeting rule to stop repeated "hello again" salutations),
   plus `REWRITE_INSTRUCTION` + `buildRewritePrompt({ question, history })` for
   query rewriting. Covered by `npm run check`.
 - `lib/highlights.js`: `KINDS`/`KIND_LABELS`, `coerceHighlights(value)`, and
   `parseSummary(text)` — tolerant JSON parse (escapes RAW newlines/tabs the model
   leaves inside string values, strips fences) with prose fallback. Shared by the
   server (`summarize`), client (`coerceMessages`/render), and `npm run check`.
-- `lib/llm-log.ts`: best-effort dev log (`logLlmCall`) of each model call's exact
-  system instruction + prompt + raw response to `llm-log.json` (last ~5 turns).
-  On in dev; in prod only when `LLM_LOG=1`. No-ops on read-only/serverless FS.
+- `lib/llm-log.ts` + `lib/llm-db-log.ts`: best-effort log of each model call's system
+  instruction, prompt, raw response, `duration_ms`, and Replicate `predict_time_ms`
+  (token counts null — Replicate does not expose Gemini usage). File tail in
+  `llm-log.json` (dev / `LLM_LOG=1`); optional Supabase table `public.llm_calls`
+  (`db/llm-calls.sql`, `LLM_DB_LOG=1` in prod). Insert-only RLS — no client reads.
 - `lib/games.js`: `mapGames(payload)` maps a TheGamesDB `ByGameName?include=boxart`
   payload to `{ id, name, year, cover }` (year from `release_date`, cover built
   from the front box-art in the `include` block), dropping malformed entries.
@@ -324,6 +320,9 @@ Server-only secrets (never expose via `NEXT_PUBLIC_`, never commit `.env.local`)
 - `REPLICATE_MODEL` (optional, default `google/gemini-2.5-flash`).
 - `LLM_LOG` (optional; `1` enables the `llm-log.json` model-call log in
   production — it is on automatically in dev). `LLM_LOG_PATH` overrides the path.
+- `LLM_DB_LOG` (optional; `1` writes each model call to `public.llm_calls` in
+  Supabase — on automatically in dev when Supabase vars are set). Apply
+  `db/llm-calls.sql` first. Insert-only RLS; inspect via Supabase dashboard.
 - `THEGAMESDB_API_KEY` (optional; enables game-name autocomplete + box art via
   TheGamesDB). Missing key => the field degrades to free text. IGDB (Twitch
   `TWITCH_CLIENT_ID`/`SECRET`) is the intended eventual upgrade but not wired now.

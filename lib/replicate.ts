@@ -67,6 +67,45 @@ function readText(output: unknown): string {
   return "";
 }
 
+type PredictionMetrics = {
+  metrics?: { predict_time?: number; total_time?: number };
+};
+
+type RunModelResult = {
+  output: string;
+  durationMs: number;
+  predictTimeMs: number | null;
+};
+
+/** Run a Replicate model and capture wall-clock + predict_time metrics. */
+async function runModel(
+  replicate: Replicate,
+  model: ModelName,
+  input: Record<string, unknown>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<RunModelResult> {
+  const started = Date.now();
+  let metrics: PredictionMetrics["metrics"];
+  const raw = await replicate.run(
+    model,
+    {
+      input,
+      signal: withTimeout(timeoutMs, signal),
+    },
+    (prediction: PredictionMetrics) => {
+      metrics = prediction.metrics;
+    },
+  );
+  const predictTimeMs =
+    metrics?.predict_time != null ? Math.round(metrics.predict_time * 1000) : null;
+  return {
+    output: readText(raw),
+    durationMs: Date.now() - started,
+    predictTimeMs,
+  };
+}
+
 /**
  * Condense a (possibly context-dependent) question into a standalone English
  * search query. Best-effort: on any failure it falls back to the raw question,
@@ -84,26 +123,28 @@ export async function resolveQuestion(input: {
   try {
     const replicate = new Replicate({ auth: token });
     const prompt = buildRewritePrompt(input);
-    const output: unknown = await replicate.run(model, {
-      input: {
+    const { output: rawOutput, durationMs, predictTimeMs } = await runModel(
+      replicate,
+      model,
+      {
         prompt,
         system_instruction: REWRITE_INSTRUCTION,
         temperature: 0.2,
-        // The query is short, but Flash needs token headroom even with thinking
-        // off; too tight a cap (e.g. 60) comes back empty.
         max_output_tokens: 200,
         thinking_budget: 0,
       },
-      signal: withTimeout(15_000, input.signal),
-    });
+      15_000,
+      input.signal,
+    );
 
-    const rawOutput = readText(output);
     logLlmCall({
       kind: "rewrite",
       model,
       system: REWRITE_INSTRUCTION,
       prompt,
       response: rawOutput,
+      durationMs,
+      predictTimeMs,
     });
     const rewritten = rawOutput
       .replace(/\s+/g, " ")
@@ -143,35 +184,34 @@ export async function summarize(input: SummarizeInput): Promise<SummaryResult> {
   const images = (input.images ?? []).filter((url) => typeof url === "string" && url);
   const replicate = new Replicate({ auth: token });
   const prompt = buildPrompt({ ...input, imageCount: images.length });
-  const output: unknown = await replicate.run(model, {
-    input: {
+  const { output: rawOutput, durationMs, predictTimeMs } = await runModel(
+    replicate,
+    model,
+    {
       prompt,
-      // Gemini on Replicate: keep the persona/rules out of the prompt field.
       system_instruction: SYSTEM_INSTRUCTION,
-      // Attached screenshots/photos as visual context (Gemini multimodal input).
       ...(images.length ? { images } : {}),
       temperature: 0.35,
-      // Even with thinking_budget: 0, Flash on Replicate spends ~1k tokens of
-      // reasoning overhead that counts against this cap, so it must stay
-      // generous: at 1200 the visible answer got cut after ~100 tokens. This is
-      // a ceiling, not a target — "keep it concise" in the system prompt drives
-      // actual length. ponytail: bumped to 4096; raise toward Flash's 8192 max
-      // if long walkthroughs still truncate.
       max_output_tokens: 4096,
       thinking_budget: 0,
     },
-    signal: withTimeout(50_000, input.signal),
-  });
+    50_000,
+    input.signal,
+  );
 
-  const rawOutput = readText(output).trim();
+  const trimmed = rawOutput.trim();
   logLlmCall({
     kind: "summarize",
     model,
     system: SYSTEM_INSTRUCTION,
     prompt,
-    response: rawOutput,
+    response: trimmed,
+    durationMs,
+    predictTimeMs,
+    game: input.game,
+    platform: input.platform,
   });
-  const parsed = parseSummary(rawOutput);
+  const parsed = parseSummary(trimmed);
   if (!parsed.answer) {
     throw new Error("Replicate returned an empty response");
   }
@@ -200,26 +240,31 @@ export async function censorSpoilers(input: {
   try {
     const replicate = new Replicate({ auth: token });
     const prompt = buildSpoilerCensorPrompt(input);
-    const output: unknown = await replicate.run(model, {
-      input: {
+    const { output: rawOutput, durationMs, predictTimeMs } = await runModel(
+      replicate,
+      model,
+      {
         prompt,
         system_instruction: SPOILER_CENSOR_INSTRUCTION,
         temperature: 0.2,
         max_output_tokens: 4096,
         thinking_budget: 0,
       },
-      signal: withTimeout(30_000, input.signal),
-    });
+      30_000,
+      input.signal,
+    );
 
-    const rawOutput = readText(output).trim();
+    const trimmed = rawOutput.trim();
     logLlmCall({
       kind: "censor",
       model,
       system: SPOILER_CENSOR_INSTRUCTION,
       prompt,
-      response: rawOutput,
+      response: trimmed,
+      durationMs,
+      predictTimeMs,
     });
-    const parsed = parseSummary(rawOutput);
+    const parsed = parseSummary(trimmed);
     if (!parsed.answer) return null;
     return { answer: parsed.answer, highlights: parsed.highlights };
   } catch (error) {

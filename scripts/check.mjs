@@ -103,6 +103,19 @@ const namedPrompt = buildPrompt({
 });
 assert.match(namedPrompt, /Player display name: Ryan/);
 
+const followUpPrompt = buildPrompt({
+  game: "Zelda",
+  question: "And after that?",
+  sources: [],
+  playerName: "Ryan",
+  history: [
+    { role: "user", content: "Where is the first dungeon?" },
+    { role: "assistant", content: "Go to the beach." },
+  ],
+});
+assert.match(followUpPrompt, /follow-up/i);
+assert.match(followUpPrompt, /Do NOT greet/i);
+
 assert.equal(coerceDisplayName("  Ryan  "), "Ryan");
 assert.equal(displayNameFromMetadata({ display_name: "Ayu" }), "Ayu");
 assert.equal(loadSpoilerPrefs().major, false);
