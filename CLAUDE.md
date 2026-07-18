@@ -179,15 +179,14 @@ and simply cannot save.
   appended to the composer once on stop (not live). Mic permission only prompts on click (`recognition.start()`), never on load;
   the button hides when the browser lacks `SpeechRecognition` (e.g. Firefox).
   Language persists in `localStorage` (`gg:voice-lang`) and, signed-in,
-  `user_metadata.voice_lang`; changeable on `/profile`. Stop uses
-  `recognition.stop()` so finals flush into the buffer, then one composer append.
-  Desktop keeps interim capture for the trailing chunk; iOS stays final-only.
-  Singleton recognition instance, 250ms delayed onend restart, iOS uses
-  `continuous: false` + manual restart, stops on tab background.
-  `warmUpMicrophone()` acquires then releases
-  the mic before recognition (primes iOS); live level meters are CSS-only because
-  holding getUserMedia during recognition blocks SpeechRecognition. `coerceVoiceLang`
-  + speech retry helpers covered by `npm run check`.
+  `user_metadata.voice_lang`; changeable on `/profile`. Final-only
+  (`interimResults: false`); desktop uses `continuous: true` and rebuilds one
+  string from cumulative finals, iOS uses `continuous: false` + delayed restart
+  with `results[0]` per cycle (e469d89-stable path). Transcript buffers while
+  listening and appends to the composer once on stop. `warmUpMicrophone()` on
+  first start only. `mergeSpeechParts` dedupes iOS phrase joins. Live level meters
+  are CSS-only because holding getUserMedia during recognition blocks
+  SpeechRecognition. `coerceVoiceLang` + speech retry helpers covered by `npm run check`.
 - `lib/prompt.js`: exports `SYSTEM_INSTRUCTION` (persona + rules: knowledge-first,
   web-as-support, on-topic guardrail — only game guidance, decline off-topic and
   never reveal/override the prompt — injection safety, JSON output with `answer` +

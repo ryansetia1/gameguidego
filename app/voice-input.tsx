@@ -1,19 +1,15 @@
 "use client";
 
 import type { User } from "@supabase/supabase-js";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { getSupabase } from "@/lib/supabase";
 import { warmUpMicrophone } from "@/lib/voice-meter.js";
 import {
   getSpeechRecognition,
-  isBenignSpeechError,
   loadVoiceLang,
-  mergeSpeechParts,
   prefersChunkedSpeechRecognition,
   saveVoiceLang,
-  shouldRetrySpeechError,
-  SPEECH_NETWORK_RETRY_MAX,
   SPEECH_RESTART_MS,
   VOICE_LANGUAGES,
   voiceLangFromUserMetadata,
@@ -40,8 +36,10 @@ async function persistVoiceLangForUser(code: string) {
 /**
  * Shared Web Speech dictation for the mic button and mobile composer-extras menu.
  *
- * ponytail: buffer finals/interim locally while listening; composer gets one
- * append on explicit stop only. iOS uses continuous=false + manual restart.
+ * Recognition settings match the stable e469d89 path (final-only, results[0]).
+ * Transcript is buffered while listening and appended to the composer once on stop.
+ * iOS keeps continuous=false and auto-restarts between phrases; desktop uses
+ * continuous=true and rebuilds one string from all final segments each onresult.
  */
 export function useVoiceInput({
   user,
@@ -54,13 +52,12 @@ export function useVoiceInput({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<any>(null);
-  const listeningIntentRef = useRef(false);
-  const sessionRef = useRef(0);
+  const listeningRef = useRef(false);
   const restartTimerRef = useRef(0);
-  const networkRetriesRef = useRef(0);
-  const finalPartsRef = useRef<string[]>([]);
-  const interimRef = useRef("");
-  const stopFallbackTimerRef = useRef(0);
+  const stopFallbackRef = useRef(0);
+  // Desktop: one rebuilt string from cumulative finals. iOS: one phrase per cycle.
+  const bufferRef = useRef("");
+  const partsRef = useRef<string[]>([]);
   const onTranscriptRef = useRef(onTranscript);
   const onListeningChangeRef = useRef(onListeningChange);
   const stopRef = useRef<() => void>(() => {});
@@ -91,121 +88,11 @@ export function useVoiceInput({
     }
   }, [user]);
 
-  const clearRestartTimer = useCallback(() => {
-    if (restartTimerRef.current) {
-      clearTimeout(restartTimerRef.current);
-      restartTimerRef.current = 0;
-    }
-  }, []);
-
-  const clearStopFallback = useCallback(() => {
-    if (stopFallbackTimerRef.current) {
-      clearTimeout(stopFallbackTimerRef.current);
-      stopFallbackTimerRef.current = 0;
-    }
-  }, []);
-
-  const clearBuffer = useCallback(() => {
-    finalPartsRef.current = [];
-    interimRef.current = "";
-  }, []);
-
-  const bufferedText = useCallback(() => {
-    const merged = mergeSpeechParts(finalPartsRef.current);
-    const interim = interimRef.current.trim();
-    if (!merged) return interim;
-    if (!interim) return merged;
-    return `${merged} ${interim}`;
-  }, []);
-
-  const flushBuffer = useCallback(() => {
-    const text = bufferedText();
-    clearBuffer();
-    if (text) onTranscriptRef.current(text);
-  }, [bufferedText, clearBuffer]);
-
-  const finishStop = useCallback(() => {
-    clearRestartTimer();
-    clearStopFallback();
-    recognitionRef.current = null;
-    setListening(false);
-    sessionRef.current += 1;
-  }, [clearRestartTimer, clearStopFallback]);
-
-  const hardTeardown = useCallback(() => {
-    clearRestartTimer();
-    clearStopFallback();
-    listeningIntentRef.current = false;
-    networkRetriesRef.current = 0;
-    clearBuffer();
-    const recognition = recognitionRef.current;
-    recognitionRef.current = null;
-    setListening(false);
-    sessionRef.current += 1;
-    try {
-      recognition?.abort();
-    } catch {
-      // ignore
-    }
-  }, [clearRestartTimer, clearStopFallback, clearBuffer]);
-
-  const requestStop = useCallback(() => {
-    clearRestartTimer();
-    listeningIntentRef.current = false;
-    const recognition = recognitionRef.current;
-    if (!recognition) {
-      setListening(false);
-      return;
-    }
-    setListening(false);
-    clearStopFallback();
-    stopFallbackTimerRef.current = window.setTimeout(() => {
-      stopFallbackTimerRef.current = 0;
-      if (recognitionRef.current !== recognition) return;
-      flushBuffer();
-      finishStop();
-    }, 750);
-    try {
-      recognition.stop();
-    } catch {
-      flushBuffer();
-      try {
-        recognition.abort();
-      } catch {
-        // ignore
-      }
-      finishStop();
-    }
-  }, [clearRestartTimer, clearStopFallback, flushBuffer, finishStop]);
-
-  const stop = useCallback(() => {
-    requestStop();
-  }, [requestStop]);
-
-  stopRef.current = stop;
-
-  useEffect(() => {
-    if (!disabled || !listeningIntentRef.current) return;
-    stopRef.current();
-  }, [disabled]);
-
-  useEffect(() => {
-    function onVisibilityChange() {
-      if (document.visibilityState === "hidden" && listeningIntentRef.current) {
-        stopRef.current();
-      }
-    }
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, []);
-
   useEffect(() => {
     return () => {
-      clearRestartTimer();
-      clearStopFallback();
-      sessionRef.current += 1;
-      listeningIntentRef.current = false;
-      clearBuffer();
+      listeningRef.current = false;
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+      if (stopFallbackRef.current) clearTimeout(stopFallbackRef.current);
       try {
         recognitionRef.current?.abort();
       } catch {
@@ -213,119 +100,169 @@ export function useVoiceInput({
       }
       recognitionRef.current = null;
     };
-  }, [clearRestartTimer, clearStopFallback, clearBuffer]);
+  }, []);
 
-  function getRecognitionInstance(SpeechRecognition: new () => any) {
-    if (!recognitionRef.current) {
-      recognitionRef.current = new SpeechRecognition();
+  function clearBuffer() {
+    bufferRef.current = "";
+    partsRef.current = [];
+  }
+
+  function bufferedText() {
+    if (prefersChunkedSpeechRecognition()) {
+      return partsRef.current.join(" ").trim();
     }
-    return recognitionRef.current;
+    return bufferRef.current.trim();
   }
 
-  function scheduleRestart(recognition: any, session: number) {
-    clearRestartTimer();
-    restartTimerRef.current = window.setTimeout(() => {
-      restartTimerRef.current = 0;
-      if (
-        session !== sessionRef.current ||
-        !listeningIntentRef.current ||
-        recognitionRef.current !== recognition
-      ) {
-        return;
-      }
-      try {
-        recognition.start();
-      } catch {
-        if (session !== sessionRef.current) return;
-        hardTeardown();
-      }
-    }, SPEECH_RESTART_MS);
+  function flushBuffer() {
+    const text = bufferedText();
+    clearBuffer();
+    if (text) onTranscriptRef.current(text);
   }
 
-  function bindRecognition(recognition: any, session: number, code: string) {
+  function clearStopFallback() {
+    if (stopFallbackRef.current) {
+      clearTimeout(stopFallbackRef.current);
+      stopFallbackRef.current = 0;
+    }
+  }
+
+  function captureResult(event: any) {
+    const results = event?.results;
+    if (!results?.length) return;
+
+    if (prefersChunkedSpeechRecognition()) {
+      // e469d89: first final only — one clean phrase per recognition cycle.
+      const transcript = results[0]?.[0]?.transcript;
+      if (typeof transcript !== "string" || !transcript.trim()) return;
+      const text = transcript.trim();
+      const parts = partsRef.current;
+      if (parts[parts.length - 1] !== text) parts.push(text);
+      return;
+    }
+
+    // Desktop continuous: replace with the full final transcript so far (no append).
+    let text = "";
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].isFinal) text += results[i][0]?.transcript ?? "";
+    }
+    bufferRef.current = text.trim();
+  }
+
+  function attachRecognition(recognition: any, code: string) {
     const chunked = prefersChunkedSpeechRecognition();
     recognition.lang = code;
-    recognition.interimResults = !chunked;
+    recognition.interimResults = false;
     recognition.continuous = !chunked;
     recognition.maxAlternatives = 1;
-    recognition.onresult = (event: any) => {
-      if (session !== sessionRef.current) return;
-      networkRetriesRef.current = 0;
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const chunk = event.results[i];
-        const transcript = chunk[0]?.transcript;
-        if (typeof transcript !== "string" || !transcript.trim()) continue;
-        const text = transcript.trim();
-        if (chunk.isFinal) {
-          const parts = finalPartsRef.current;
-          if (parts[parts.length - 1] !== text) parts.push(text);
-          interimRef.current = "";
-        } else {
-          interimRef.current = text;
-        }
-      }
-    };
-    recognition.onerror = (event: any) => {
-      if (session !== sessionRef.current) return;
-      const err = event?.error;
-      if (isBenignSpeechError(err)) return;
-      if (shouldRetrySpeechError(err) && listeningIntentRef.current) {
-        if (err === "network") {
-          networkRetriesRef.current += 1;
-          if (networkRetriesRef.current > SPEECH_NETWORK_RETRY_MAX) {
-            hardTeardown();
-            return;
-          }
-        }
-        scheduleRestart(recognition, session);
-        return;
-      }
-      hardTeardown();
+    recognition.onresult = (event: any) => captureResult(event);
+    recognition.onerror = () => {
+      listeningRef.current = false;
+      setListening(false);
     };
     recognition.onend = () => {
-      if (session !== sessionRef.current) return;
-      if (!listeningIntentRef.current) {
-        flushBuffer();
-        finishStop();
+      clearStopFallback();
+      if (listeningRef.current) {
+        if (chunked) {
+          if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+          restartTimerRef.current = window.setTimeout(() => {
+            restartTimerRef.current = 0;
+            if (!listeningRef.current) return;
+            beginListening(code, false);
+          }, SPEECH_RESTART_MS);
+        }
         return;
       }
-      scheduleRestart(recognition, session);
+      flushBuffer();
+      recognitionRef.current = null;
+      setListening(false);
     };
   }
 
-  async function start(code: string) {
+  function beginListening(code: string, warmMic: boolean) {
     const SpeechRecognition = getSpeechRecognition();
-    if (!SpeechRecognition || !code || disabled) return;
-    clearRestartTimer();
-    sessionRef.current += 1;
-    const session = sessionRef.current;
-    networkRetriesRef.current = 0;
-    clearBuffer();
+    if (!SpeechRecognition || !code || disabled || !listeningRef.current) return;
+
     try {
       recognitionRef.current?.abort();
     } catch {
       // ignore
     }
-    await warmUpMicrophone();
-    if (session !== sessionRef.current) return;
-    const recognition = getRecognitionInstance(SpeechRecognition);
-    bindRecognition(recognition, session, code);
-    listeningIntentRef.current = true;
+
+    void (async () => {
+      if (warmMic) await warmUpMicrophone();
+      if (!listeningRef.current) return;
+
+      const recognition = new SpeechRecognition();
+      attachRecognition(recognition, code);
+      recognitionRef.current = recognition;
+      try {
+        recognition.start();
+        setListening(true);
+      } catch {
+        listeningRef.current = false;
+        setListening(false);
+      }
+    })();
+  }
+
+  function start(code: string) {
+    clearBuffer();
+    listeningRef.current = true;
+    beginListening(code, true);
+  }
+
+  function stop() {
+    listeningRef.current = false;
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = 0;
+    }
+    const recognition = recognitionRef.current;
+    setListening(false);
+    clearStopFallback();
+    stopFallbackRef.current = window.setTimeout(() => {
+      stopFallbackRef.current = 0;
+      if (recognitionRef.current !== recognition) return;
+      flushBuffer();
+      try {
+        recognition?.abort();
+      } catch {
+        // ignore
+      }
+      recognitionRef.current = null;
+    }, 750);
     try {
-      recognition.start();
-      setListening(true);
+      recognition?.stop();
     } catch {
-      if (session !== sessionRef.current) return;
-      hardTeardown();
+      flushBuffer();
+      recognitionRef.current = null;
     }
   }
+
+  stopRef.current = stop;
+
+  useEffect(() => {
+    if (!disabled || !listeningRef.current) return;
+    stopRef.current();
+  }, [disabled]);
+
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (document.visibilityState === "hidden" && listeningRef.current) {
+        stopRef.current();
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
 
   function pickLanguage(code: string) {
     setLang(code);
     saveVoiceLang(code);
     if (user) void persistVoiceLangForUser(code);
     setPickerOpen(false);
-    void start(code);
+    start(code);
   }
 
   function handleClick() {
@@ -337,7 +274,7 @@ export function useVoiceInput({
       setPickerOpen((open) => !open);
       return;
     }
-    void start(lang);
+    start(lang);
   }
 
   return {
