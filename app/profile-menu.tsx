@@ -10,9 +10,9 @@ import {
   displayNameFromMetadata,
 } from "@/lib/profile.js";
 import {
-  SPOILER_TOGGLE_LABEL,
+  GLOBAL_SPOILER_TOGGLE_LABEL,
   saveGlobalSpoilerMajor,
-  saveSpoilerPrefs,
+  saveGlobalSpoilerPrefs,
   spoilerMajorFromUserMetadata,
 } from "@/lib/spoiler-prefs.js";
 import { getSupabase } from "@/lib/supabase";
@@ -122,7 +122,7 @@ export function ProfileMenu({
     const next = !spoilerMajor;
     onSpoilerChange(next);
     saveGlobalSpoilerMajor(next);
-    saveSpoilerPrefs({ major: next });
+    saveGlobalSpoilerPrefs({ major: next });
     if (user) void persistSpoilerForUser(next);
   }
 
@@ -178,12 +178,12 @@ export function ProfileMenu({
           </Link>
 
           <label className="profile-menu-item profile-menu-toggle">
-            <span>{SPOILER_TOGGLE_LABEL}</span>
+            <span>{GLOBAL_SPOILER_TOGGLE_LABEL}</span>
             <input
               type="checkbox"
               checked={spoilerMajor}
               onChange={toggleSpoiler}
-              aria-label={SPOILER_TOGGLE_LABEL}
+              aria-label={GLOBAL_SPOILER_TOGGLE_LABEL}
             />
           </label>
 

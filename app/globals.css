@@ -2517,15 +2517,14 @@ details.sources small {
   width: 38px;
   height: 38px;
   padding: 0;
-  border: 1.5px solid var(--line);
-  border-radius: 999px;
+  border: 1.5px solid var(--ink);
   background: var(--paper-strong);
   cursor: pointer;
   overflow: hidden;
 }
 
 .profile-menu-trigger:hover {
-  border-color: var(--ink);
+  background: var(--signal);
 }
 
 .profile-avatar {
@@ -2554,10 +2553,9 @@ details.sources small {
   gap: 2px;
   min-width: 240px;
   padding: 8px;
-  border: 1.5px solid var(--line);
-  border-radius: 12px;
+  border: 1.5px solid var(--ink);
   background: var(--paper-strong);
-  box-shadow: 0 10px 28px rgba(23, 33, 31, 0.14);
+  box-shadow: 4px 4px 0 var(--ink);
 }
 
 .profile-menu-head {
@@ -2565,7 +2563,7 @@ details.sources small {
   flex-direction: column;
   gap: 2px;
   padding: 8px 10px 10px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1.5px solid var(--ink);
   margin-bottom: 4px;
 }
 
@@ -2593,7 +2591,6 @@ details.sources small {
   width: 100%;
   padding: 10px 12px;
   border: 0;
-  border-radius: 8px;
   background: transparent;
   color: var(--ink);
   font-size: 0.9rem;
@@ -2603,7 +2600,7 @@ details.sources small {
 }
 
 .profile-menu-item:hover {
-  background: color-mix(in srgb, var(--paper) 70%, var(--line) 30%);
+  background: var(--signal);
 }
 
 .profile-menu-toggle input {
@@ -2640,8 +2637,7 @@ details.sources small {
   align-items: center;
   gap: 2px;
   padding: 8px 4px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1.5px solid var(--ink);
   background: var(--paper);
   color: var(--ink);
   font-size: 0.68rem;
@@ -2649,8 +2645,7 @@ details.sources small {
 }
 
 .profile-menu-theme button.active {
-  border-color: var(--ink);
-  background: color-mix(in srgb, var(--signal) 25%, var(--paper-strong));
+  background: var(--signal);
   font-weight: 600;
 }
 
@@ -2661,7 +2656,7 @@ details.sources small {
 }
 
 .profile-menu-signout:hover {
-  background: color-mix(in srgb, var(--danger) 12%, var(--paper-strong));
+  background: color-mix(in srgb, var(--danger) 18%, var(--signal));
 }
 
 /* --- Profile page --- */
@@ -2691,9 +2686,9 @@ details.sources small {
   flex-direction: column;
   gap: 20px;
   padding: 22px;
-  border: 1.5px solid var(--line);
-  border-radius: 14px;
+  border: 1.5px solid var(--ink);
   background: var(--paper-strong);
+  box-shadow: 4px 4px 0 var(--ink);
 }
 
 .profile-card h1 {
@@ -2711,15 +2706,13 @@ details.sources small {
 .profile-hero-avatar {
   width: 72px;
   height: 72px;
-  border: 1.5px solid var(--line);
-  border-radius: 999px;
+  border: 1.5px solid var(--ink);
   object-fit: cover;
 }
 
 .profile-hero .profile-avatar-fallback {
   width: 72px;
   height: 72px;
-  border-radius: 999px;
   font-size: 1.6rem;
 }
 

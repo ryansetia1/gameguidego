@@ -15,8 +15,8 @@ import {
 } from "@/lib/profile.js";
 import {
   DEFAULT_SPOILER_PREFS,
-  loadSpoilerPrefs,
-  saveSpoilerPrefs,
+  loadGlobalSpoilerPrefs,
+  saveGlobalSpoilerPrefs,
   spoilerMajorFromUserMetadata,
 } from "@/lib/spoiler-prefs.js";
 import { getSupabase } from "@/lib/supabase";
@@ -43,7 +43,7 @@ export default function ProfilePage() {
       if (nextUser) {
         setDisplayName(displayNameFromMetadata(nextUser.user_metadata));
         const remote = spoilerMajorFromUserMetadata(nextUser.user_metadata);
-        setSpoilerMajor(remote ?? loadSpoilerPrefs().major);
+        setSpoilerMajor(remote ?? loadGlobalSpoilerPrefs().major);
       }
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -61,7 +61,7 @@ export default function ProfilePage() {
 
   const updateSpoiler = useCallback((value: boolean) => {
     setSpoilerMajor(value);
-    saveSpoilerPrefs({ major: value });
+    saveGlobalSpoilerPrefs({ major: value });
   }, []);
 
   async function signOut() {

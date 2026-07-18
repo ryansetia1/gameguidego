@@ -20,9 +20,13 @@ import {
 import { parseBlocks } from "@/lib/markdown.js";
 import { tgdbPlatformToLabel } from "@/lib/platforms.js";
 import {
-  DEFAULT_SPOILER_PREFS,
-  loadSpoilerPrefs,
-  saveSpoilerPrefs,
+  GAME_SPOILER_HINT,
+  SPOILER_TOGGLE_LABEL,
+  effectiveSpoilerPrefs,
+  loadGameSpoilerPrefs,
+  loadGlobalSpoilerPrefs,
+  saveGameSpoilerPrefs,
+  saveGlobalSpoilerPrefs,
   spoilerMajorFromUserMetadata,
   type SpoilerPrefs,
 } from "@/lib/spoiler-prefs.js";
@@ -234,6 +238,27 @@ function groupHighlights(highlights: Highlight[]) {
   });
 }
 
+function SpoilerToggle({
+  prefs,
+  onChange,
+  compact = false,
+}: {
+  prefs: SpoilerPrefs;
+  onChange: (value: boolean) => void;
+  compact?: boolean;
+}) {
+  return (
+    <label className={`spoiler-toggle${compact ? " spoiler-toggle-compact" : ""}`}>
+      <input
+        type="checkbox"
+        checked={prefs.major === true}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span>{SPOILER_TOGGLE_LABEL}</span>
+    </label>
+  );
+}
+
 export default function Home() {
   const [game, setGame] = useState("");
   const [platform, setPlatform] = useState("");
@@ -262,7 +287,9 @@ export default function Home() {
   const [examplesDismissed, setExamplesDismissed] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editingText, setEditingText] = useState("");
-  const [spoilerPrefs, setSpoilerPrefs] = useState<SpoilerPrefs>(DEFAULT_SPOILER_PREFS);
+  const [globalSpoilerMajor, setGlobalSpoilerMajor] = useState(false);
+  const [gameSpoilerMajor, setGameSpoilerMajor] = useState(false);
+  const spoilerPrefs = effectiveSpoilerPrefs(globalSpoilerMajor, gameSpoilerMajor);
   const [attachOpen, setAttachOpen] = useState(false);
 
   const feedRef = useRef<HTMLDivElement>(null);
@@ -473,23 +500,38 @@ export default function Home() {
   }, [attachOpen]);
 
   useEffect(() => {
-    setSpoilerPrefs(loadSpoilerPrefs());
+    setGlobalSpoilerMajor(loadGlobalSpoilerPrefs().major);
   }, []);
 
   useEffect(() => {
     if (!user) return;
     const remote = spoilerMajorFromUserMetadata(user.user_metadata);
     if (remote !== null) {
-      setSpoilerPrefs({ major: remote });
-      saveSpoilerPrefs({ major: remote });
+      setGlobalSpoilerMajor(remote);
+      saveGlobalSpoilerPrefs({ major: remote });
     }
   }, [user]);
 
-  const updateSpoilerPref = useCallback((value: boolean) => {
-    const next = { major: value };
-    setSpoilerPrefs(next);
-    saveSpoilerPrefs(next);
+  useEffect(() => {
+    if (!game.trim()) {
+      setGameSpoilerMajor(false);
+      return;
+    }
+    setGameSpoilerMajor(loadGameSpoilerPrefs(game).major);
+  }, [game]);
+
+  const updateGlobalSpoiler = useCallback((value: boolean) => {
+    setGlobalSpoilerMajor(value);
+    saveGlobalSpoilerPrefs({ major: value });
   }, []);
+
+  const updateGameSpoiler = useCallback(
+    (value: boolean) => {
+      setGameSpoilerMajor(value);
+      if (game.trim()) saveGameSpoilerPrefs(game, { major: value });
+    },
+    [game],
+  );
 
   useEffect(() => {
     if (editingIndex === null) return;
@@ -1060,8 +1102,8 @@ export default function Home() {
           <ProfileMenu
             user={user}
             supabaseReady={supabaseReady}
-            spoilerMajor={spoilerPrefs.major}
-            onSpoilerChange={updateSpoilerPref}
+            spoilerMajor={globalSpoilerMajor}
+            onSpoilerChange={updateGlobalSpoiler}
             onSignIn={() => {
               setAuthOpen(true);
               pushOverlayHistory();
@@ -1330,6 +1372,13 @@ export default function Home() {
                 Preferred guide ↗
               </a>
             )}
+            <div className="spoiler-panel">
+              <SpoilerToggle
+                prefs={{ major: gameSpoilerMajor }}
+                onChange={updateGameSpoiler}
+                compact
+              />
+            </div>
           </div>
         </section>
       ) : (
@@ -1392,6 +1441,14 @@ export default function Home() {
             platform={platform}
             disabled={loading}
           />
+          <div className="field field-wide spoiler-field">
+            <span className="field-label">Spoilers</span>
+            <p className="field-hint">{GAME_SPOILER_HINT}</p>
+            <SpoilerToggle
+              prefs={{ major: gameSpoilerMajor }}
+              onChange={updateGameSpoiler}
+            />
+          </div>
           {editingGame && (
             <div className="field field-wide setup-done">
               <button type="button" className="nav-button" onClick={() => void saveGameMeta()}>
