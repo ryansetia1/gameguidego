@@ -178,8 +178,10 @@ and simply cannot save.
   the button hides when the browser lacks `SpeechRecognition` (e.g. Firefox).
   Language persists in `localStorage` (`gg:voice-lang`) and, signed-in,
   `user_metadata.voice_lang`; changeable on `/profile`. Final-result only for
-  cross-device stability (iOS Safari drops interim) — **planned upgrade: live
-  interim** by flipping `interimResults`/`continuous`. `coerceVoiceLang` covered
+  cross-device stability (iOS Safari drops interim); `continuous` + auto-restart
+  on `onend`/`no-speech` so sessions survive pauses. `app/voice-visualizer.tsx`
+  is CSS-only (no second `getUserMedia` — that was killing recognition on
+  phones). **Planned upgrade: live interim** via `interimResults`. `coerceVoiceLang` covered
   by `npm run check`.
 - `lib/prompt.js`: exports `SYSTEM_INSTRUCTION` (persona + rules: knowledge-first,
   web-as-support, on-topic guardrail — only game guidance, decline off-topic and

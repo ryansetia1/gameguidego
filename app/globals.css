@@ -1182,8 +1182,7 @@ details.sources small {
   line-height: 1.5;
 }
 
-/* Live mic visualizer: covers the textarea and replaces the placeholder while
-   recording. Bars are driven by real audio (transform: scaleY) in voice-visualizer.tsx. */
+/* Decorative mic bars while voice input runs (CSS-only — no second mic stream). */
 .voice-visualizer {
   position: absolute;
   inset: 0;
@@ -1202,9 +1201,19 @@ details.sources small {
   height: 26px;
   border-radius: 2px;
   background: var(--signal);
-  transform: scaleY(0.1);
+  transform: scaleY(0.12);
   transform-origin: center;
-  will-change: transform;
+  animation: voice-bar 0.85s ease-in-out infinite alternate;
+}
+
+@keyframes voice-bar {
+  from {
+    transform: scaleY(0.12);
+  }
+
+  to {
+    transform: scaleY(0.92);
+  }
 }
 
 .composer textarea:focus {

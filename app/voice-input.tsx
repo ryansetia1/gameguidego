@@ -34,8 +34,9 @@ async function persistVoiceLangForUser(code: string) {
  * Shared Web Speech dictation state for the standalone mic button and the
  * mobile combined composer-extras menu.
  *
- * ponytail: final-result only (interimResults/continuous off) for stability
- * across devices — iOS Safari drops interim results.
+ * ponytail: final-result only (interimResults off) for iOS stability, but
+ * continuous + auto-restart on onend/no-speech — non-continuous sessions die
+ * after every pause, which feels like the mic "randomly" stopping.
  */
 export function useVoiceInput({
   user,
@@ -48,6 +49,12 @@ export function useVoiceInput({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<any>(null);
+  const listeningIntentRef = useRef(false);
+  const onTranscriptRef = useRef(onTranscript);
+
+  useEffect(() => {
+    onTranscriptRef.current = onTranscript;
+  }, [onTranscript]);
 
   useEffect(() => {
     onListeningChange?.(listening);
@@ -68,7 +75,19 @@ export function useVoiceInput({
   }, [user]);
 
   useEffect(() => {
+    if (!disabled || !listeningIntentRef.current) return;
+    listeningIntentRef.current = false;
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      // ignore
+    }
+    setListening(false);
+  }, [disabled]);
+
+  useEffect(() => {
     return () => {
+      listeningIntentRef.current = false;
       try {
         recognitionRef.current?.abort();
       } catch {
@@ -76,6 +95,16 @@ export function useVoiceInput({
       }
     };
   }, []);
+
+  function restartRecognition(recognition: any) {
+    if (!listeningIntentRef.current) return;
+    try {
+      recognition.start();
+    } catch {
+      listeningIntentRef.current = false;
+      setListening(false);
+    }
+  }
 
   function start(code: string) {
     const SpeechRecognition = getSpeechRecognition();
@@ -88,26 +117,48 @@ export function useVoiceInput({
     const recognition = new SpeechRecognition();
     recognition.lang = code;
     recognition.interimResults = false;
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.maxAlternatives = 1;
     recognition.onresult = (event: any) => {
-      const transcript = event.results?.[0]?.[0]?.transcript;
-      if (typeof transcript === "string" && transcript.trim()) {
-        onTranscript(transcript.trim());
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const chunk = event.results[i];
+        if (!chunk?.isFinal) continue;
+        const transcript = chunk[0]?.transcript;
+        if (typeof transcript === "string" && transcript.trim()) {
+          onTranscriptRef.current(transcript.trim());
+        }
       }
     };
-    recognition.onerror = () => setListening(false);
-    recognition.onend = () => setListening(false);
+    recognition.onerror = (event: any) => {
+      const err = event?.error;
+      if (err === "aborted") return;
+      if ((err === "no-speech" || err === "network") && listeningIntentRef.current) {
+        restartRecognition(recognition);
+        return;
+      }
+      listeningIntentRef.current = false;
+      setListening(false);
+    };
+    recognition.onend = () => {
+      if (!listeningIntentRef.current) {
+        setListening(false);
+        return;
+      }
+      restartRecognition(recognition);
+    };
     recognitionRef.current = recognition;
+    listeningIntentRef.current = true;
     try {
       recognition.start();
       setListening(true);
     } catch {
+      listeningIntentRef.current = false;
       setListening(false);
     }
   }
 
   function stop() {
+    listeningIntentRef.current = false;
     try {
       recognitionRef.current?.stop();
     } catch {
