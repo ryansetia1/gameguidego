@@ -297,7 +297,8 @@ h1 em {
 }
 
 .field input:not([type="checkbox"]):not([type="radio"]),
-.field select {
+.field select,
+.guide-link-field input {
   width: 100%;
   min-height: 48px;
   border: 1.5px solid var(--ink);
@@ -308,7 +309,16 @@ h1 em {
   font-size: 0.95rem;
 }
 
-.field input:not([type="checkbox"]):not([type="radio"])::placeholder {
+/* Inputs only (not select, which needs its native arrow): normalize the native
+   search-field chrome so it matches the app's flat theme. */
+.field input:not([type="checkbox"]):not([type="radio"]),
+.guide-link-field input {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.field input:not([type="checkbox"]):not([type="radio"])::placeholder,
+.guide-link-field input::placeholder {
   color: var(--placeholder);
 }
 

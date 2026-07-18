@@ -1896,6 +1896,7 @@ export default function Home() {
                   game={game}
                   platform={platform}
                   disabled={loading}
+                  onGuidePicked={() => setOptPanel(null)}
                 />
               </div>
             )}

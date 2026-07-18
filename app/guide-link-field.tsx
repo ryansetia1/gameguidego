@@ -10,6 +10,8 @@ type Props = {
   game: string;
   platform: string;
   disabled?: boolean;
+  /** Called when the user picks a result via "Use" — the caller collapses the section. */
+  onGuidePicked?: () => void;
 };
 
 function hostLabel(url: string) {
@@ -20,7 +22,7 @@ function hostLabel(url: string) {
   }
 }
 
-export function GuideLinkField({ value, onChange, game, platform, disabled }: Props) {
+export function GuideLinkField({ value, onChange, game, platform, disabled, onGuidePicked }: Props) {
   const [mode, setMode] = useState<"link" | "search">("link");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<GuideHit[]>([]);
@@ -87,6 +89,8 @@ export function GuideLinkField({ value, onChange, game, platform, disabled }: Pr
     onChange(url);
     setMode("link");
     setSearchError("");
+    // The user has chosen their preferred guide — collapse the section.
+    onGuidePicked?.();
   }
 
   function onSearchSubmit(event: FormEvent) {
