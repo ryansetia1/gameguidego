@@ -2586,7 +2586,11 @@ details.sources small {
   display: flex;
   gap: 12px;
   overflow-x: auto;
-  scroll-snap-type: x proximity;
+  /* x mandatory feels much snappier than proximity, and overscroll-behavior 
+     prevents iOS swipe-to-go-back from stealing the momentum gesture. */
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  scroll-padding-inline-start: 4px;
   padding-bottom: 4px;
   margin: 0 -4px;
   padding-inline: 4px;
