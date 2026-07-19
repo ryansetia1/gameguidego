@@ -9,7 +9,7 @@ import { retrieveFromPreferredGuides } from "@/lib/guide-rag";
 import { coerceSpoilerPrefs } from "@/lib/spoiler-prefs";
 import { coerceDisplayName } from "@/lib/profile.js";
 import { searchGuides, type SearchResult } from "@/lib/tavily";
-import { logSolveJourneyToDb, type SolveJourneyEntry } from "@/lib/solve-log.ts";
+import { logSolveJourneyToDb, type SolveJourneyEntry } from "@/lib/solve-log";
 
 export const runtime = "nodejs";
 

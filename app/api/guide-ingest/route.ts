@@ -11,7 +11,7 @@ import {
   isGuideIndexed,
   isGuideRagAvailable,
 } from "@/lib/guide-ingest";
-import { logIngestJourneyToDb } from "@/lib/solve-log.ts";
+import { logIngestJourneyToDb } from "@/lib/solve-log";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
