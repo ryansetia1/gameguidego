@@ -573,11 +573,18 @@ export default function Home() {
   }, [user]);
 
   useEffect(() => {
-    // Opening a saved chat jumps to the newest message; a live turn instead pins
-    // the latest question to the top so the answer reads top-down (no scroll-up).
+    // Opening a saved chat (or restoring a draft) jumps to the last user turn so
+    // the latest question stays in view with the answer below. A live turn uses
+    // smooth scroll on each message update instead.
     if (jumpRef.current) {
-      feedRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
       jumpRef.current = false;
+      requestAnimationFrame(() => {
+        if (lastUserRef.current) {
+          lastUserRef.current.scrollIntoView({ behavior: "auto", block: "start" });
+        } else {
+          feedRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+        }
+      });
       return;
     }
     lastUserRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
