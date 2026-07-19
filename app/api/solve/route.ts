@@ -126,118 +126,139 @@ export async function POST(request: Request) {
     );
   }
 
-  try {
-    let sources: SearchResult[] = [];
-    let guideHint: string | undefined;
+  const stream = new ReadableStream({
+    async start(controller) {
+      const sendEvent = (event: string, data: any) => {
+        const text = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+        controller.enqueue(new TextEncoder().encode(text));
+      };
 
-    const searchTopic = await resolveQuestion({
-      question,
-      history,
-      game,
-      platform,
-      userId,
-      signal,
-      forRag: preferredUrls.length > 0,
-    });
+      try {
+        let sources: SearchResult[] = [];
+        let guideHint: string | undefined;
 
-    const hasSearchProvider = Boolean(
-      process.env.TAVILY_API_KEY || process.env.SERPER_API_KEY,
-    );
-    const searchQuery = [game, platform, searchTopic, "walkthrough guide"]
-      .filter(Boolean)
-      .join(" ");
+        sendEvent("status", { text: "Understanding your question..." });
+        const searchTopic = await resolveQuestion({
+          question,
+          history,
+          game,
+          platform,
+          userId,
+          signal,
+          forRag: preferredUrls.length > 0,
+        });
 
-    if (preferredUrls.length) {
-      const rag = await retrieveFromPreferredGuides({
-        guideUrls: preferredUrls,
-        query: searchTopic,
-        signal,
-        game,
-        platform,
-        userId,
-        bundlePrefs,
-      });
+        const hasSearchProvider = Boolean(
+          process.env.TAVILY_API_KEY || process.env.SERPER_API_KEY,
+        );
+        const searchQuery = [game, platform, searchTopic, "walkthrough guide"]
+          .filter(Boolean)
+          .join(" ");
 
-      if (rag?.hubWarning && rag.indexedCount === 0) {
-        // Only warn "looks like an index page" when nothing indexed; if we
-        // indexed and answered from it, the warning would be a lie.
-        guideHint = guideIngestHint({ hubWarning: true }) ?? undefined;
-      } else if (rag && rag.indexedCount < rag.totalGuides) {
-        guideHint =
-          guideIngestHint({
-            available: true,
-            indexedCount: rag.indexedCount,
-            total: rag.totalGuides,
-          }) ?? undefined;
-      } else if (rag && !rag.skipWebSearch && !rag.sources.length) {
-        guideHint =
-          guideIngestHint({ available: true, indexed: false }) ?? undefined;
+        if (preferredUrls.length) {
+          sendEvent("status", { text: "Searching your guide..." });
+          const rag = await retrieveFromPreferredGuides({
+            guideUrls: preferredUrls,
+            query: searchTopic,
+            signal,
+            game,
+            platform,
+            userId,
+            bundlePrefs,
+          });
+
+          if (rag?.hubWarning && rag.indexedCount === 0) {
+            guideHint = guideIngestHint({ hubWarning: true }) ?? undefined;
+          } else if (rag && rag.indexedCount < rag.totalGuides) {
+            guideHint =
+              guideIngestHint({
+                available: true,
+                indexedCount: rag.indexedCount,
+                total: rag.totalGuides,
+              }) ?? undefined;
+          } else if (rag && !rag.skipWebSearch && !rag.sources.length) {
+            guideHint =
+              guideIngestHint({ available: true, indexed: false }) ?? undefined;
+          }
+
+          if (rag?.skipWebSearch) {
+            sources = rag.sources;
+          } else if (rag) {
+            if (hasSearchProvider) {
+              sendEvent("status", { text: "Searching the web..." });
+            }
+            const web = hasSearchProvider
+              ? await tieredWebSearch(searchQuery, signal)
+              : [];
+            sources = [...rag.sources, ...web];
+          } else if (hasSearchProvider) {
+            sendEvent("status", { text: "Searching the web..." });
+            sources = await tieredWebSearch(searchQuery, signal);
+          }
+        } else if (hasSearchProvider) {
+          sendEvent("status", { text: "Searching the web..." });
+          sources = await tieredWebSearch(searchQuery, signal);
+        }
+
+        sendEvent("status", { text: "Reading and building answer..." });
+        let { answer, highlights, spoilers, spoilerRisk } = await summarize({
+          game,
+          platform,
+          question,
+          sources,
+          history,
+          images,
+          spoilerPrefs,
+          playerName,
+          userId,
+          signal,
+        });
+
+        if (!spoilerPrefs.major && spoilerRisk) {
+          sendEvent("status", { text: "Checking for spoilers..." });
+          const cleaned = await censorSpoilers({
+            answer,
+            highlights,
+            game,
+            platform,
+            userId,
+            signal,
+          });
+          if (cleaned) {
+            answer = cleaned.answer;
+            highlights = cleaned.highlights;
+          }
+        }
+
+        sendEvent("result", {
+          answer,
+          highlights,
+          spoilers: spoilerPrefs.major ? spoilers : [],
+          sources: sources.map(({ title, url }) => ({ title, url })),
+          ...(guideHint ? { guideHint } : {}),
+        });
+        controller.close();
+      } catch (error) {
+        console.error("Guide generation failed:", error);
+        const timedOut =
+          error instanceof Error &&
+          (error.name === "AbortError" || error.name === "TimeoutError");
+
+        sendEvent("error", {
+          error: timedOut
+            ? "The search took too long. Please try again."
+            : "Couldn't build a guide. Please try again shortly.",
+        });
+        controller.close();
       }
+    },
+  });
 
-      if (rag?.skipWebSearch) {
-        sources = rag.sources;
-      } else if (rag) {
-        const web = hasSearchProvider
-          ? await tieredWebSearch(searchQuery, signal)
-          : [];
-        sources = [...rag.sources, ...web];
-      } else if (hasSearchProvider) {
-        sources = await tieredWebSearch(searchQuery, signal);
-      }
-    } else if (hasSearchProvider) {
-      // Same helper (and same cache key) as the RAG fallback, so an identical
-      // query isn't cached twice under two keys.
-      sources = await tieredWebSearch(searchQuery, signal);
-    }
-
-    let { answer, highlights, spoilers, spoilerRisk } = await summarize({
-      game,
-      platform,
-      question,
-      sources,
-      history,
-      images,
-      spoilerPrefs,
-      playerName,
-      userId,
-      signal,
-    });
-
-    if (!spoilerPrefs.major && spoilerRisk) {
-      const cleaned = await censorSpoilers({
-        answer,
-        highlights,
-        game,
-        platform,
-        userId,
-        signal,
-      });
-      if (cleaned) {
-        answer = cleaned.answer;
-        highlights = cleaned.highlights;
-      }
-    }
-
-    return NextResponse.json({
-      answer,
-      highlights,
-      spoilers: spoilerPrefs.major ? spoilers : [],
-      sources: sources.map(({ title, url }) => ({ title, url })),
-      ...(guideHint ? { guideHint } : {}),
-    });
-  } catch (error) {
-    console.error("Guide generation failed:", error);
-    const timedOut =
-      error instanceof Error &&
-      (error.name === "AbortError" || error.name === "TimeoutError");
-
-    return NextResponse.json(
-      {
-        error: timedOut
-          ? "The search took too long. Please try again."
-          : "Couldn't build a guide. Please try again shortly.",
-      },
-      { status: timedOut ? 504 : 502 },
-    );
-  }
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    },
+  });
 }
