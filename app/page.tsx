@@ -24,9 +24,11 @@ import { guideIngestHint, guideIngestHintFromResponse } from "@/lib/guide-hints.
 import {
   bundleHasPendingPages,
   bundlePrefsForApi,
+  filterBundlePanelPages,
   getBundlePrefs,
   hydrateBundlePrefsFromUser,
   registerBundlePrefsSync,
+  skipAllMissingBundlePages,
   skipBundlePage,
   unskipBundlePage,
 } from "@/lib/bundle-prefs.js";
@@ -69,7 +71,7 @@ function isBundlePanelLoading(
   return false;
 }
 
-import { BundleIndexPanel, BundleIndexPanelSkeleton } from "./bundle-index-panel";
+import { BundleIndexPanel } from "./bundle-index-panel";
 import { GuideLinkField, type GuideBundleMeta } from "./guide-link-field";
 import { HltbRow } from "./hltb-row";
 import { PlatformSelect } from "./platform-select";
@@ -405,6 +407,7 @@ export default function Home() {
   >({});
   const [bundleStatusRev, setBundleStatusRev] = useState(0);
   const [retryingBundleUrl, setRetryingBundleUrl] = useState<string | null>(null);
+  const [refreshingBundleUrl, setRefreshingBundleUrl] = useState<string | null>(null);
   const [bundlePanelLoad, setBundlePanelLoad] = useState<
     Record<string, { meta: boolean; status: boolean }>
   >({});
@@ -1037,6 +1040,68 @@ export default function Home() {
       if (!row) return prev;
       return { ...prev, [url]: { ...row, skippedSlugs: prefs.skippedSlugs } };
     });
+  }, []);
+
+  const handleSkipAllMissingBundlePages = useCallback(
+    (url: string, missingSlugs: string[]) => {
+      if (!missingSlugs.length) return;
+      const prefs = skipAllMissingBundlePages(url, missingSlugs);
+      setGuideBundleMeta((prev) => {
+        const row = prev[url];
+        if (!row) return prev;
+        const skipped = new Set(prefs.skippedSlugs.map((slug) => slug.toLowerCase()));
+        return {
+          ...prev,
+          [url]: {
+            ...row,
+            skippedSlugs: prefs.skippedSlugs,
+            missingPages: row.missingPages?.filter(
+              (page) => !skipped.has(page.slug.toLowerCase()),
+            ),
+          },
+        };
+      });
+    },
+    [],
+  );
+
+  const refreshBundleDiscovery = useCallback(async (url: string) => {
+    setRefreshingBundleUrl(url);
+    try {
+      const response = await fetch(
+        `/api/guide-bundle?url=${encodeURIComponent(url)}&refresh=1`,
+      );
+      const data: {
+        bundle?: boolean;
+        pageCount?: number;
+        title?: string;
+        pages?: { slug: string; title: string; url: string }[];
+      } = await response.json();
+      if (!response.ok || !data.bundle || typeof data.pageCount !== "number") return;
+      const rawPageCount = data.pageCount;
+      setGuideBundleMeta((prev) => {
+        const existing = prev[url];
+        const prefs = mergedBundlePrefs(url, existing);
+        const pages = filterBundlePanelPages(data.pages ?? [], prefs.selectedSlugs);
+        const pageCount = pages.length > 0 ? pages.length : rawPageCount;
+        return {
+          ...prev,
+          [url]: {
+            title: data.title ?? existing?.title ?? "GameFAQs guide",
+            pageCount,
+            pages: pages as { slug: string; title: string; url: string }[],
+            selectedSlugs: existing?.selectedSlugs ?? prefs.selectedSlugs,
+            skippedSlugs: existing?.skippedSlugs ?? prefs.skippedSlugs,
+            missingPages: existing?.missingPages,
+          },
+        };
+      });
+      setBundleStatusRev((rev) => rev + 1);
+    } catch (error) {
+      console.error("Bundle discovery refresh failed:", error);
+    } finally {
+      setRefreshingBundleUrl(null);
+    }
   }, []);
 
   // Indexed page rows for GameFAQs bundles (DB truth for the collapsible panel).
@@ -2807,36 +2872,46 @@ export default function Home() {
                 {preferredUrls.map((url) => {
                   const meta = guideBundleMeta[url];
                   const bundle = isGamefaqsBundleUrl(url);
+                  const bundlePrefs = mergedBundlePrefs(url, meta);
                   const label = bundle
                     ? meta
-                      ? `${meta.title} (${meta.pageCount} pages)`
+                      ? `${meta.title} (${bundlePrefs.selectedSlugs?.length ?? meta.pageCount} pages)`
                       : "GameFAQs bundle"
                     : guideUrlsSummary([url]);
-                  const discoveredPages =
+                  const selectionLocked = Boolean(bundlePrefs.selectedSlugs?.length);
+                  const discoveredPages = filterBundlePanelPages(
                     meta?.pages?.map((page) => ({
                       slug: page.slug,
                       title: page.title,
                       url: page.url,
-                    })) ?? [];
-                  const indexedPages = bundleIndexStatus[url]?.pages ?? [];
+                    })) ?? [],
+                    bundlePrefs.selectedSlugs,
+                  );
+                  const indexedPages = filterBundlePanelPages(
+                    bundleIndexStatus[url]?.pages ?? [],
+                    bundlePrefs.selectedSlugs,
+                  );
                   const skippedSlugs =
                     meta?.skippedSlugs ?? getBundlePrefs(url).skippedSlugs ?? [];
                   const skippedSet = new Set(
                     skippedSlugs.map((slug) => slug.toLowerCase()),
                   );
-                  const missingPages = (
-                    meta?.missingPages ??
-                    discoveredPages
-                      .filter(
-                        (page) =>
-                          !indexedPages.some((hit) => hit.slug === page.slug),
-                      )
-                      .map((page) => ({
-                        slug: page.slug,
-                        title: page.title,
-                        url: page.url,
-                      }))
-                  ).filter((page) => !skippedSet.has(page.slug.toLowerCase()));
+                  const missingPages = filterBundlePanelPages(
+                    (
+                      meta?.missingPages ??
+                      discoveredPages
+                        .filter(
+                          (page) =>
+                            !indexedPages.some((hit) => hit.slug === page.slug),
+                        )
+                        .map((page) => ({
+                          slug: page.slug,
+                          title: page.title,
+                          url: page.url,
+                        }))
+                    ).filter((page) => !skippedSet.has(page.slug.toLowerCase())),
+                    bundlePrefs.selectedSlugs,
+                  );
                   const panelLoading = isBundlePanelLoading(
                     url,
                     meta,
@@ -2854,26 +2929,45 @@ export default function Home() {
                         href={url}
                         target="_blank"
                         rel="noreferrer"
+                        aria-busy={bundle && panelLoading ? true : undefined}
                       >
                         <span className="icon-inline">
-                          {label} <IconArrowUpRight />
+                          {label}
+                          {bundle && panelLoading ? (
+                            <span
+                              className="game-card-bundle-spinner loader"
+                              aria-hidden="true"
+                            />
+                          ) : null}
+                          <IconArrowUpRight />
                         </span>
                       </a>
-                      {bundle && panelLoading ? <BundleIndexPanelSkeleton /> : null}
                       {bundle && !panelLoading && showPanel ? (
                         <BundleIndexPanel
                           discoveredPages={discoveredPages}
                           indexedPages={indexedPages}
                           missingPages={missingPages}
                           skippedSlugs={skippedSlugs}
+                          selectionLocked={selectionLocked}
                           onSkipPage={(slug) => handleSkipBundlePage(url, slug)}
                           onUnskipPage={(slug) => handleUnskipBundlePage(url, slug)}
+                          onSkipAllMissing={
+                            missingPages.length
+                              ? () =>
+                                  handleSkipAllMissingBundlePages(
+                                    url,
+                                    missingPages.map((page) => page.slug),
+                                  )
+                              : undefined
+                          }
                           onRetryMissing={
                             missingPages.length
                               ? () => void retryBundleIngest(url)
                               : undefined
                           }
+                          onRefreshList={() => void refreshBundleDiscovery(url)}
                           retrying={retryingBundleUrl === url}
+                          refreshingList={refreshingBundleUrl === url}
                         />
                       ) : null}
                     </div>

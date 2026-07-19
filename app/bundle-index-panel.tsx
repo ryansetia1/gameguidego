@@ -13,44 +13,29 @@ type Props = {
   indexedPages: { slug: string; title: string; url: string; chunks: number }[];
   missingPages?: { slug: string; title: string; url: string }[];
   skippedSlugs?: string[];
+  selectionLocked?: boolean;
   onSkipPage?: (slug: string) => void;
   onUnskipPage?: (slug: string) => void;
+  onSkipAllMissing?: () => void;
   onRetryMissing?: () => void;
+  onRefreshList?: () => void;
   retrying?: boolean;
+  refreshingList?: boolean;
 };
-
-/** Shown while bundle preview + DB index status are still loading. */
-export function BundleIndexPanelSkeleton() {
-  return (
-    <div
-      className="bundle-index-skeleton"
-      role="status"
-      aria-live="polite"
-      aria-busy="true"
-      aria-label="Loading guide index status"
-    >
-      <div className="bundle-index-skeleton-summary" />
-      <ul className="bundle-index-skeleton-list" aria-hidden="true">
-        {Array.from({ length: 5 }, (_, index) => (
-          <li
-            key={index}
-            className={`bundle-index-skeleton-row${index % 2 ? " short" : ""}`}
-          />
-        ))}
-      </ul>
-    </div>
-  );
-}
 
 export function BundleIndexPanel({
   discoveredPages,
   indexedPages,
   missingPages = [],
   skippedSlugs = [],
+  selectionLocked = false,
   onSkipPage,
   onUnskipPage,
+  onSkipAllMissing,
   onRetryMissing,
+  onRefreshList,
   retrying = false,
+  refreshingList = false,
 }: Props) {
   if (!discoveredPages.length && !indexedPages.length && !missingPages.length) {
     return null;
@@ -101,6 +86,7 @@ export function BundleIndexPanel({
     <details className="bundle-index-panel" open={missingRows.length > 0}>
       <summary>
         Indexed {indexedCount} of {targetTotal} pages
+        {selectionLocked ? " (your selection)" : ""}
         {missingRows.length > 0 ? ` (${missingRows.length} not indexed)` : ""}
         {skippedRows.length > 0 ? ` · ${skippedRows.length} skipped` : ""}
       </summary>
@@ -108,20 +94,47 @@ export function BundleIndexPanel({
         <div className="bundle-index-missing-note">
           <p>
             Not indexed: {missingRows.map((row) => row.title).join(", ")}.
-            {onRetryMissing ? " We retry these on your next question." : ""}
+            {onRetryMissing ? " Retry now, or ignore pages you do not need." : ""}
           </p>
-          {onRetryMissing ? (
-            <button
-              type="button"
-              className="bundle-index-retry"
-              disabled={retrying}
-              onClick={onRetryMissing}
-            >
-              {retrying ? "Retrying…" : "Retry missing pages"}
-            </button>
-          ) : null}
+          <div className="bundle-index-missing-actions">
+            {onRetryMissing ? (
+              <button
+                type="button"
+                className="bundle-index-retry"
+                disabled={retrying || refreshingList}
+                onClick={onRetryMissing}
+              >
+                {retrying ? "Retrying…" : "Retry missing pages"}
+              </button>
+            ) : null}
+            {onSkipAllMissing ? (
+              <button
+                type="button"
+                className="bundle-index-skip-all"
+                disabled={retrying || refreshingList}
+                onClick={onSkipAllMissing}
+              >
+                Ignore remaining pages
+              </button>
+            ) : null}
+          </div>
         </div>
       )}
+      {onRefreshList ? (
+        <div className="bundle-index-refresh-row">
+          <button
+            type="button"
+            className="bundle-index-refresh"
+            disabled={refreshingList || retrying}
+            onClick={onRefreshList}
+          >
+            {refreshingList ? "Refreshing page list…" : "Refresh page list"}
+          </button>
+          <span className="bundle-index-refresh-hint">
+            Searches GameFAQs again for new sections (uses web search credits).
+          </span>
+        </div>
+      ) : null}
       <ul className="bundle-index-list">
         {sortedRows.map((row) => (
           <li

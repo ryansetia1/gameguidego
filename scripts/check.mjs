@@ -36,17 +36,22 @@ import {
   bundleHasPendingPages,
   bundlePrefsAllFromUserMetadata,
   coerceBundlePrefsFromBody,
+  filterBundlePanelPages,
   mergeBundlePrefsAll,
+  skipAllMissingBundlePages,
   targetBundleSlugs,
 } from "../lib/bundle-prefs.js";
 import { isReplicateRateLimit, parsePositiveInt } from "../lib/replicate-retry.js";
 import {
   canonicalGamefaqsBundleUrl,
+  buildGamefaqsDiscoveryBaseQueries,
+  buildGamefaqsPartDiscoveryQueries,
   parseGamefaqsFaqUrl,
   parseGamefaqsTocFromHtml,
   parseGamefaqsPagesFromUrls,
   titleFromGamefaqsSlug,
 } from "../lib/gamefaqs-bundle.js";
+import { coerceCachedBundleDiscovery } from "../lib/guide-bundle-cache.js";
 import {
   cleanGuideUrl,
   coerceGuideUrlsFromBody,
@@ -315,6 +320,17 @@ assert.deepEqual(
   ),
   ["a", "c"],
 );
+assert.deepEqual(
+  filterBundlePanelPages(
+    [{ slug: "a" }, { slug: "b" }, { slug: "c" }],
+    ["a", "c"],
+  ),
+  [{ slug: "a" }, { slug: "c" }],
+);
+assert.deepEqual(
+  skipAllMissingBundlePages("https://gamefaqs.gamespot.com/faqs/1", ["faq", "part-2"]).skippedSlugs,
+  ["faq", "part-2"],
+);
 assert.equal(
   bundleHasPendingPages(
     [{ slug: "a" }, { slug: "b" }],
@@ -426,6 +442,21 @@ const searchPages = parseGamefaqsPagesFromUrls(
 );
 assert.equal(searchPages.length, 3);
 assert.equal(searchPages[0].slug, "introduction");
+
+const parsed80674 = parseGamefaqsFaqUrl(suikodenBundle);
+assert.ok(parsed80674);
+const baseQueries = buildGamefaqsDiscoveryBaseQueries(parsed80674);
+assert.ok(baseQueries.some((query) => query.includes("/part-")));
+const partQueries = buildGamefaqsPartDiscoveryQueries(parsed80674, 3);
+assert.ok(partQueries.some((query) => query.includes("/part-1")));
+assert.ok(partQueries.some((query) => query.includes("/walkthrough-part-2")));
+assert.deepEqual(
+  coerceCachedBundleDiscovery({
+    title: "Guide",
+    pages: [{ slug: "part-1", title: "Part 1", url: `${suikodenBundle}/part-1` }],
+  })?.pages[0]?.slug,
+  "part-1",
+);
 
 assert.equal(isReplicateRateLimit(new Error("429 Too Many Requests")), true);
 assert.equal(isReplicateRateLimit(new Error("network down")), false);

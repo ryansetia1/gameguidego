@@ -393,7 +393,23 @@ async function ingestGamefaqsBundle(
     return ingestSingleGuidePage(rawUrl, signal, ctx);
   }
 
-  const discovery = await discoverGamefaqsBundleResolved(rawUrl, signal);
+  const discoveryCached = await discoverGamefaqsBundleResolved(rawUrl, signal, {
+    refresh: false,
+  });
+  const include = ctx?.includeSlugs?.length
+    ? ctx.includeSlugs.map((slug) => slug.toLowerCase())
+    : [];
+  const needsRefresh =
+    !discoveryCached.bundle ||
+    !discoveryCached.pages?.length ||
+    (include.length > 0 &&
+      include.some(
+        (slug) =>
+          !discoveryCached.pages!.some((page) => page.slug.toLowerCase() === slug),
+      ));
+  const discovery = needsRefresh
+    ? await discoverGamefaqsBundleResolved(rawUrl, signal, { refresh: true })
+    : discoveryCached;
   if (!discovery.bundle || !discovery.pages?.length) {
     return ingestSingleGuidePage(rawUrl, signal, ctx);
   }

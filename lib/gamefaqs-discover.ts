@@ -1,18 +1,27 @@
 import {
+  buildGamefaqsDiscoveryBaseQueries,
+  buildGamefaqsPartDiscoveryQueries,
   discoverGamefaqsBundle,
   mergeGamefaqsBundlePages,
   parseGamefaqsFaqUrl,
   parseGamefaqsGuideTitle,
   parseGamefaqsPagesFromUrls,
   parseGamefaqsTocFromHtml,
-  shouldSkipGamefaqsSlug,
-  titleFromGamefaqsSlug,
 } from "@/lib/gamefaqs-bundle.js";
+import {
+  getCachedBundleDiscovery,
+  getIndexedBundlePagesFromDb,
+  setCachedBundleDiscovery,
+} from "@/lib/guide-bundle-cache.js";
 import { extractGuidePage, searchDiscoveryUrls } from "@/lib/tavily";
 
 type BundleDiscovery = Awaited<ReturnType<typeof discoverGamefaqsBundle>>;
 type ParsedFaq = NonNullable<ReturnType<typeof parseGamefaqsFaqUrl>>;
 type BundlePage = { title: string; url: string; slug: string };
+
+export type DiscoverOptions = { refresh?: boolean };
+
+const PART_QUERY_PAGE_THRESHOLD = 12;
 
 function buildBundleDiscovery(
   parsed: ParsedFaq,
@@ -48,7 +57,7 @@ async function enrichBundlePagesFromExtracts(
       page.slug === "frequently-asked-questions",
   );
 
-  for (const page of seeds.slice(0, 4)) {
+  for (const page of seeds.slice(0, 6)) {
     const extracted = await extractGuidePage(page.url, signal);
     if (!extracted?.content || isBlockedGuideContent(extracted.content)) continue;
     const found = parseGamefaqsTocFromHtml(extracted.content, parsed);
@@ -58,20 +67,12 @@ async function enrichBundlePagesFromExtracts(
   return mergeGamefaqsBundlePages(merged);
 }
 
-async function discoverGamefaqsBundleViaSearch(
+async function runDiscoveryQueries(
   parsed: ParsedFaq,
+  queries: string[],
+  seedPages: BundlePage[],
   signal?: AbortSignal,
-): Promise<BundleDiscovery | null> {
-  const path = new URL(parsed.canonicalUrl).pathname;
-  const queries = [
-    `site:gamefaqs.gamespot.com${path}`,
-    `site:gamefaqs.gamespot.com "${path}/"`,
-    `site:gamefaqs.gamespot.com "${path}/part-"`,
-    `site:gamefaqs.gamespot.com "${path}/boss"`,
-    `${path.replace(/\//g, " ")} walkthrough`,
-    `gamefaqs ${parsed.gameSlug.replace(/-/g, " ")} faq ${parsed.faqId}`,
-  ];
-
+): Promise<BundlePage[]> {
   const seenUrls = new Set<string>();
   const mergedHits: { url: string }[] = [];
 
@@ -92,34 +93,48 @@ async function discoverGamefaqsBundleViaSearch(
     }
   }
 
-  let pages = parseGamefaqsPagesFromUrls(
+  const fromUrls = parseGamefaqsPagesFromUrls(
     mergedHits.map((hit) => hit.url),
     parsed,
   );
-  if (pages.length <= 1) return null;
-
-  pages = await enrichBundlePagesFromExtracts(parsed, pages, signal);
-  if (pages.length <= 1) return null;
-
-  return buildBundleDiscovery(parsed, pages);
+  return mergeGamefaqsBundlePages([...seedPages, ...fromUrls]);
 }
 
-/**
- * GameFAQs blocks direct HTML fetch (Cloudflare). Fall back to Tavily extract,
- * site search (+ extract TOC enrichment), when the plain fetch finds 0–1 pages.
- */
-export async function discoverGamefaqsBundleResolved(
-  rawUrl: string,
+async function discoverGamefaqsBundleViaSearch(
+  parsed: ParsedFaq,
   signal?: AbortSignal,
-): Promise<BundleDiscovery> {
-  const direct = await discoverGamefaqsBundle(rawUrl, signal);
-  if (direct.bundle) return direct;
+  seedPages: BundlePage[] = [],
+): Promise<BundlePage[]> {
+  let pages = mergeGamefaqsBundlePages(seedPages);
 
-  const parsed = parseGamefaqsFaqUrl(rawUrl);
-  if (!parsed) return direct;
+  pages = await runDiscoveryQueries(
+    parsed,
+    buildGamefaqsDiscoveryBaseQueries(parsed),
+    pages,
+    signal,
+  );
 
+  if (pages.length < PART_QUERY_PAGE_THRESHOLD) {
+    pages = await runDiscoveryQueries(
+      parsed,
+      buildGamefaqsPartDiscoveryQueries(parsed),
+      pages,
+      signal,
+    );
+  }
+
+  if (pages.length <= 1) return pages;
+  return enrichBundlePagesFromExtracts(parsed, pages, signal);
+}
+
+async function discoverViaTavily(
+  parsed: ParsedFaq,
+  signal?: AbortSignal,
+  seedPages: BundlePage[] = [],
+): Promise<{ pages: BundlePage[]; title: string }> {
   const candidates = [
     `${parsed.canonicalUrl}/introduction`,
+    `${parsed.canonicalUrl}/walkthrough`,
     parsed.canonicalUrl,
   ];
 
@@ -130,16 +145,143 @@ export async function discoverGamefaqsBundleResolved(
       : [];
     if (!extracted?.content || pages.length <= 1) continue;
 
-    const enriched = await enrichBundlePagesFromExtracts(parsed, pages, signal);
+    const enriched = await enrichBundlePagesFromExtracts(
+      parsed,
+      mergeGamefaqsBundlePages([...seedPages, ...pages]),
+      signal,
+    );
+    return {
+      pages: enriched,
+      title: parseGamefaqsGuideTitle(extracted.content) || "GameFAQs guide",
+    };
+  }
+
+  const fromSearch = await discoverGamefaqsBundleViaSearch(parsed, signal, seedPages);
+  return { pages: fromSearch, title: "GameFAQs guide" };
+}
+
+async function mergeAndCacheDiscovery(
+  parsed: ParsedFaq,
+  discovered: BundlePage[],
+  title: string,
+): Promise<BundlePage[]> {
+  const cached = await getCachedBundleDiscovery(parsed.bundleKey, { allowStale: true });
+  const fromDb = await getIndexedBundlePagesFromDb(parsed.bundleKey);
+  const merged = mergeGamefaqsBundlePages([
+    ...discovered,
+    ...(cached?.pages ?? []),
+    ...fromDb,
+  ]);
+
+  if (merged.length > 1) {
+    void setCachedBundleDiscovery(parsed.bundleKey, {
+      canonicalUrl: parsed.canonicalUrl,
+      title: cached?.title ?? title,
+      pages: merged,
+    });
+  }
+
+  return merged;
+}
+
+async function discoverFromCacheAndDb(
+  parsed: ParsedFaq,
+): Promise<{ pages: BundlePage[]; title: string }> {
+  const cached = await getCachedBundleDiscovery(parsed.bundleKey, { allowStale: true });
+  const fromDb = await getIndexedBundlePagesFromDb(parsed.bundleKey);
+  const pages = mergeGamefaqsBundlePages([...(cached?.pages ?? []), ...fromDb]);
+  return { pages, title: cached?.title ?? "GameFAQs guide" };
+}
+
+async function discoverGamefaqsBundleCacheFirst(
+  parsed: ParsedFaq,
+  rawUrl: string,
+  signal?: AbortSignal,
+): Promise<BundleDiscovery> {
+  const { pages: seedPages, title } = await discoverFromCacheAndDb(parsed);
+  if (seedPages.length > 1) {
+    return buildBundleDiscovery(parsed, seedPages, title);
+  }
+
+  const direct = await discoverGamefaqsBundle(rawUrl, signal);
+  if (direct.bundle && direct.pages?.length) {
+    const merged = await mergeAndCacheDiscovery(
+      parsed,
+      direct.pages,
+      direct.title ?? title,
+    );
+    if (merged.length > 1) {
+      return buildBundleDiscovery(parsed, merged, direct.title ?? title);
+    }
+  }
+
+  if (seedPages.length > 0) {
+    return buildBundleDiscovery(parsed, seedPages, title);
+  }
+
+  return direct.bundle ? direct : { bundle: false };
+}
+
+async function discoverGamefaqsBundleFull(
+  parsed: ParsedFaq,
+  rawUrl: string,
+  signal?: AbortSignal,
+): Promise<BundleDiscovery> {
+  const cached = await getCachedBundleDiscovery(parsed.bundleKey);
+  const seedPages = mergeGamefaqsBundlePages([
+    ...(cached?.pages ?? []),
+    ...(await getIndexedBundlePagesFromDb(parsed.bundleKey)),
+  ]);
+
+  const direct = await discoverGamefaqsBundle(rawUrl, signal);
+  if (direct.bundle && direct.pages?.length) {
+    const merged = await mergeAndCacheDiscovery(
+      parsed,
+      direct.pages,
+      direct.title ?? "GameFAQs guide",
+    );
+    if (merged.length > 1) {
+      return buildBundleDiscovery(parsed, merged, direct.title ?? cached?.title ?? "GameFAQs guide");
+    }
+  }
+
+  const fresh = await discoverViaTavily(parsed, signal, seedPages);
+  const merged = await mergeAndCacheDiscovery(parsed, fresh.pages, fresh.title);
+
+  if (merged.length > 1) {
+    return buildBundleDiscovery(parsed, merged, fresh.title ?? cached?.title ?? "GameFAQs guide");
+  }
+
+  if (seedPages.length > 1) {
     return buildBundleDiscovery(
       parsed,
-      enriched,
-      parseGamefaqsGuideTitle(extracted.content) || "GameFAQs guide",
+      seedPages,
+      cached?.title ?? fresh.title ?? "GameFAQs guide",
     );
   }
 
-  const fromSearch = await discoverGamefaqsBundleViaSearch(parsed, signal);
-  if (fromSearch) return fromSearch;
+  return direct.bundle ? direct : { bundle: false };
+}
 
-  return direct;
+/**
+ * GameFAQs blocks direct HTML fetch (Cloudflare). Fall back to Tavily extract,
+ * site search (+ per-part queries when sparse), merge with Supabase TOC cache
+ * and any pages already indexed in guide_chunks.
+ *
+ * Default (`refresh: false`) reads cache + DB only (no Tavily). Pass
+ * `refresh: true` for a full Tavily discovery pass (add-time preview, manual refresh).
+ */
+export async function discoverGamefaqsBundleResolved(
+  rawUrl: string,
+  signal?: AbortSignal,
+  options: DiscoverOptions = {},
+): Promise<BundleDiscovery> {
+  const parsed = parseGamefaqsFaqUrl(rawUrl);
+  if (!parsed) return discoverGamefaqsBundle(rawUrl, signal);
+
+  if (!options.refresh) {
+    return discoverGamefaqsBundleCacheFirst(parsed, rawUrl, signal);
+  }
+
+  return discoverGamefaqsBundleFull(parsed, rawUrl, signal);
 }

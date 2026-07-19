@@ -14,7 +14,10 @@ export async function GET(request: Request) {
   }
 
   try {
-    const preview = await discoverGamefaqsBundleResolved(preferredUrl, request.signal);
+    const refresh = searchParams.get("refresh") === "1";
+    const preview = await discoverGamefaqsBundleResolved(preferredUrl, request.signal, {
+      refresh,
+    });
     return NextResponse.json(preview);
   } catch (error) {
     console.error("Guide bundle preview failed:", error);

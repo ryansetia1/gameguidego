@@ -120,7 +120,7 @@ export function GuideLinkField({
     setBundlePreview(null);
     try {
       const response = await fetch(
-        `/api/guide-bundle?url=${encodeURIComponent(cleaned)}`,
+        `/api/guide-bundle?url=${encodeURIComponent(cleaned)}&refresh=1`,
       );
       const payload: {
         bundle?: boolean;

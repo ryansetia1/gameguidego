@@ -2800,6 +2800,14 @@ details.sources small {
   overflow-wrap: anywhere;
 }
 
+.game-card-bundle-spinner {
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
 /* Cover field in the editable setup: tile with a centered upload button. The
    column stretches to the fields' height (align-items:stretch on .setup-main) and
    the tile fills from the game-name input down to the platform field's bottom. */
@@ -3004,42 +3012,6 @@ details.sources small {
   color: var(--muted, #9aa0a6);
 }
 
-.bundle-index-skeleton {
-  margin: 6px 0 0 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.bundle-index-skeleton-summary {
-  height: 14px;
-  width: 55%;
-  border-radius: 4px;
-  background: var(--line);
-  animation: skeleton-pulse 1.2s ease-in-out infinite;
-}
-
-.bundle-index-skeleton-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.bundle-index-skeleton-row {
-  height: 16px;
-  width: 92%;
-  border-radius: 4px;
-  background: var(--line);
-  animation: skeleton-pulse 1.2s ease-in-out infinite;
-}
-
-.bundle-index-skeleton-row.short {
-  width: 72%;
-}
-
 .bundle-index-missing-note {
   margin: 6px 0 8px;
   padding: 8px 10px;
@@ -3049,6 +3021,27 @@ details.sources small {
   color: var(--text);
   font-size: 0.8rem;
   line-height: 1.35;
+}
+
+.bundle-index-missing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.bundle-index-refresh-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
+.bundle-index-refresh-hint {
+  font-size: 0.75rem;
+  color: var(--muted, #9aa0a6);
+  line-height: 1.3;
 }
 
 .bundle-index-panel summary {
@@ -3119,7 +3112,9 @@ details.sources small {
 }
 
 .bundle-index-skip,
-.bundle-index-retry {
+.bundle-index-retry,
+.bundle-index-skip-all,
+.bundle-index-refresh {
   margin-left: auto;
   flex-shrink: 0;
   padding: 2px 8px;
@@ -3133,19 +3128,25 @@ details.sources small {
 }
 
 .bundle-index-retry {
-  margin-top: 8px;
   margin-left: 0;
 }
 
 .bundle-index-skip:hover,
-.bundle-index-retry:hover:not(:disabled) {
+.bundle-index-retry:hover:not(:disabled),
+.bundle-index-skip-all:hover:not(:disabled),
+.bundle-index-refresh:hover:not(:disabled) {
   border-color: var(--accent, #00c896);
   color: var(--accent, #00c896);
 }
 
 .bundle-index-retry:disabled {
-  opacity: 0.6;
-  cursor: default;
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.bundle-index-skip-all,
+.bundle-index-refresh {
+  margin-left: 0;
 }
 
 .bundle-index-missing-note p {

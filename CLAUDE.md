@@ -233,6 +233,11 @@ do not sync to the cloud or use Storage uploads.
   Page pick at add time in `app/guide-link-field.tsx`; skip/select prefs in
   `lib/bundle-prefs.js` (`localStorage` `gg:bundle-prefs`; signed-in users sync
   `user_metadata.bundle_prefs` across devices, skip union + selected remote-wins).
+  Discovery merges Tavily search (base + per-part when sparse), extract TOC,
+  `public.guide_bundle_cache` (30d TTL, `db/guide-bundle-cache.sql`), and pages
+  already in `guide_chunks` so partial runs accumulate over time. Game-card loading:
+  inline spinner on the guide link (not a skeleton); collapsible index panel after
+  meta + status fetches complete. See **GameFAQs multi-page bundles** below.
 - `app/api/guide-ingest/route.ts`: lazy shared ingest for one or more preferred
   guide URLs (GameFAQs bundles expand to discovered TOC pages, filtered by
   `bundlePrefs` skip/include). Accepts `game`/`platform`/`userId` for embed audit
@@ -372,6 +377,139 @@ do not sync to the cloud or use Storage uploads.
   under an `<uid>/` prefix (RLS: owner writes, public read). Both are set up by
   `db/cover-metadata.sql`. `public.search_cache` is a shared public cache table
   (see Known limits).
+
+## GameFAQs multi-page bundles (agent reference)
+
+Full design doc: [`docs/preferred-guide.md`](docs/preferred-guide.md). This section
+is the behaviour contract agents must not skip.
+
+### When it applies
+
+- Any preferred-guide URL matching `/faqs/{id}/` on `gamefaqs.gamespot.com` is a
+  **bundle** (`isGamefaqsBundleUrl` in `lib/guide-urls.js`). One URL in the user's
+  list expands to many indexed pages under `guide_bundle = gamefaqs:{faqId}`.
+
+### Discovery (page list — not indexing yet)
+
+GameFAQs blocks direct HTML fetch (Cloudflare 403). `lib/gamefaqs-discover.ts`
+(`discoverGamefaqsBundleResolved`) is the single entry point for preview + ingest.
+
+**Two modes** (`DiscoverOptions.refresh`):
+
+| Mode | When | Tavily? |
+|------|------|---------|
+| **Cache-first** (default) | Game card reload, normal `GET /api/guide-bundle` | No — reads `guide_bundle_cache` (stale OK) + `guide_chunks` URLs; optional direct fetch only |
+| **Full refresh** (`?refresh=1`) | Add-bundle preview, **Refresh page list** button | Yes — full pipeline below |
+
+Full refresh pipeline:
+
+1. **Direct fetch** (`discoverGamefaqsBundle` in `lib/gamefaqs-bundle.js`) when
+   Cloudflare allows (rare).
+2. **Tavily Extract** introduction / walkthrough / root → `parseGamefaqsTocFromHtml`.
+3. **Tavily Site Search** (`searchDiscoveryUrls`, up to 30 hits/query):
+   - Base queries (`buildGamefaqsDiscoveryBaseQueries`): path-wide, part-, walkthrough,
+     boss, faq, game name.
+   - If merged pages **< 12** (`PART_QUERY_PAGE_THRESHOLD`), per-part queries
+     (`buildGamefaqsPartDiscoveryQueries`): `part-1`…`part-25`,
+     `walkthrough-part-1`…`15`, plus common slugs (faq, boss-guides, etc.).
+4. **TOC enrichment**: extract up to 6 seed pages (intro, walkthrough, part-1, faq)
+   and merge any extra TOC links found in extracted text.
+5. **Merge sources (union, never shrink)**:
+   - Fresh discovery
+   - `public.guide_bundle_cache` (`lib/guide-bundle-cache.js`, 30d TTL,
+     `db/guide-bundle-cache.sql`) keyed by `bundle_key`
+   - Pages already in `guide_chunks` for that bundle (`getIndexedBundlePagesFromDb`)
+6. Upsert merged list back to `guide_bundle_cache`.
+
+**Indexing** uses cache-first discovery first; runs full refresh only when a target
+`includeSlug` has no URL in the cached list.
+
+**Important:** Tavily Search is **not** a full site crawler. A guide may have 20+
+real pages while discovery finds 12–18. Pages **never discovered** have no URL to
+index; pages **discovered but extract failed** can retry. Discovery can **grow**
+across runs via cache union; it does not guess missing slugs.
+
+`MAX_BUNDLE_PAGES = 50` in `lib/gamefaqs-bundle.js` is the app cap, not the cause
+of ~16-page discovery gaps.
+
+### Add-bundle UX (`app/guide-link-field.tsx`)
+
+- Paste bundle URL → `GET /api/guide-bundle?refresh=1` preview → checkbox list of discovered
+  pages (Select all / Clear) → **Add bundle (N pages)**.
+- `selectedSlugs` saved to `lib/bundle-prefs.js` + `guideBundleMeta` on the client.
+  Panel and ingest only track those slugs when set (`filterBundlePanelPages`).
+
+### Bundle prefs (`lib/bundle-prefs.js`)
+
+Per canonical bundle URL (`gg:bundle-prefs` in `localStorage`; signed-in users also
+`user_metadata.bundle_prefs`):
+
+- `selectedSlugs`: pages user chose at add time (ingest `includeSlugs`).
+- `skippedSlugs`: user Skip on game card (ingest `skipSlugs`); union across devices
+  on login; `selectedSlugs` remote-wins when both devices set a selection.
+
+Sent to server as `bundlePrefs` on `POST /api/guide-ingest` and `POST /api/solve`.
+
+### Indexing (`lib/guide-ingest.ts`, `POST /api/guide-ingest`)
+
+- Runs before first solve turn per guide URL (and from `lib/guide-rag.ts` on solve).
+- **Resume**: per-page idempotent — existing `guide_chunks` for a URL are skipped;
+  failed/missing pages retried on next turn.
+- **Skip ingest when done**: client skips `POST /api/guide-ingest` when
+  `bundleHasPendingPages` is false (all target slugs indexed or skipped).
+- Filters discovery by `skipSlugs` / `includeSlugs` from `bundlePrefs`.
+- Deletes orphan pre-bundle root chunks on bundle ingest.
+- Returns `pagesMissing` (failed, not skipped), `pagesIndexed`, `pageCount` (target
+  after filters). Toast via `guideIngestHintFromResponse` names missing page titles.
+- Sequential per-URL ingest; Tavily extract batches (`INGEST_EXTRACT_BATCH_SIZE`,
+  default 5) with delay. `maxDuration = 300` on the route.
+- Embed audit: `embed_index` rows in `llm_calls` (`lib/embed-log.ts`).
+
+### Game card UI (`app/page.tsx`, `app/bundle-index-panel.tsx`)
+
+Two parallel client fetches per bundle URL on load / `bundleStatusRev` bump:
+
+| Fetch | Endpoint | Backend | Purpose |
+|-------|----------|---------|---------|
+| Page list | `/api/guide-bundle` | cache-first `discoverGamefaqsBundleResolved` | Supabase cache + DB; no Tavily |
+| Index status | `/api/guide-bundle/status` | `getBundleIndexStatus` → Supabase only | Fast |
+| Refresh list | `/api/guide-bundle?refresh=1` | full Tavily discovery | User-triggered; costs credits |
+
+`bundlePanelLoad` tracks `{ meta, status }` per URL. While loading:
+
+- **Inline spinner** (`.game-card-bundle-spinner`) beside `IconArrowUpRight` on the
+  guide link — **no vertical skeleton** (saves space).
+- Collapsible `BundleIndexPanel` hidden until both loads complete.
+
+Panel when loaded:
+
+- Summary: `Indexed X of Y (your selection)` when `selectedSlugs` set; missing/skipped counts.
+- Missing rows first, **Skip** / **Include**, **Retry missing pages**, **Ignore remaining pages**
+  (bulk skip), **Refresh page list** (full Tavily discovery).
+- `missingPages` excludes `skippedSlugs` and slugs outside `selectedSlugs`; merges ingest
+  `pagesMissing` + discovery minus indexed.
+
+### RAG per turn (`lib/guide-rag.ts`)
+
+- `retrieveFromPreferredGuides` ingests (with `bundlePrefs`), embeds query
+  (`embed_query` in `llm_calls`), `match_guide_chunks` with `GUIDE_HIT` threshold.
+- High hit → `skipWebSearch: true`; else tiered Tavily + one chunk fallback.
+
+### Self-heal cheat sheet
+
+| Case | Auto-fix? |
+|------|-----------|
+| Discovered, extract failed | Retry next turn / Retry button |
+| Indexed in DB, dropped from new discovery | Merged back from `guide_chunks` + cache |
+| New discovery finds more pages later | Cache union adds them |
+| Never discovered (no URL) | No — needs better discovery or user Skip |
+| User Skip | Stops retry; excluded from missing toast |
+
+### DB tables (apply SQL in `db/`)
+
+- `guide_chunks` + `guide_bundle` column (`db/guide-bundle.sql`)
+- `guide_bundle_cache` — discovery TOC cache
+- `embed_cache`, `search_cache`, `llm_calls` (incl. `embed_index`, `embed_query`)
 
 ## Known limits (ponytail)
 
