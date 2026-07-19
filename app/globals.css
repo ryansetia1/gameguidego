@@ -455,7 +455,7 @@ h1 em {
 
 .field input:not([type="checkbox"]):not([type="radio"]),
 .field select,
-.guide-link-field input,
+.guide-link-field input:not([type="checkbox"]):not([type="radio"]),
 .combo-input {
   width: 100%;
   min-height: 48px;
@@ -470,13 +470,13 @@ h1 em {
 /* Inputs only (not select, which needs its native arrow): normalize the native
    search-field chrome so it matches the app's flat theme. */
 .field input:not([type="checkbox"]):not([type="radio"]),
-.guide-link-field input {
+.guide-link-field input:not([type="checkbox"]):not([type="radio"]) {
   -webkit-appearance: none;
   appearance: none;
 }
 
 .field input:not([type="checkbox"]):not([type="radio"])::placeholder,
-.guide-link-field input::placeholder {
+.guide-link-field input:not([type="checkbox"]):not([type="radio"])::placeholder {
   color: var(--placeholder);
 }
 
@@ -3317,15 +3317,23 @@ details.sources small {
   min-width: 0;
 }
 
-.guide-bundle-preview-page-row input {
+.guide-bundle-preview-page-row input[type="checkbox"] {
   flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  margin: 0;
+  accent-color: var(--accent, #00c896);
 }
 
 .guide-bundle-preview-page-row label {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+  color: var(--ink);
 }
 
 .guide-bundle-preview-select {

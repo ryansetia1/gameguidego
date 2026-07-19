@@ -37,6 +37,7 @@ import {
   guideUrlsPayload,
   guideUrlsSummary,
   guideUrlDedupeKey,
+  isActiveGamefaqsBundle,
   isGamefaqsBundleUrl,
   normalizeGuideUrlList,
 } from "@/lib/guide-urls.js";
@@ -77,7 +78,7 @@ function gameCardGuideRow(
   indexStatus: { pages: { slug: string; title: string; url: string; chunks: number }[] } | undefined,
   panelLoad: { meta: boolean; status: boolean } | undefined,
 ) {
-  const bundle = isGamefaqsBundleUrl(url);
+  const bundle = isActiveGamefaqsBundle(url, meta);
   const bundlePrefs = mergedBundlePrefs(url, meta);
   const label = bundle
     ? meta
@@ -472,6 +473,7 @@ export default function Home() {
   const [bundlePanelLoad, setBundlePanelLoad] = useState<
     Record<string, { meta: boolean; status: boolean }>
   >({});
+  const [guideChecking, setGuideChecking] = useState(false);
 
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -901,7 +903,9 @@ export default function Home() {
   // Hydrate GameFAQs bundle title, page list, and index status from Supabase only.
   useEffect(() => {
     let cancelled = false;
-    const bundleUrls = preferredUrls.filter((url) => isGamefaqsBundleUrl(url));
+    const bundleUrls = preferredUrls.filter((url) =>
+      isActiveGamefaqsBundle(url, guideBundleMeta[url]),
+    );
     if (!bundleUrls.length) return;
 
     setBundlePanelLoad((prev) => {
@@ -980,7 +984,9 @@ export default function Home() {
 
   // Keep bundle skip/select prefs in sync with localStorage (survives refresh).
   useEffect(() => {
-    const bundleUrls = preferredUrls.filter((url) => isGamefaqsBundleUrl(url));
+    const bundleUrls = preferredUrls.filter((url) =>
+      isActiveGamefaqsBundle(url, guideBundleMeta[url]),
+    );
     if (!bundleUrls.length) return;
     setGuideBundleMeta((prev) => {
       let changed = false;
@@ -1364,7 +1370,9 @@ export default function Home() {
   useEffect(() => {
     if (!user) return;
     hydrateBundlePrefsFromUser(user.user_metadata, getSupabase());
-    const bundleUrls = preferredUrls.filter((url) => isGamefaqsBundleUrl(url));
+    const bundleUrls = preferredUrls.filter((url) =>
+      isActiveGamefaqsBundle(url, guideBundleMeta[url]),
+    );
     if (!bundleUrls.length) return;
     setGuideBundleMeta((prev) => {
       let changed = false;
@@ -2330,7 +2338,7 @@ export default function Home() {
 
   const started = messages.length > 0;
   const hasGame = Boolean(game.trim());
-  const composerLocked = loading || !hasGame;
+  const composerLocked = loading || !hasGame || guideChecking;
   // Home layout states:
   // - Empty account: marketing hero + setup form (+ examples).
   // - Has saved games (quick home): hero + carousel + CTAs; "+ New game" collapses
@@ -3035,7 +3043,9 @@ export default function Home() {
               >
                 <span className="opt-summary-label">Preferred guides (optional)</span>
                 {preferredUrls.length > 0 && (
-                  <span className="opt-summary-value">{guideUrlsSummary(preferredUrls)}</span>
+                  <span className="opt-summary-value">
+                    {guideUrlsSummary(preferredUrls, guideBundleMeta)}
+                  </span>
                 )}
               </button>
               <button
@@ -3058,6 +3068,7 @@ export default function Home() {
                   onChange={setPreferredUrls}
                   bundleMeta={guideBundleMeta}
                   onBundleMetaChange={setGuideBundleMeta}
+                  onGuideCheckChange={setGuideChecking}
                   game={game}
                   platform={platform}
                   disabled={loading}

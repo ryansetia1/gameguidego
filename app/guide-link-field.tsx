@@ -6,11 +6,12 @@ import {
   MAX_GUIDE_URLS,
   cleanGuideUrl,
   guideUrlDedupeKey,
-  isGamefaqsBundleUrl,
+  isActiveGamefaqsBundle,
   isSamePreferredGuide,
   normalizeGuideUrlList,
   normalizePreferredGuideUrl,
 } from "@/lib/guide-urls.js";
+import { parseGamefaqsFaqUrl } from "@/lib/gamefaqs-bundle.js";
 import { setBundlePrefs } from "@/lib/bundle-prefs.js";
 
 type GuideHit = { title: string; url: string; snippet: string };
@@ -39,6 +40,7 @@ type Props = {
   disabled?: boolean;
   bundleMeta?: Record<string, GuideBundleMeta>;
   onBundleMetaChange?: (meta: Record<string, GuideBundleMeta>) => void;
+  onGuideCheckChange?: (checking: boolean) => void;
 };
 
 function hostLabel(url: string) {
@@ -57,6 +59,7 @@ export function GuideLinkField({
   disabled,
   bundleMeta = {},
   onBundleMetaChange,
+  onGuideCheckChange,
 }: Props) {
   const [mode, setMode] = useState<"link" | "search">("link");
   const [draftUrl, setDraftUrl] = useState("");
@@ -115,12 +118,29 @@ export function GuideLinkField({
       return;
     }
 
+    const parsed = parseGamefaqsFaqUrl(cleaned);
+    const bundleUrl = parsed?.canonicalUrl ?? "";
+
+    if (!parsed) {
+      commitAddUrl(cleaned);
+      return;
+    }
+
+    // FAQ root only (no chapter) — single-page until ingest/cache proves multi-page.
+    if (!parsed.sectionSlug) {
+      commitAddUrl(cleaned);
+      return;
+    }
+
     setPreviewLoading(true);
     setAddError("");
     setBundlePreview(null);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 45_000);
     try {
       const response = await fetch(
-        `/api/guide-bundle?url=${encodeURIComponent(cleaned)}&refresh=1`,
+        `/api/guide-bundle?url=${encodeURIComponent(bundleUrl)}`,
+        { signal: controller.signal },
       );
       const payload: {
         bundle?: boolean;
@@ -168,10 +188,16 @@ export function GuideLinkField({
         return;
       }
 
-      commitAddUrl(cleaned);
-    } catch {
-      setAddError("Couldn't check that link. Try again.");
+      commitAddUrl(bundleUrl);
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === "AbortError";
+      setAddError(
+        timedOut
+          ? "That took too long. Try again or paste a chapter link from the bundle."
+          : "Couldn't check that link. Try again.",
+      );
     } finally {
+      window.clearTimeout(timeout);
       setPreviewLoading(false);
     }
   }, [commitAddUrl, value]);
@@ -224,6 +250,11 @@ export function GuideLinkField({
   }, [trimmedGame, platform, query]);
 
   useEffect(() => {
+    onGuideCheckChange?.(previewLoading || Boolean(bundlePreview));
+    return () => onGuideCheckChange?.(false);
+  }, [previewLoading, bundlePreview, onGuideCheckChange]);
+
+  useEffect(() => {
     if (canSearch) return;
     setResults([]);
     setSearchError("");
@@ -244,6 +275,7 @@ export function GuideLinkField({
     void previewGuideUrl(draftUrl);
   }
 
+  /** Paste link and Search web both route through previewGuideUrl. */
   function pickGuide(url: string) {
     if (atMax) {
       setSearchError(`You can add up to ${MAX_GUIDE_URLS} guides.`);
@@ -324,7 +356,7 @@ export function GuideLinkField({
         <ul className="guide-url-list" aria-label="Added guides">
           {value.map((url) => {
             const meta = bundleMeta[url];
-            const bundle = isGamefaqsBundleUrl(url);
+            const bundle = isActiveGamefaqsBundle(url, meta);
             return (
               <li key={guideUrlDedupeKey(url)} className="guide-url-row">
                 <div className="guide-url-row-body">
@@ -461,7 +493,7 @@ export function GuideLinkField({
               maxLength={120}
               autoComplete="off"
               readOnly={!canSearch}
-              disabled={disabled || searching}
+              disabled={disabled || searching || previewLoading || Boolean(bundlePreview)}
               tabIndex={canSearch ? undefined : -1}
             />
             {canSearch && (
@@ -522,7 +554,7 @@ export function GuideLinkField({
       <p className="field-hint">
         {atMax
           ? `${MAX_GUIDE_URLS} guides max. Remove one to add another.`
-          : `Add up to ${MAX_GUIDE_URLS} trusted guides. GameFAQs multi-page guides are detected automatically.`}
+          : `Add up to ${MAX_GUIDE_URLS} trusted guides. Non-GameFAQs links add directly; GameFAQs chapter links open the page picker when we have a cached bundle.`}
       </p>
       {addError && <p className="guide-search-error">{addError}</p>}
     </div>

@@ -46,6 +46,7 @@ import {
   canonicalGamefaqsBundleUrl,
   buildGamefaqsDiscoveryBaseQueries,
   buildGamefaqsPartDiscoveryQueries,
+  gamefaqsDiscoveryTerms,
   parseGamefaqsFaqUrl,
   parseGamefaqsTocFromHtml,
   parseGamefaqsPagesFromUrls,
@@ -61,6 +62,7 @@ import {
   guideUrlsFromChat,
   guideUrlsPayload,
   guideUrlsSummary,
+  isActiveGamefaqsBundle,
   isGamefaqsBundleUrl,
   MAX_GUIDE_URLS,
   normalizeGuideUrlList,
@@ -420,6 +422,13 @@ assert.equal(canonicalGamefaqsBundleUrl(suikodenIntro), suikodenBundle);
 assert.equal(normalizePreferredGuideUrl(suikodenIntro), suikodenBundle);
 assert.equal(isGamefaqsBundleUrl(suikodenBundle), true);
 assert.equal(isGamefaqsBundleUrl(suikodenIntro), false);
+assert.equal(isActiveGamefaqsBundle(suikodenBundle, { pageCount: 18 }), true);
+assert.equal(isActiveGamefaqsBundle(suikodenBundle, undefined), false);
+assert.equal(
+  guideUrlsSummary([suikodenBundle], { [suikodenBundle]: { pageCount: 18 } }),
+  "GameFAQs bundle",
+);
+assert.equal(guideUrlsSummary([suikodenBundle]), "gamefaqs.gamespot.com");
 
 const sampleTocHtml =
   '<a href="/ps/198843-suikoden/faqs/80674/introduction">Intro</a>' +
@@ -484,9 +493,12 @@ assert.equal(
 );
 const baseQueries = buildGamefaqsDiscoveryBaseQueries(parsed80674);
 assert.ok(baseQueries.some((query) => query.includes("/part-")));
+assert.ok(baseQueries.every((query) => !/^site:\S+$/i.test(query.trim())));
+assert.ok(baseQueries.every((query) => /\b(walkthrough|faq)\b/i.test(query)));
 const partQueries = buildGamefaqsPartDiscoveryQueries(parsed80674, 3);
 assert.ok(partQueries.some((query) => query.includes("/part-1")));
 assert.ok(partQueries.some((query) => query.includes("/walkthrough-part-2")));
+assert.equal(gamefaqsDiscoveryTerms(parsed80674), "suikoden faq 80674");
 assert.deepEqual(
   coerceCachedBundleDiscovery({
     title: "Guide",
