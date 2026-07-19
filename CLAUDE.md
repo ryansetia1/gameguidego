@@ -452,8 +452,15 @@ Per canonical bundle URL (`gg:bundle-prefs` in `localStorage`; signed-in users a
 - `selectedSlugs`: pages user chose at add time (ingest `includeSlugs`).
 - `skippedSlugs`: user Skip on game card (ingest `skipSlugs`); union across devices
   on login; `selectedSlugs` remote-wins when both devices set a selection.
+- `clearBundlePrefs()`: wipes `gg:bundle-prefs` and resets the sync state; called
+  on sign-out to prevent cross-account pref bleed on shared devices.
 
 Sent to server as `bundlePrefs` on `POST /api/guide-ingest` and `POST /api/solve`.
+`buildBundlePrefsBody` in `page.tsx` prefers UI state (`guideBundleMeta`) over
+`localStorage` so the server always gets the selection the user sees on-screen,
+even when `localStorage` writes fail (private browsing, quota). After ingest
+completes, the `finally` block does a final `/api/guide-bundle/status` read to
+verify actual indexed state before clearing the progress indicator.
 
 ### Indexing (`lib/guide-ingest.ts`, `POST /api/guide-ingest`)
 

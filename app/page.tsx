@@ -27,7 +27,6 @@ import { FUN_ROLES, HERO_LINES } from "@/lib/hero-copy.js";
 import { guideIngestHint, guideIngestHintFromResponse } from "@/lib/guide-hints.js";
 import {
   bundleHasPendingPages,
-  bundlePrefsForApi,
   clearBundlePrefs,
   filterBundlePanelPages,
   getBundlePrefs,
@@ -49,11 +48,21 @@ import {
 } from "@/lib/guide-urls.js";
 import { compressImage } from "@/lib/image.js";
 
-function buildBundlePrefsBody(urls: string[]) {
-  const out: Record<string, ReturnType<typeof bundlePrefsForApi>> = {};
+function buildBundlePrefsBody(
+  urls: string[],
+  meta?: Record<string, GuideBundleMeta>,
+) {
+  const out: Record<string, { skipSlugs: string[]; includeSlugs?: string[] }> = {};
   for (const url of urls) {
     if (!isGamefaqsBundleUrl(url)) continue;
-    out[url] = bundlePrefsForApi(url);
+    // T2-1: prefer UI state (meta) over localStorage so the server always gets
+    // the selection the user sees on-screen, even when localStorage writes fail
+    // (private browsing, quota).
+    const prefs = mergedBundlePrefs(url, meta?.[url]);
+    out[url] = {
+      skipSlugs: prefs.skippedSlugs,
+      ...(prefs.selectedSlugs?.length ? { includeSlugs: prefs.selectedSlugs } : {}),
+    };
   }
   return out;
 }
@@ -1241,7 +1250,7 @@ export default function Home() {
             game,
             platform,
             userId: user?.id ?? null,
-            bundlePrefs: buildBundlePrefsBody([url]),
+            bundlePrefs: buildBundlePrefsBody([url], guideBundleMeta),
           }),
         });
         if (!response.ok) {
@@ -2298,24 +2307,27 @@ export default function Home() {
     const urlsNeedingIngest = guideUrls.filter((url) =>
       guideUrlNeedsIngest(url, guideBundleMeta[url], bundleIndexStatus[url]),
     );
+    // T2-3: hoist so the finally block can do a final status check.
+    let ingestBundleUrl: string | undefined;
+    let bundleTargets: string[] = [];
     if (urlsNeedingIngest.length) {
-      const bundleUrl = urlsNeedingIngest.find((url) =>
+      ingestBundleUrl = urlsNeedingIngest.find((url) =>
         isActiveGamefaqsBundle(url, guideBundleMeta[url]),
       );
-      if (bundleUrl) {
-        const meta = guideBundleMeta[bundleUrl];
-        const prefs = mergedBundlePrefs(bundleUrl, meta);
+      if (ingestBundleUrl) {
+        const meta = guideBundleMeta[ingestBundleUrl];
+        const prefs = mergedBundlePrefs(ingestBundleUrl, meta);
         const discovered = meta?.pages ?? [];
-        const targets = discovered.length ? targetBundleSlugs(discovered, prefs) : [];
+        bundleTargets = discovered.length ? targetBundleSlugs(discovered, prefs) : [];
         const indexedSlugs =
-          bundleIndexStatus[bundleUrl]?.pages?.map((page) => page.slug) ?? [];
+          bundleIndexStatus[ingestBundleUrl]?.pages?.map((page) => page.slug) ?? [];
         const indexedSet = new Set(indexedSlugs.map((slug) => slug.toLowerCase()));
-        const pending = targets.length
-          ? targets.filter((slug) => !indexedSet.has(slug)).length
+        const pending = bundleTargets.length
+          ? bundleTargets.filter((slug) => !indexedSet.has(slug)).length
           : Math.max(meta?.pageCount ?? 0, 1);
         setIndexingIsBundlePages(true);
         setIndexingGuideCount(Math.max(pending, 1));
-        if (targets.length && pending > 0) startBundleIndexingPoll(bundleUrl, targets);
+        if (bundleTargets.length && pending > 0) startBundleIndexingPoll(ingestBundleUrl, bundleTargets);
       } else {
         setIndexingIsBundlePages(false);
         setIndexingGuideCount(
@@ -2347,7 +2359,7 @@ export default function Home() {
               game,
               platform,
               userId: user?.id ?? null,
-              bundlePrefs: buildBundlePrefsBody(guideUrls),
+              bundlePrefs: buildBundlePrefsBody(guideUrls, guideBundleMeta),
             }),
           });
           if (ingestResponse.ok) {
@@ -2413,7 +2425,33 @@ export default function Home() {
         }
       } finally {
         stopBundleIndexingPoll();
-        setIndexingGuideCount(0);
+        // T2-3: Honest polling finish — do a final status read to verify
+        // actual indexed state instead of blindly showing "complete".
+        if (ingestBundleUrl && bundleTargets.length) {
+          try {
+            const finalRes = await fetch(
+              `/api/guide-bundle/status?url=${encodeURIComponent(ingestBundleUrl)}`,
+            );
+            if (finalRes.ok) {
+              const finalData = (await finalRes.json()) as {
+                pages?: { slug: string }[];
+              };
+              const indexed = new Set(
+                (finalData.pages ?? []).map((p: { slug: string }) => p.slug.toLowerCase()),
+              );
+              const remaining = bundleTargets.filter(
+                (slug) => !indexed.has(slug.toLowerCase()),
+              ).length;
+              setIndexingGuideCount(remaining);
+            } else {
+              setIndexingGuideCount(0);
+            }
+          } catch {
+            setIndexingGuideCount(0);
+          }
+        } else {
+          setIndexingGuideCount(0);
+        }
         setIndexingIsBundlePages(false);
       }
       return null;
@@ -2442,7 +2480,7 @@ export default function Home() {
           spoilerPrefs,
           playerName: user ? displayNameFromMetadata(user.user_metadata) : "",
           userId: user?.id ?? null,
-          bundlePrefs: buildBundlePrefsBody(guideUrls),
+          bundlePrefs: buildBundlePrefsBody(guideUrls, guideBundleMeta),
         }),
       });
       const data: unknown = await response.json();

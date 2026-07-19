@@ -349,21 +349,25 @@ per-page resilient embed, no more freezing at 2 pages). These remain:
 refreshed. New caches from the fixed path are complete.
 
 **Tier 2 — reliability hardening**
-- **Client selection must reach the server reliably.** The ingest/solve body reads
+- ~~**Client selection must reach the server reliably.** The ingest/solve body reads
   `localStorage` only (`buildBundlePrefsBody` → `getBundlePrefs`) while the panel
   reads `guideBundleMeta`+`bundleIndexStatus`. A failed/lagged localStorage write
   (private mode, quota) → panel shows "3 of 12 picked" but server ingests all or
   nothing, silently. Surface `setBundlePrefs` write failures, or send selection
-  from UI state. (client audit F2/F7)
+  from UI state. (client audit F2/F7)~~ **DONE** — `buildBundlePrefsBody` now
+  accepts `guideBundleMeta` and uses `mergedBundlePrefs` (UI state first,
+  localStorage fallback).
 - ~~**Raise/remove the 12-part discovery cap** (`maxPart`,
   `PART_QUERY_PAGE_THRESHOLD` in gamefaqs-bundle.js / gamefaqs-discover.ts) — now
   that raw-TOC extract is the primary source, the search fan-out is rare, so the
   cap that hides parts 13+ is no longer needed. (discovery A#3)~~ **DONE** —
   raised to 50 (matches `MAX_BUNDLE_PAGES`).
-- **Honest polling finish.** `pollBundleIndexingProgress` ties "done" to the ingest
+- ~~**Honest polling finish.** `pollBundleIndexingProgress` ties "done" to the ingest
   promise resolving, not to pages actually reaching indexed — shows complete even
   when pages failed. Base "done" on `targets ⊆ indexed` from a final status read.
-  (client F11)
+  (client F11)~~ **DONE** — `finally` block now does a final
+  `/api/guide-bundle/status` read to verify `bundleTargets ⊆ indexed`; remaining
+  count reflects reality.
 - **Widen `isGuideIndexed` for bundles** OR ensure callers re-enter ingest while
   `discoveryPages > pagesIndexed` (solve already re-enters; this is belt-and-braces).
   (state F3)
