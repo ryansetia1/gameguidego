@@ -282,6 +282,86 @@ export async function extractGuidePage(
   return { url: parsed.toString(), content };
 }
 
+const EXTRACT_BATCH_SIZE = 10;
+
+/**
+ * Pull full text for multiple guide pages (Tavily Extract). Returns a map of
+ * normalized URL → cleaned content. Skips pages that fail or are too short.
+ */
+export async function extractGuidePages(
+  rawUrls: string[],
+  signal?: AbortSignal,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey || !rawUrls.length) return out;
+
+  const urls: string[] = [];
+  for (const raw of rawUrls) {
+    try {
+      const parsed = new URL(raw);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
+      const normalized = parsed.toString();
+      if (!urls.includes(normalized)) urls.push(normalized);
+    } catch {
+      // skip invalid
+    }
+    if (urls.length >= EXTRACT_BATCH_SIZE) break;
+  }
+  if (!urls.length) return out;
+
+  let response: Response;
+  try {
+    response = await fetch(TAVILY_EXTRACT_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ urls }),
+      signal: combineSignal(60_000, signal),
+    });
+  } catch (error) {
+    if (!isAbortError(error)) {
+      logTavily("extract", "batch request error", {
+        count: urls.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return out;
+  }
+
+  if (!response.ok) {
+    const detail = await tavilyResponseDetail(response);
+    logTavily("extract", `batch HTTP ${response.status}${detail ? `: ${detail}` : ""}`, {
+      count: urls.length,
+    });
+    return out;
+  }
+
+  const payload: unknown = await response.json();
+  const results =
+    payload && typeof payload === "object" && "results" in payload
+      ? (payload.results as unknown)
+      : null;
+  if (!Array.isArray(results)) return out;
+
+  for (const item of results) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as { url?: unknown; raw_content?: unknown };
+    if (typeof record.url !== "string" || typeof record.raw_content !== "string") continue;
+    const content = cleanSnippet(record.raw_content);
+    if (content.length < MIN_CONTENT) continue;
+    try {
+      out.set(new URL(record.url).toString(), content);
+    } catch {
+      out.set(record.url, content);
+    }
+  }
+
+  return out;
+}
+
 /**
  * Tavily implementation. Tiered domain search with confidence gating in
  * selectSources. Throws when every Tavily call fails so the caller can fall back.

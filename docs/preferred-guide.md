@@ -170,6 +170,17 @@ create index on public.guide_chunks
 (check-then-insert; a unique index on `(guide_url, chunk_index)` guards double
 ingest under a race — good enough; a proper lease is the upgrade path).
 
+### GameFAQs multi-page bundles (implemented)
+
+GameFAQs walkthroughs are one FAQ ID split across many URLs. When the user pastes
+any page under `/faqs/{id}/`, `GET /api/guide-bundle` fetches the intro HTML,
+parses the TOC, and returns `{ bundle, pageCount, pages[] }`. The UI shows a
+confirm card before add. Ingest expands the bundle (Tavily Extract in batches of
+10), stores chunks with `guide_bundle = gamefaqs:{id}`, and retrieval uses
+`match_guide_chunks(p_guide_bundles, …)`. Max 50 pages per bundle.
+
+Single-page guides (non-GameFAQs or thin FAQs) still ingest as one URL.
+
 ### Fetch
 
 Reuse Tavily `extract` (already wired in `lib/tavily.ts`) to get `raw_content`,
@@ -268,10 +279,26 @@ whether chunks come from RAG or (in the fallback) from web search.
 - Nomic Embed v1 (fallback alt): ~$0.00022/run.
 
 Per guide (100k-token book, ~200 chunks): ingest ≈ **~$0.20 once, shared**
-(batched; ~$2 unbatched worst case). Per question: 1 query-embed (~$0.001,
-cacheable) + feeding ~K chunks (~3k tokens ≈ $0.001) to Gemini. A 300-turn
-playthrough ≈ **~$0.85** vs ~$2–9 for full-book. And on the high-similarity
-route we *skip the web search*, so many turns cost less than today.
+(batched; ~$2 unbatched worst case). A **GameFAQs bundle** (~25 pages, ~120
+chunks) is much smaller: roughly **6–8 embed runs** (~$0.01) + Tavily extract
+credits for each page (one-time, shared cache). Per question: 1 query-embed
+(~$0.001, cacheable) + feeding ~K chunks (~3k tokens ≈ $0.001) to Gemini. A
+300-turn playthrough ≈ **~$0.85** vs ~$2–9 for full-book. And on the
+high-similarity route we *skip the web search*, so many turns cost less than today.
+
+### Replicate throttling (low credit)
+
+Replicate can throttle concurrent predictions when account credit is low (often
+cited around **<$5**). Ingest therefore:
+
+- Batches embeds (up to 32 chunks per run) and pauses between batches
+  (`EMBED_BATCH_DELAY_MS`, default 400ms).
+- Caps single-chunk fallback concurrency (`EMBED_CONCURRENCY`, default **3**).
+- Retries 429 / rate-limit errors with exponential backoff (`lib/replicate-retry.js`).
+- Processes GameFAQs bundles in small Tavily extract batches (default **5**
+  pages) with a pause between batches (`INGEST_BATCH_DELAY_MS`, default 800ms).
+
+Tune via `.env` if you still hit throttling on a cold account.
 
 ## Known ceilings (`ponytail:`)
 

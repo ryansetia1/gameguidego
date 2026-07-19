@@ -1,12 +1,19 @@
 import Replicate from "replicate";
 
 import { embedCacheKey, getCachedEmbedding, setCachedEmbedding } from "@/lib/embed-cache";
+import {
+  parsePositiveInt,
+  sleep,
+  withReplicateRetry,
+} from "@/lib/replicate-retry.js";
 
 const DEFAULT_EMBED_MODEL =
   "lucataco/qwen3-embedding-8b:42d968487820032a1535d81ea20df16f442ea308ec5abae6b5d6cf4675eb3e2f";
 const EMBED_DIM = 1024;
 const BATCH_SIZE = 32;
-const CONCURRENCY = 16;
+// ponytail: keep low for Replicate accounts under ~$5 credit (throttles concurrency).
+const CONCURRENCY = parsePositiveInt(process.env.EMBED_CONCURRENCY, 3, 8);
+const BATCH_DELAY_MS = parsePositiveInt(process.env.EMBED_BATCH_DELAY_MS, 400, 5_000);
 
 type ModelName = `${string}/${string}` | `${string}/${string}:${string}`;
 
@@ -42,17 +49,21 @@ async function runEmbedBatch(
   texts: string[],
   signal?: AbortSignal,
 ): Promise<number[][]> {
-  const raw = await replicate.run(
-    model,
-    {
-      input: {
-        text: texts.length === 1 ? texts[0] : texts,
-        embedding_dim: EMBED_DIM,
-        normalize: true,
-        batch_size: Math.min(BATCH_SIZE, texts.length),
-      },
-      signal: withTimeout(120_000, signal),
-    },
+  const raw = await withReplicateRetry(
+    () =>
+      replicate.run(
+        model,
+        {
+          input: {
+            text: texts.length === 1 ? texts[0] : texts,
+            embedding_dim: EMBED_DIM,
+            normalize: true,
+            batch_size: Math.min(BATCH_SIZE, texts.length),
+          },
+          signal: withTimeout(120_000, signal),
+        },
+      ),
+    { signal },
   );
 
   const embeddings = parseEmbeddings(raw);
@@ -96,6 +107,9 @@ export async function embedTexts(
         return vec;
       });
       out.push(...singles);
+    }
+    if (i + BATCH_SIZE < cleaned.length && BATCH_DELAY_MS) {
+      await sleep(BATCH_DELAY_MS, signal);
     }
   }
 

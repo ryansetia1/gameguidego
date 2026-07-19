@@ -2992,6 +2992,59 @@ details.sources small {
   margin-top: 4px;
 }
 
+.guide-bundle-preview {
+  padding: 12px 14px;
+  border: 1px solid var(--accent, #00c896);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent, #00c896) 8%, transparent);
+}
+
+.guide-bundle-preview-eyebrow {
+  margin: 0 0 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent, #00c896);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.guide-bundle-preview-title {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.guide-bundle-preview-copy {
+  margin: 0 0 10px;
+  font-size: 0.92rem;
+  color: var(--text);
+}
+
+.guide-bundle-preview-pages {
+  margin: 0 0 12px;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.guide-bundle-preview-more {
+  list-style: none;
+  margin-left: -1.1rem;
+  font-style: italic;
+}
+
+.guide-bundle-preview-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.guide-bundle-preview-add {
+  background: var(--accent, #00c896);
+  color: #04120e;
+  border-color: transparent;
+}
+
 /* Preferred guide + Spoilers: a fixed trigger row, then whichever is open renders
    in the shared panel below — so toggling never shifts the triggers. */
 .opt-group {

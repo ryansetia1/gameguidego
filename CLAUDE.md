@@ -223,9 +223,14 @@ do not sync to the cloud or use Storage uploads.
   still answers. Returns `{ answer, highlights, sources, spoilers, guideHint? }`
   (`spoilers` trimmed to `[]` when `spoilerPrefs.major` is false). Only
   `REPLICATE_API_TOKEN` is mandatory.
+- `app/api/guide-bundle/route.ts`: `GET ?url=` previews GameFAQs multi-page FAQ
+  bundles (page count + section list) before the user confirms add.
 - `app/api/guide-ingest/route.ts`: lazy shared ingest for one or more preferred
-  guide URLs (`POST` batch ensure indexed, `GET` check indexed). Used by the client
-  to show "Indexing your guide(s)..." before the first solve turn.
+  guide URLs (GameFAQs bundles expand to all TOC pages). Used by the client to
+  show "Indexing your guide(s)..." before the first solve turn.
+- `lib/gamefaqs-bundle.js`: GameFAQs FAQ autodetect, TOC discovery, bundle
+  canonical URL normalization (max 50 pages per bundle). Chunks store optional
+  `guide_bundle` (`db/guide-bundle.sql`) for retrieval across all pages.
 - `lib/guide-rag.ts` + `lib/guide-ingest.ts` + `lib/chunk-guide.js` +
   `lib/embed.ts` + `lib/embed-cache.ts`: preferred-guide RAG. Tavily extract the
   pasted page (`extractGuidePage`), structure-aware chunking (`chunkGuide`),

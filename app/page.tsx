@@ -25,9 +25,10 @@ import {
   guideUrlsFromChat,
   guideUrlsPayload,
   guideUrlsSummary,
+  isGamefaqsBundleUrl,
 } from "@/lib/guide-urls.js";
 import { compressImage } from "@/lib/image.js";
-import { GuideLinkField } from "./guide-link-field";
+import { GuideLinkField, type GuideBundleMeta } from "./guide-link-field";
 import { HltbRow } from "./hltb-row";
 import { PlatformSelect } from "./platform-select";
 import { SteamLibrary, type SteamGame } from "./steam-library";
@@ -355,6 +356,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [indexingGuideCount, setIndexingGuideCount] = useState(0);
+  const [guideBundleMeta, setGuideBundleMeta] = useState<Record<string, GuideBundleMeta>>({});
 
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -781,6 +783,60 @@ export default function Home() {
     });
   }, [messages, activeChatId, game, platform, preferredUrls, cover, releaseYear, user, temporary]);
 
+  // Hydrate GameFAQs bundle page counts for saved chats / session restore.
+  useEffect(() => {
+    let cancelled = false;
+    const missing = preferredUrls.filter(
+      (url) => isGamefaqsBundleUrl(url) && !guideBundleMeta[url],
+    );
+    if (!missing.length) return;
+
+    void Promise.all(
+      missing.map(async (url) => {
+        try {
+          const response = await fetch(
+            `/api/guide-bundle?url=${encodeURIComponent(url)}`,
+          );
+          const data: {
+            bundle?: boolean;
+            pageCount?: number;
+            title?: string;
+          } = await response.json();
+          if (!response.ok || !data.bundle || !data.pageCount) return null;
+          return {
+            url,
+            meta: {
+              title: data.title ?? "GameFAQs guide",
+              pageCount: data.pageCount,
+            },
+          };
+        } catch {
+          return null;
+        }
+      }),
+    ).then((rows) => {
+      if (cancelled) return;
+      const found = rows.filter((row): row is { url: string; meta: GuideBundleMeta } =>
+        Boolean(row),
+      );
+      if (!found.length) return;
+      setGuideBundleMeta((prev) => {
+        const next = { ...prev };
+        for (const row of found) next[row.url] = row.meta;
+        return next;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [preferredUrls, guideBundleMeta]);
+
+  const bundlePageTotal = preferredUrls.reduce(
+    (sum, url) => sum + (guideBundleMeta[url]?.pageCount ?? 0),
+    0,
+  );
+
   useEffect(() => {
     void refreshSteamStatus();
   }, [refreshSteamStatus]);
@@ -1023,6 +1079,7 @@ export default function Home() {
     setGame("");
     setPlatform("");
     setPreferredUrls([]);
+    setGuideBundleMeta({});
     if (cover.startsWith("blob:")) URL.revokeObjectURL(cover);
     setCover("");
     setPendingCover(null);
@@ -1382,6 +1439,7 @@ export default function Home() {
     setGame(game.name);
     setPlatform("PC");
     setPreferredUrls([]);
+    setGuideBundleMeta({});
     if (cover.startsWith("blob:")) URL.revokeObjectURL(cover);
     setCover(coverEnabled ? game.cover : "");
     setPendingCover(null);
@@ -1629,7 +1687,13 @@ export default function Home() {
     try {
       let ingestHint: string | null = null;
       if (preferredUrls.length) {
-        setIndexingGuideCount(preferredUrls.length);
+        const bundlePages = preferredUrls.reduce(
+          (sum, url) => sum + (guideBundleMeta[url]?.pageCount ?? 0),
+          0,
+        );
+        setIndexingGuideCount(
+          bundlePages > 1 ? bundlePages : preferredUrls.length,
+        );
         try {
           const ingestResponse = await fetch("/api/guide-ingest", {
             method: "POST",
@@ -2376,19 +2440,28 @@ export default function Home() {
             <HltbRow title={game} appId={steamAppIdFromCoverUrl(cover)?.toString()} />
             {preferredUrls.length > 0 && (
               <div className="game-card-guides">
-                {preferredUrls.map((url) => (
-                  <a
-                    key={url}
-                    className="game-card-link"
-                    href={url}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <span className="icon-inline">
-                      {guideUrlsSummary([url])} <IconArrowUpRight />
-                    </span>
-                  </a>
-                ))}
+                {preferredUrls.map((url) => {
+                  const meta = guideBundleMeta[url];
+                  const bundle = isGamefaqsBundleUrl(url);
+                  const label = bundle
+                    ? meta
+                      ? `${meta.title} (${meta.pageCount} pages)`
+                      : "GameFAQs bundle"
+                    : guideUrlsSummary([url]);
+                  return (
+                    <a
+                      key={url}
+                      className="game-card-link"
+                      href={url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <span className="icon-inline">
+                        {label} <IconArrowUpRight />
+                      </span>
+                    </a>
+                  );
+                })}
               </div>
             )}
             <div className="spoiler-panel">
@@ -2517,6 +2590,8 @@ export default function Home() {
                 <GuideLinkField
                   value={preferredUrls}
                   onChange={setPreferredUrls}
+                  bundleMeta={guideBundleMeta}
+                  onBundleMetaChange={setGuideBundleMeta}
                   game={game}
                   platform={platform}
                   disabled={loading}
@@ -2737,9 +2812,11 @@ export default function Home() {
               <span className="scan-line" aria-hidden="true" />
               <p>
                 {indexingGuideCount
-                  ? indexingGuideCount > 1
-                    ? `Indexing ${indexingGuideCount} guides...`
-                    : "Indexing your guide..."
+                  ? bundlePageTotal > 1
+                    ? `Indexing GameFAQs bundle (${bundlePageTotal} pages)...`
+                    : indexingGuideCount > 1
+                      ? `Indexing ${indexingGuideCount} guides...`
+                      : "Indexing your guide..."
                   : "Searching walkthroughs and player forums..."}
               </p>
             </div>

@@ -7,7 +7,11 @@ import {
   isGuideRagAvailable,
   normalizeGuideUrl,
 } from "@/lib/guide-ingest";
-import { normalizeGuideUrlList } from "@/lib/guide-urls.js";
+import { parseGamefaqsFaqUrl } from "@/lib/gamefaqs-bundle.js";
+import {
+  isGamefaqsBundleUrl,
+  normalizeGuideUrlList,
+} from "@/lib/guide-urls.js";
 import type { SearchResult } from "@/lib/tavily";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -52,9 +56,23 @@ function hostLabel(guideUrl: string): string {
   }
 }
 
+function resolveRagTargets(urls: string[]) {
+  const guideUrls: string[] = [];
+  const guideBundles: string[] = [];
+  for (const raw of urls) {
+    const parsed = parseGamefaqsFaqUrl(raw);
+    if (parsed && isGamefaqsBundleUrl(raw)) {
+      if (!guideBundles.includes(parsed.bundleKey)) guideBundles.push(parsed.bundleKey);
+    } else {
+      guideUrls.push(normalizeGuideUrl(raw));
+    }
+  }
+  return { guideUrls, guideBundles };
+}
+
 /**
  * Preferred-guide RAG path: ingest (lazy), embed query, retrieve top-K chunks
- * across one or more guide URLs, route on similarity. Returns null when RAG
+ * across one or more guide URLs and/or bundles. Returns null when RAG
  * infra is unavailable so the caller can fall back to tiered web search.
  */
 export async function retrieveFromPreferredGuides(input: {
@@ -62,8 +80,8 @@ export async function retrieveFromPreferredGuides(input: {
   query: string;
   signal?: AbortSignal;
 }): Promise<GuideRagResult | null> {
-  const guideUrls = normalizeGuideUrlList(input.guideUrls).map(normalizeGuideUrl);
-  if (!guideUrls.length) return null;
+  const preferred = normalizeGuideUrlList(input.guideUrls);
+  if (!preferred.length) return null;
 
   if (!isGuideRagAvailable()) {
     if (!ragUnavailableLogged) {
@@ -74,12 +92,11 @@ export async function retrieveFromPreferredGuides(input: {
   }
 
   const ingestResults = await Promise.all(
-    guideUrls.map((guideUrl) => ensureGuideIngested(guideUrl, input.signal)),
+    preferred.map((guideUrl) => ensureGuideIngested(guideUrl, input.signal)),
   );
-  const indexedUrls = guideUrls.filter((_, index) => ingestResults[index]?.indexed);
   const hubWarning = ingestResults.some((result) => result.hubWarning);
-  const indexedCount = indexedUrls.length;
-  const totalGuides = guideUrls.length;
+  const indexedCount = ingestResults.filter((result) => result.indexed).length;
+  const totalGuides = preferred.length;
 
   if (!indexedCount) {
     return {
@@ -90,6 +107,9 @@ export async function retrieveFromPreferredGuides(input: {
       totalGuides,
     };
   }
+
+  const indexedPreferred = preferred.filter((_, index) => ingestResults[index]?.indexed);
+  const { guideUrls, guideBundles } = resolveRagTargets(indexedPreferred);
 
   const queryEmbedding = await embedQuery(input.query, input.signal);
   if (!queryEmbedding?.length) {
@@ -108,7 +128,8 @@ export async function retrieveFromPreferredGuides(input: {
   let matches: MatchRow[] = [];
   try {
     const { data, error } = await supabase.rpc("match_guide_chunks", {
-      p_guide_urls: indexedUrls,
+      p_guide_urls: guideUrls,
+      p_guide_bundles: guideBundles,
       p_embedding: toVectorString(queryEmbedding),
       p_limit: RETRIEVE_K,
     });

@@ -32,14 +32,23 @@ import { warmUpMicrophone } from "../lib/voice-meter.js";
 import { buildGuideDiscoveryQuery } from "../lib/guide-search.js";
 import { chunkGuide } from "../lib/chunk-guide.js";
 import { guideIngestHint } from "../lib/guide-hints.js";
+import { isReplicateRateLimit, parsePositiveInt } from "../lib/replicate-retry.js";
+import {
+  canonicalGamefaqsBundleUrl,
+  parseGamefaqsFaqUrl,
+  parseGamefaqsTocFromHtml,
+  titleFromGamefaqsSlug,
+} from "../lib/gamefaqs-bundle.js";
 import {
   cleanGuideUrl,
   coerceGuideUrlsFromBody,
   guideUrlsFromChat,
   guideUrlsPayload,
   guideUrlsSummary,
+  isGamefaqsBundleUrl,
   MAX_GUIDE_URLS,
   normalizeGuideUrlList,
+  normalizePreferredGuideUrl,
 } from "../lib/guide-urls.js";
 import {
   steamIdFromClaimedId,
@@ -305,6 +314,33 @@ assert.deepEqual(guideUrlsPayload(["https://a.com/1", "https://b.com/2"]), {
   preferred_guide_url: "https://a.com/1",
   preferred_guide_urls: ["https://a.com/1", "https://b.com/2"],
 });
+
+const suikodenIntro =
+  "https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674/introduction";
+const suikodenBundle = "https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674";
+assert.equal(parseGamefaqsFaqUrl(suikodenIntro)?.faqId, "80674");
+assert.equal(canonicalGamefaqsBundleUrl(suikodenIntro), suikodenBundle);
+assert.equal(normalizePreferredGuideUrl(suikodenIntro), suikodenBundle);
+assert.equal(isGamefaqsBundleUrl(suikodenBundle), true);
+assert.equal(isGamefaqsBundleUrl(suikodenIntro), false);
+
+const sampleTocHtml =
+  '<a href="/ps/198843-suikoden/faqs/80674/introduction">Intro</a>' +
+  '<a href="/ps/198843-suikoden/faqs/80674/walkthrough-part-1">Part 1</a>' +
+  '<a href="/ps/198843-suikoden/faqs/80674/walkthrough-part-2">Part 2</a>' +
+  '<a href="/ps/198843-suikoden/faqs/80674/boards">Boards</a>';
+const tocPages = parseGamefaqsTocFromHtml(sampleTocHtml, {
+  faqId: "80674",
+  canonicalUrl: suikodenBundle,
+});
+assert.equal(tocPages.length, 3, "TOC skips boards link");
+assert.ok(tocPages.some((page) => page.slug === "walkthrough-part-1"));
+assert.equal(titleFromGamefaqsSlug("walkthrough-part-5"), "Walkthrough Part 5");
+
+assert.equal(isReplicateRateLimit(new Error("429 Too Many Requests")), true);
+assert.equal(isReplicateRateLimit(new Error("network down")), false);
+assert.equal(parsePositiveInt("12", 3, 8), 8);
+assert.equal(parsePositiveInt("0", 3, 8), 3);
 
 // TheGamesDB payload mapping: keep valid entries, derive year from release_date,
 // build a front-boxart URL from the include block, and drop malformed/empty ones.
