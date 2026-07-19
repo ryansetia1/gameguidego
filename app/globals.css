@@ -3004,6 +3004,42 @@ details.sources small {
   color: var(--muted, #9aa0a6);
 }
 
+.bundle-index-skeleton {
+  margin: 6px 0 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bundle-index-skeleton-summary {
+  height: 14px;
+  width: 55%;
+  border-radius: 4px;
+  background: var(--line);
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+.bundle-index-skeleton-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bundle-index-skeleton-row {
+  height: 16px;
+  width: 92%;
+  border-radius: 4px;
+  background: var(--line);
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+.bundle-index-skeleton-row.short {
+  width: 72%;
+}
+
 .bundle-index-missing-note {
   margin: 6px 0 8px;
   padding: 8px 10px;

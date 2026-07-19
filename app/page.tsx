@@ -57,7 +57,19 @@ function mergedBundlePrefs(url: string, meta?: GuideBundleMeta) {
   };
 }
 
-import { BundleIndexPanel } from "./bundle-index-panel";
+function isBundlePanelLoading(
+  url: string,
+  meta: GuideBundleMeta | undefined,
+  load: { meta: boolean; status: boolean } | undefined,
+) {
+  if (!load) return true;
+  const needMeta = !meta?.pages?.length;
+  if (needMeta && !load.meta) return true;
+  if (!load.status) return true;
+  return false;
+}
+
+import { BundleIndexPanel, BundleIndexPanelSkeleton } from "./bundle-index-panel";
 import { GuideLinkField, type GuideBundleMeta } from "./guide-link-field";
 import { HltbRow } from "./hltb-row";
 import { PlatformSelect } from "./platform-select";
@@ -393,6 +405,9 @@ export default function Home() {
   >({});
   const [bundleStatusRev, setBundleStatusRev] = useState(0);
   const [retryingBundleUrl, setRetryingBundleUrl] = useState<string | null>(null);
+  const [bundlePanelLoad, setBundlePanelLoad] = useState<
+    Record<string, { meta: boolean; status: boolean }>
+  >({});
 
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -822,10 +837,32 @@ export default function Home() {
   // Hydrate GameFAQs bundle page counts for saved chats / session restore.
   useEffect(() => {
     let cancelled = false;
-    const missing = preferredUrls.filter(
-      (url) => isGamefaqsBundleUrl(url) && !guideBundleMeta[url],
-    );
-    if (!missing.length) return;
+    const bundleUrls = preferredUrls.filter((url) => isGamefaqsBundleUrl(url));
+    if (!bundleUrls.length) return;
+
+    setBundlePanelLoad((prev) => {
+      const next = { ...prev };
+      for (const url of bundleUrls) {
+        const metaDone = Boolean(guideBundleMeta[url]?.pages?.length);
+        next[url] = {
+          meta: metaDone,
+          status: prev[url]?.status ?? false,
+        };
+      }
+      return next;
+    });
+
+    const missing = bundleUrls.filter((url) => !guideBundleMeta[url]?.pages?.length);
+    if (!missing.length) {
+      setBundlePanelLoad((prev) => {
+        const next = { ...prev };
+        for (const url of bundleUrls) {
+          next[url] = { meta: true, status: prev[url]?.status ?? false };
+        }
+        return next;
+      });
+      return;
+    }
 
     void Promise.all(
       missing.map(async (url) => {
@@ -850,6 +887,13 @@ export default function Home() {
           };
         } catch {
           return null;
+        } finally {
+          if (!cancelled) {
+            setBundlePanelLoad((prev) => ({
+              ...prev,
+              [url]: { meta: true, status: prev[url]?.status ?? false },
+            }));
+          }
         }
       }),
     ).then((rows) => {
@@ -1001,6 +1045,17 @@ export default function Home() {
     const bundleUrls = preferredUrls.filter((url) => isGamefaqsBundleUrl(url));
     if (!bundleUrls.length) return;
 
+    setBundlePanelLoad((prev) => {
+      const next = { ...prev };
+      for (const url of bundleUrls) {
+        next[url] = {
+          meta: next[url]?.meta ?? Boolean(guideBundleMeta[url]?.pages?.length),
+          status: false,
+        };
+      }
+      return next;
+    });
+
     void Promise.all(
       bundleUrls.map(async (url) => {
         try {
@@ -1015,6 +1070,13 @@ export default function Home() {
           return { url, pages: data.pages };
         } catch {
           return null;
+        } finally {
+          if (!cancelled) {
+            setBundlePanelLoad((prev) => ({
+              ...prev,
+              [url]: { meta: prev[url]?.meta ?? false, status: true },
+            }));
+          }
         }
       }),
     ).then((rows) => {
@@ -2775,6 +2837,16 @@ export default function Home() {
                         url: page.url,
                       }))
                   ).filter((page) => !skippedSet.has(page.slug.toLowerCase()));
+                  const panelLoading = isBundlePanelLoading(
+                    url,
+                    meta,
+                    bundlePanelLoad[url],
+                  );
+                  const showPanel =
+                    discoveredPages.length > 0 ||
+                    indexedPages.length > 0 ||
+                    missingPages.length > 0 ||
+                    skippedSlugs.length > 0;
                   return (
                     <div key={guideUrlDedupeKey(url)} className="game-card-guide-block">
                       <a
@@ -2787,11 +2859,8 @@ export default function Home() {
                           {label} <IconArrowUpRight />
                         </span>
                       </a>
-                      {bundle &&
-                      (discoveredPages.length > 0 ||
-                        indexedPages.length > 0 ||
-                        missingPages.length > 0 ||
-                        skippedSlugs.length > 0) ? (
+                      {bundle && panelLoading ? <BundleIndexPanelSkeleton /> : null}
+                      {bundle && !panelLoading && showPanel ? (
                         <BundleIndexPanel
                           discoveredPages={discoveredPages}
                           indexedPages={indexedPages}

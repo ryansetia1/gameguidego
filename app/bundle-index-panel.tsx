@@ -19,6 +19,29 @@ type Props = {
   retrying?: boolean;
 };
 
+/** Shown while bundle preview + DB index status are still loading. */
+export function BundleIndexPanelSkeleton() {
+  return (
+    <div
+      className="bundle-index-skeleton"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+      aria-label="Loading guide index status"
+    >
+      <div className="bundle-index-skeleton-summary" />
+      <ul className="bundle-index-skeleton-list" aria-hidden="true">
+        {Array.from({ length: 5 }, (_, index) => (
+          <li
+            key={index}
+            className={`bundle-index-skeleton-row${index % 2 ? " short" : ""}`}
+          />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function BundleIndexPanel({
   discoveredPages,
   indexedPages,
