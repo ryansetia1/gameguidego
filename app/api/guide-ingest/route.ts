@@ -67,7 +67,8 @@ export async function POST(request: Request) {
   const game = typeof record.game === "string" ? record.game.slice(0, 120) : undefined;
   const platform = typeof record.platform === "string" ? record.platform.slice(0, 80) : undefined;
   const userId =
-    typeof record.userId === "string" && /^[0-9a-f-]{36}$/i.test(record.userId)
+    typeof record.userId === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.userId)
       ? record.userId
       : null;
   const ingestCtx = { game, platform, userId };

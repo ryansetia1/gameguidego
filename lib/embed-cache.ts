@@ -17,8 +17,13 @@ function getClient(): SupabaseClient | null {
   return client;
 }
 
+// Namespace the cache by embedding model, so swapping EMBED_MODEL (different
+// vector dimension) can't serve a stale wrong-dim vector into match_guide_chunks.
+const MODEL_TAG = (process.env.EMBED_MODEL || "default").split(":")[0];
+
 export function embedCacheKey(query: string): string {
-  return query.replace(/\s+/g, " ").trim().toLowerCase();
+  const normalized = query.replace(/\s+/g, " ").trim().toLowerCase();
+  return normalized ? `${MODEL_TAG}|${normalized}` : "";
 }
 
 function toVectorString(embedding: number[]): string {

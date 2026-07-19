@@ -158,7 +158,9 @@ export async function POST(request: Request) {
         bundlePrefs,
       });
 
-      if (rag?.hubWarning) {
+      if (rag?.hubWarning && rag.indexedCount === 0) {
+        // Only warn "looks like an index page" when nothing indexed; if we
+        // indexed and answered from it, the warning would be a lie.
         guideHint = guideIngestHint({ hubWarning: true }) ?? undefined;
       } else if (rag && rag.indexedCount < rag.totalGuides) {
         guideHint =
@@ -183,18 +185,9 @@ export async function POST(request: Request) {
         sources = await tieredWebSearch(searchQuery, signal);
       }
     } else if (hasSearchProvider) {
-      const cacheKey = `${searchQuery}::`;
-      const cached = await getCachedSearch(cacheKey);
-      if (Array.isArray(cached)) {
-        sources = cached as SearchResult[];
-      } else {
-        try {
-          sources = await searchGuides(searchQuery, signal);
-          void setCachedSearch(cacheKey, sources);
-        } catch (searchError) {
-          console.error("Search failed, continuing without sources:", searchError);
-        }
-      }
+      // Same helper (and same cache key) as the RAG fallback, so an identical
+      // query isn't cached twice under two keys.
+      sources = await tieredWebSearch(searchQuery, signal);
     }
 
     let { answer, highlights, spoilers, spoilerRisk } = await summarize({

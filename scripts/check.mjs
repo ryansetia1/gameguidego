@@ -281,6 +281,23 @@ assert.ok(
   "chunkGuide should keep section content",
 );
 
+// Overlap regression guard: the tail was previously sliced AFTER flush() emptied
+// the buffer, so consecutive chunks shared nothing. A boss strategy straddling a
+// boundary would be halved. Consecutive packed chunks must share a tail.
+const longPlain = Array.from(
+  { length: 6 },
+  (_, i) => `Section ${i}. ` + `zebra${i} `.repeat(120),
+).join("\n\n");
+const packedChunks = chunkGuide(longPlain);
+assert.ok(packedChunks.length >= 2, "chunkGuide should pack long text into multiple chunks");
+assert.ok(
+  packedChunks.slice(1).some((chunk, i) => {
+    const prevTail = packedChunks[i].slice(-120);
+    return prevTail.length >= 12 && chunk.slice(0, 400).includes(prevTail.slice(-12));
+  }),
+  "chunkGuide consecutive chunks should carry overlap",
+);
+
 assert.match(
   guideIngestHint({ hubWarning: true }) ?? "",
   /index page/i,
@@ -510,7 +527,12 @@ assert.ok(baseQueries.every((query) => !/^site:\S+$/i.test(query.trim())));
 assert.ok(baseQueries.every((query) => /\b(walkthrough|faq)\b/i.test(query)));
 const partQueries = buildGamefaqsPartDiscoveryQueries(parsed80674, 3);
 assert.ok(partQueries.some((query) => query.includes("/part-1")));
-assert.ok(partQueries.some((query) => query.includes("/walkthrough-part-2")));
+assert.ok(partQueries.some((query) => query.includes("/part-3")));
+assert.ok(partQueries.some((query) => query.includes("/introduction")));
+// Bounded fan-out: no per-part /walkthrough-part-N duplication (was ~50 advanced
+// Tavily calls on a cold refresh; the TOC-extract path covers whole sections).
+assert.ok(!partQueries.some((query) => query.includes("/walkthrough-part-")));
+assert.ok(partQueries.length <= 8, "part discovery queries must stay bounded");
 assert.equal(gamefaqsDiscoveryTerms(parsed80674), "suikoden faq 80674");
 assert.deepEqual(
   coerceCachedBundleDiscovery({

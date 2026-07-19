@@ -10,6 +10,10 @@ import { logEmbedCall, type EmbedLogMeta } from "@/lib/embed-log";
 
 const DEFAULT_EMBED_MODEL =
   "lucataco/qwen3-embedding-8b:42d968487820032a1535d81ea20df16f442ea308ec5abae6b5d6cf4675eb3e2f";
+// Qwen3-Embedding is trained asymmetrically: the QUERY carries a task
+// instruction, documents are embedded raw. Applied only in embedQuery.
+const QUERY_INSTRUCTION =
+  "Given a video game player's question, retrieve the walkthrough guide passages that answer it.";
 const EMBED_DIM = 1024;
 const BATCH_SIZE = 32;
 // ponytail: keep low for Replicate accounts under ~$5 credit (throttles concurrency).
@@ -49,6 +53,7 @@ async function runEmbedBatch(
   model: ModelName,
   texts: string[],
   signal?: AbortSignal,
+  instruction = "",
 ): Promise<number[][]> {
   const raw = await withReplicateRetry(
     () =>
@@ -60,6 +65,7 @@ async function runEmbedBatch(
             embedding_dim: EMBED_DIM,
             normalize: true,
             batch_size: Math.min(BATCH_SIZE, texts.length),
+            ...(instruction ? { instruction } : {}),
           },
           signal: withTimeout(120_000, signal),
         },
@@ -84,6 +90,7 @@ export async function embedTexts(
   texts: string[],
   signal?: AbortSignal,
   logMeta?: EmbedLogMeta,
+  instruction = "",
 ): Promise<number[][]> {
   const token = process.env.REPLICATE_API_TOKEN;
   const model = resolveEmbedModel();
@@ -101,12 +108,12 @@ export async function embedTexts(
   for (let i = 0; i < cleaned.length; i += BATCH_SIZE) {
     const batch = cleaned.slice(i, i + BATCH_SIZE);
     try {
-      out.push(...(await runEmbedBatch(replicate, model, batch, signal)));
+      out.push(...(await runEmbedBatch(replicate, model, batch, signal, instruction)));
     } catch (batchError) {
       // ponytail: if batch input fails, fall back to bounded concurrency singles.
       console.error("Batch embed failed, falling back to singles:", batchError);
       const singles = await mapPool(batch, CONCURRENCY, async (text) => {
-        const [vec] = await runEmbedBatch(replicate, model, [text], signal);
+        const [vec] = await runEmbedBatch(replicate, model, [text], signal, instruction);
         return vec;
       });
       out.push(...singles);
@@ -154,6 +161,7 @@ export async function embedQuery(
       [query],
       signal,
       logMeta ? { ...logMeta, purpose: "rag_query" } : { purpose: "rag_query" },
+      QUERY_INSTRUCTION,
     );
     if (!embedding?.length) return null;
     void setCachedEmbedding(key, embedding);

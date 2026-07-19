@@ -197,16 +197,3 @@ export async function retrieveFromPreferredGuides(input: {
     totalGuides,
   };
 }
-
-/** @deprecated Use retrieveFromPreferredGuides */
-export async function retrieveFromPreferredGuide(input: {
-  guideUrl: string;
-  query: string;
-  signal?: AbortSignal;
-}): Promise<GuideRagResult | null> {
-  return retrieveFromPreferredGuides({
-    guideUrls: input.guideUrl ? [input.guideUrl] : [],
-    query: input.query,
-    signal: input.signal,
-  });
-}

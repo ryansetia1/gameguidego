@@ -244,7 +244,11 @@ async function discoverViaTavily(
     return { pages: enriched, title: fromExtract.title };
   }
 
-  const fromSearch = await discoverGamefaqsBundleViaSearch(parsed, signal, seedPages);
+  // Extract failed to yield a TOC — bounded site-search fallback. Early-exit caps
+  // the Tavily fan-out (was up to ~58 advanced calls on a cold refresh).
+  const fromSearch = await discoverGamefaqsBundleViaSearch(parsed, signal, seedPages, {
+    earlyExitMinPages: 15,
+  });
   return { pages: fromSearch, title: "GameFAQs guide" };
 }
 
@@ -291,18 +295,9 @@ async function discoverGamefaqsBundleCacheFirst(
     return buildBundleDiscovery(parsed, seedPages, title);
   }
 
-  const direct = await discoverGamefaqsBundle(rawUrl, signal);
-  if (direct.bundle && direct.pages?.length) {
-    const merged = await mergeAndCacheDiscovery(
-      parsed,
-      direct.pages,
-      direct.title ?? title,
-    );
-    if (merged.length > 1) {
-      return buildBundleDiscovery(parsed, merged, direct.title ?? title);
-    }
-  }
-
+  // ponytail: dropped the direct GameFAQs fetch — it's Cloudflare-blocked (see
+  // header note), so it only cost a guaranteed-failing round-trip on every
+  // discovery. The Tavily extract below reads the same TOC without the block.
   const extracted = await discoverGamefaqsBundleViaExtract(parsed, rawUrl, seedPages, signal);
   if (extracted.pages.length > 1) {
     const merged = await mergeAndCacheDiscovery(parsed, extracted.pages, extracted.title);
@@ -329,7 +324,7 @@ async function discoverGamefaqsBundleCacheFirst(
     return buildBundleDiscovery(parsed, seedPages, title);
   }
 
-  return direct.bundle ? direct : { bundle: false };
+  return { bundle: false };
 }
 
 async function discoverGamefaqsBundleFull(
@@ -343,23 +338,7 @@ async function discoverGamefaqsBundleFull(
     ...(await getIndexedBundlePagesFromDb(parsed.bundleKey)),
   ]);
 
-  const direct = await discoverGamefaqsBundle(rawUrl, signal);
-  if (direct.bundle && direct.pages?.length) {
-    const directTitle = await resolveDiscoveryTitle(
-      parsed,
-      direct.title ?? "GameFAQs guide",
-      signal,
-    );
-    const merged = await mergeAndCacheDiscovery(parsed, direct.pages, directTitle);
-    if (merged.length > 1) {
-      return buildBundleDiscovery(
-        parsed,
-        merged,
-        pickGamefaqsBundleTitle(directTitle, cached?.title),
-      );
-    }
-  }
-
+  // ponytail: dropped the Cloudflare-blocked direct fetch here too.
   const fresh = await discoverViaTavily(parsed, signal, seedPages);
   const resolvedTitle = await resolveDiscoveryTitle(parsed, fresh.title, signal);
   const merged = await mergeAndCacheDiscovery(parsed, fresh.pages, resolvedTitle);
@@ -385,7 +364,7 @@ async function discoverGamefaqsBundleFull(
     );
   }
 
-  return direct.bundle ? direct : { bundle: false };
+  return { bundle: false };
 }
 
 /**
