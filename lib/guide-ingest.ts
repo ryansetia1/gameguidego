@@ -399,6 +399,7 @@ async function ingestSingleGuidePage(
   rawUrl: string,
   signal?: AbortSignal,
   ctx?: IngestContext,
+  bundleKey: string | null = null,
 ): Promise<IngestResult> {
   const supabase = getClient();
   if (!supabase || !process.env.REPLICATE_API_TOKEN) {
@@ -426,7 +427,7 @@ async function ingestSingleGuidePage(
   const stored = await storeGuideChunks({
     supabase,
     guideUrl,
-    guideBundle: null,
+    guideBundle: bundleKey,
     text,
     signal,
     embedLog: embedLogFromContext(ctx),
@@ -459,7 +460,7 @@ async function ingestGamefaqsBundle(
   // Cache-first + light search is enough; full part-query discovery burns 100+ Tavily calls.
   const discovery = discoveryCached;
   if (!discovery.bundle || !discovery.pages?.length) {
-    return ingestSingleGuidePage(rawUrl, signal, ctx);
+    return ingestSingleGuidePage(rawUrl, signal, ctx, parsed.bundleKey);
   }
 
   const targetPages = filterBundlePages(discovery.pages, ctx);
