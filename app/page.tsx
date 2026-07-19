@@ -20,6 +20,7 @@ import {
   IconX,
 } from "./icons";
 import { FUN_ROLES, HERO_LINES } from "@/lib/hero-copy.js";
+import { compressImage } from "@/lib/image.js";
 import { GuideLinkField } from "./guide-link-field";
 import { HltbRow } from "./hltb-row";
 import { PlatformSelect } from "./platform-select";
@@ -98,27 +99,6 @@ const MAX_MESSAGE_IMAGES = 10;
 
 // Downscale + re-encode to JPEG in the browser so a phone photo (several MB)
 // becomes a Storage-friendly ~200-400KB before upload. Falls back to the original.
-async function compressImage(file: File, maxDim = 1280, quality = 0.8): Promise<Blob> {
-  try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return file;
-    ctx.drawImage(bitmap, 0, 0, width, height);
-    bitmap.close?.();
-    return await new Promise<Blob>((resolve) =>
-      canvas.toBlob((blob) => resolve(blob ?? file), "image/jpeg", quality),
-    );
-  } catch {
-    return file;
-  }
-}
-
 const examples = [
   { game: "The Legend of Zelda: Link's Awakening", platform: "Game Boy", q: "How do I reach the first dungeon?" },
   { game: "Final Fantasy VII", platform: "PlayStation (PS1)", q: "How do I beat Emerald Weapon?" },
@@ -398,10 +378,21 @@ export default function Home() {
   const [confirmState, setConfirmState] = useState<{
     message: string;
     confirmLabel?: string;
+    danger?: boolean;
     resolve: (value: boolean) => void;
   } | null>(null);
   const [toast, setToast] = useState("");
   const [lastLibrary, setLastLibrary] = useState<"saved" | "steam">("saved");
+
+  // Promise-based confirm dialog. Declared up here so the Steam return effect can
+  // offer "Use your Steam account" without a declaration-order tangle.
+  const askConfirm = useCallback(
+    (message: string, confirmLabel?: string, danger = true) =>
+      new Promise<boolean>((resolve) =>
+        setConfirmState({ message, confirmLabel, danger, resolve }),
+      ),
+    [],
+  );
 
   const feedRef = useRef<HTMLDivElement>(null);
   const lastUserRef = useRef<HTMLDivElement>(null);
@@ -511,18 +502,20 @@ export default function Home() {
     return status;
   }, []);
 
-  const linkSteamToAccount = useCallback(async () => {
+  const linkSteamToAccount = useCallback(async (): Promise<
+    "ok" | "is_login_account" | "failed"
+  > => {
     const supabase = getSupabase();
-    if (!supabase || !user) return false;
+    if (!supabase || !user) return "failed";
     if (steamIdFromMetadata(user.user_metadata)) {
       setSteamId(steamIdFromMetadata(user.user_metadata));
-      return true;
+      return "ok";
     }
 
     const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData.session?.access_token;
     const refreshToken = sessionData.session?.refresh_token;
-    if (!token || !refreshToken) return false;
+    if (!token || !refreshToken) return "failed";
 
     // The gg_steam cookie set by the OpenID callback holds the verified SteamID;
     // /api/steam/link reads it server-side. Do NOT pre-check /api/steam/me — when
@@ -540,19 +533,19 @@ export default function Home() {
     const linkPayload: { ok?: boolean; error?: string; steamId?: string } =
       await linkResponse.json();
     if (!linkResponse.ok || !linkPayload.ok) {
-      if (linkPayload.error === "steam_is_login_account") {
-        setError("That Steam account already signs in on its own. Use Continue with Steam instead.");
-      } else if (linkPayload.error !== "no_steam_session") {
+      // The caller offers "Use your Steam account" for this one, so stay quiet.
+      if (linkPayload.error === "steam_is_login_account") return "is_login_account";
+      if (linkPayload.error !== "no_steam_session") {
         setError("Could not save Steam to your account. Your library still works on this device.");
       }
-      return false;
+      return "failed";
     }
 
     const { data } = await supabase.auth.refreshSession();
     if (data.session?.user) setUser(data.session.user);
     if (linkPayload.steamId) setSteamId(linkPayload.steamId);
     setToast("Steam connected ✓");
-    return true;
+    return "ok";
   }, [user]);
 
   // "Sign in with Steam" return: the gg_steam cookie holds a verified SteamID;
@@ -575,10 +568,13 @@ export default function Home() {
       setError("Steam sign-in isn't available right now. Try Google or email.");
       return;
     }
-    const { data } = await supabase.auth.setSession({
+    await supabase.auth.setSession({
       access_token: payload.access_token,
       refresh_token: payload.refresh_token,
     });
+    // Pull the latest metadata (the bridge just refreshed avatar_steam) so the
+    // avatar is current on first paint, not one login behind.
+    const { data } = await supabase.auth.refreshSession();
     if (data.session?.user) setUser(data.session.user);
     if (payload.steamId) setSteamId(payload.steamId);
     setToast("Signed in with Steam ✓");
@@ -818,9 +814,21 @@ export default function Home() {
       if (!user || steamLinkHandledRef.current) return;
       steamLinkHandledRef.current = true;
       stripParam();
-      void linkSteamToAccount();
+      void (async () => {
+        const status = await linkSteamToAccount();
+        // This Steam already has its own account, so it can't also be attached
+        // here. Offer to jump into that Steam account instead of dead-ending.
+        if (status === "is_login_account") {
+          const ok = await askConfirm(
+            "This Steam already has its own account, so it can't also be added to this one. Sign in with your Steam account instead? You'll switch out of the account you're in now.",
+            "Use your Steam account",
+            false,
+          );
+          if (ok) await loginWithSteam();
+        }
+      })();
     }
-  }, [user, linkSteamToAccount, loginWithSteam]);
+  }, [user, linkSteamToAccount, loginWithSteam, askConfirm]);
 
   // On sign-in, only REFRESH status (surfaces an already-linked account's Steam).
   // Linking happens solely on the explicit `?steam=linked` return above, so a
@@ -1306,14 +1314,6 @@ export default function Home() {
   // Promise-based confirm dialog (replaces window.confirm): resolves true/false
   // when the user acts. Shared by every destructive action. `confirmLabel`
   // overrides the default "Delete" button text (e.g. "Discard").
-  const askConfirm = useCallback(
-    (message: string, confirmLabel?: string) =>
-      new Promise<boolean>((resolve) =>
-        setConfirmState({ message, confirmLabel, resolve }),
-      ),
-    [],
-  );
-
   function openSavedLibrary() {
     setSidebarOpen(false);
     setMenuOpenId(null);
@@ -2813,7 +2813,7 @@ export default function Home() {
               </button>
               <button
                 type="button"
-                className="confirm-delete"
+                className={confirmState.danger === false ? "confirm-confirm" : "confirm-delete"}
                 onClick={() => {
                   confirmState.resolve(true);
                   setConfirmState(null);

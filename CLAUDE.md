@@ -62,9 +62,11 @@ and simply cannot save.
   While a turn runs the Send button becomes a **Stop** button that aborts the
   `/api/solve` fetch (`abortRef`); the abort propagates via `request.signal` to
   cancel the Replicate prediction + Tavily search server-side. A promise-based
-  confirm dialog (`askConfirm` → `confirmState`) guards every destructive action
-  (delete chat from the sidebar/game-card/library kebabs, clear cover, and
-  edit/retry when it would drop attached images). A themed `snackbar` (`toast`)
+  confirm dialog (`askConfirm(message, confirmLabel?, danger=true)` →
+  `confirmState`) guards every destructive action (delete chat from the
+  sidebar/game-card/library kebabs, clear cover, and edit/retry when it would drop
+  attached images). Pass `danger:false` for a positive CTA (brand-accent button
+  instead of red), e.g. the "Use your Steam account" offer. A themed `snackbar` (`toast`)
   confirms a successful Steam link. The game-card and saved-library cards use the
   sidebar kebab pattern (`menuOpenId`/`toggleRowMenu`) for Edit/Delete; the
   sticky-header back arrow calls `goHome` (pops the pushed chat entry). Mobile
@@ -127,16 +129,24 @@ and simply cannot save.
   with a Google/email account — Steam-login accounts live in a reserved email
   namespace (`steam_<id>@steam.gameguidego.local`, see `lib/steam-account.js`).
   **Sign in with Steam** ("Continue with Steam" in the logged-out auth modal):
-  after OpenID verifies the SteamID, `POST /api/steam/session` uses the
-  `SUPABASE_SERVICE_ROLE_KEY` to admin-create/reuse a Supabase user keyed by that
-  SteamID (deterministic HMAC password, `email_confirm:true`, `steam_id` +
-  Steam persona `display_name`/`avatar_url` from `fetchSteamProfile`), signs in
-  with the anon client, and returns the session for the client to adopt
-  (`loginWithSteam` → `setSession`). The library then loads from the account's
-  `steam_id`. **Link** ("Connect Steam" in the sidebar, signed-in only) attaches
-  Steam to an existing Google/email account, unchanged. The two are kept separate:
-  `/api/steam/link` refuses (409 `steam_is_login_account`) to attach a SteamID
-  that already backs a direct Steam-login account. Intent is round-tripped through
+  after OpenID verifies the SteamID, `POST /api/steam/session` (service-role)
+  resolves **one SteamID → one home account**: if a Google/email account already
+  linked this Steam (`findLinkedAccount` scans users for `steam_id` with
+  `login_via !== "steam"`), it signs into THAT account via `admin.generateLink`
+  (magiclink) + server-side `verifyOtp`; otherwise it admin-creates/reuses a
+  synthetic account keyed by the SteamID (deterministic HMAC password,
+  `email_confirm:true`) and `signInWithPassword`. Either way it returns the
+  session tokens for the client to adopt (`loginWithSteam` → `setSession` +
+  `refreshSession`). The Steam persona `display_name`/`avatar_steam` come from
+  `fetchSteamProfile` and `avatar_steam` is refreshed on every login. The library
+  then loads from the account's `steam_id`. **Link** ("Connect Steam" in the
+  sidebar, signed-in only) attaches Steam to an existing Google/email account,
+  unchanged. `/api/steam/link` refuses (409 `steam_is_login_account`) to attach a
+  SteamID that already backs a *synthetic* Steam-login account (no auto-merge; the
+  user picks one entry point). On that 409 the client doesn't dead-end:
+  `linkSteamToAccount` returns `is_login_account`, and the `?steam=linked` handler
+  offers a "Use your Steam account" confirm that runs `loginWithSteam` to switch
+  into the existing Steam account. Intent is round-tripped through
   the OpenID `return_to` (`i=signin|link`), so the callback redirects
   `?steam=signin` vs `?steam=linked` with no extra cookie. Requires
   `SUPABASE_SERVICE_ROLE_KEY` + `STEAM_API_KEY`; without the service key the
@@ -244,6 +254,15 @@ and simply cannot save.
   a standalone English search query, falling back to the raw question on any
   failure. Exports the `Turn`, `Highlight`, and `SummaryResult` types.
 - `lib/profile.js`: `display_name` / avatar helpers for the profile menu and page.
+  `avatarUrlFromUser` is pref-aware: it honours `user_metadata.avatar_pref`
+  (`google`/`steam`/`upload`) when that source exists, else falls back
+  upload > google > steam (so unifying a Steam login into a Google account keeps
+  the Google photo). `avatarSourcesFromUser` exposes the per-source URLs
+  (`picture`/`avatar_url`, `avatar_steam`, `avatar_upload`) for the `/profile`
+  photo picker. The picker uploads to the `covers` bucket (`<uid>/avatar-*.jpg`)
+  and writes `avatar_upload` + `avatar_pref`.
+- `lib/image.js`: `compressImage(file, maxDim, quality)` — client-side canvas
+  downscale + JPEG re-encode shared by covers, message images, and avatar upload.
 - `lib/spoiler-prefs.js`: global **major spoiler** toggle (`major`, default off)
   in `localStorage` (`gg:spoiler-major`; signed-in users sync `user_metadata.spoiler_major`),
   `buildSpoilerBlock` + `buildSpoilerOutputRules` for the summarize prompt (LLM

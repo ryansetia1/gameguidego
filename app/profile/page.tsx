@@ -7,8 +7,10 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AuthPanel } from "@/app/auth-panel";
 import { IconArrowLeft } from "@/app/icons";
 import { ProfileMenu } from "@/app/profile-menu";
+import { compressImage } from "@/lib/image.js";
 import {
   avatarInitialFromUser,
+  avatarSourcesFromUser,
   avatarUrlFromUser,
   coerceDisplayName,
   displayNameFromMetadata,
@@ -34,6 +36,7 @@ export default function ProfilePage() {
   const [spoilerMajor, setSpoilerMajor] = useState(DEFAULT_SPOILER_PREFS.major);
   const [voiceLang, setVoiceLang] = useState("");
   const [saving, setSaving] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
@@ -83,6 +86,55 @@ export default function ProfilePage() {
     await getSupabase()?.auth.signOut();
   }
 
+  // Which stored avatar to display (Google / Steam / uploaded). Writing the
+  // choice to avatar_pref is all it takes — avatarUrlFromUser honours it.
+  async function chooseAvatar(pref: "google" | "steam" | "upload") {
+    const supabase = getSupabase();
+    if (!supabase || !user) return;
+    setError("");
+    const { data, error: prefError } = await supabase.auth.updateUser({
+      data: { avatar_pref: pref },
+    });
+    if (prefError) {
+      setError(prefError.message);
+      return;
+    }
+    if (data.user) setUser(data.user);
+  }
+
+  async function onAvatarUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    const supabase = getSupabase();
+    if (!file || !supabase || !user || uploadingAvatar) return;
+    setUploadingAvatar(true);
+    setError("");
+    setNotice("");
+    try {
+      const blob = await compressImage(file, 512, 0.85);
+      const path = `${user.id}/avatar-${Date.now()}.jpg`;
+      const { error: upError } = await supabase.storage
+        .from("covers")
+        .upload(path, blob, { upsert: true, contentType: "image/jpeg" });
+      if (upError) throw upError;
+      const url = supabase.storage.from("covers").getPublicUrl(path).data.publicUrl;
+      const { data, error: saveError } = await supabase.auth.updateUser({
+        data: { avatar_upload: url, avatar_pref: "upload" },
+      });
+      if (saveError) throw saveError;
+      if (data.user) setUser(data.user);
+      setNotice("Photo updated.");
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Upload failed. Make sure the 'covers' bucket exists.",
+      );
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }
+
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const supabase = getSupabase();
@@ -109,6 +161,10 @@ export default function ProfilePage() {
 
   const avatarUrl = user ? avatarUrlFromUser(user) : null;
   const initial = user ? avatarInitialFromUser(user) : "?";
+  const avatarSources = user ? avatarSourcesFromUser(user) : { google: null, steam: null, upload: null };
+  const avatarChoices = (["google", "steam", "upload"] as const).filter(
+    (source) => avatarSources[source],
+  );
 
   return (
     <main className="profile-page-shell">
@@ -179,6 +235,42 @@ export default function ProfilePage() {
                 {saving ? "Saving…" : "Save"}
               </button>
             </form>
+
+            <div className="field">
+              <span className="field-label">Profile photo</span>
+              <p className="field-hint">
+                {avatarChoices.length > 1
+                  ? "Pick which picture to show, or upload your own."
+                  : "Upload a photo to use as your avatar."}
+              </p>
+              <div className="avatar-options">
+                {avatarChoices.map((source) => (
+                  <button
+                    type="button"
+                    key={source}
+                    className={`avatar-option${avatarSources[source] === avatarUrl ? " is-active" : ""}`}
+                    onClick={() => void chooseAvatar(source)}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={avatarSources[source] as string} alt="" />
+                    <span>
+                      {source === "google" ? "Google" : source === "steam" ? "Steam" : "Upload"}
+                    </span>
+                  </button>
+                ))}
+                <label className="avatar-option avatar-option-upload">
+                  <span aria-hidden="true">+</span>
+                  <span>{uploadingAvatar ? "Uploading…" : "Upload"}</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    hidden
+                    disabled={uploadingAvatar}
+                    onChange={(event) => void onAvatarUpload(event)}
+                  />
+                </label>
+              </div>
+            </div>
 
             <label className="field">
               <span className="field-label">Voice input language</span>

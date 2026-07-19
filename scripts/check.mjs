@@ -13,7 +13,11 @@ import {
 import { selectSources } from "../lib/rank.js";
 import { parseBlocks, parseInline } from "../lib/markdown.js";
 import { buildSpoilerBlock, coerceSpoilerPrefs, loadSpoilerPrefs } from "../lib/spoiler-prefs.js";
-import { coerceDisplayName, displayNameFromMetadata } from "../lib/profile.js";
+import {
+  avatarUrlFromUser,
+  coerceDisplayName,
+  displayNameFromMetadata,
+} from "../lib/profile.js";
 import { coerceThemeMode, themeFromUserMetadata } from "../lib/theme.js";
 import {
   coerceVoiceLang,
@@ -121,6 +125,20 @@ assert.doesNotMatch(namedPrompt, /—/); // no em-dashes in user-facing/persona 
 
 assert.equal(coerceDisplayName("  Ryan  "), "Ryan");
 assert.equal(displayNameFromMetadata({ display_name: "Ayu" }), "Ayu");
+
+// Avatar picker: chosen source wins; else fallback upload > google > steam, so
+// unifying a Steam login into a Google account keeps the Google photo by default.
+const avA = { user_metadata: { picture: "http://g/pic.png", avatar_steam: "http://s/av.png" } };
+assert.equal(avatarUrlFromUser(avA), "http://g/pic.png"); // no pref -> google over steam
+assert.equal(
+  avatarUrlFromUser({ user_metadata: { ...avA.user_metadata, avatar_pref: "steam" } }),
+  "http://s/av.png", // explicit pref honoured
+);
+assert.equal(
+  avatarUrlFromUser({ user_metadata: { avatar_steam: "http://s/av.png" } }),
+  "http://s/av.png", // steam-only account still resolves
+);
+assert.equal(avatarUrlFromUser({ user_metadata: { avatar_pref: "upload" } }), null); // pref with no source
 assert.equal(loadSpoilerPrefs().major, false);
 
 assert.equal(coerceSpoilerPrefs({ major: true }).major, true);
