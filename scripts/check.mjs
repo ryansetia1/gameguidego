@@ -369,6 +369,19 @@ assert.deepEqual(
   }),
   { "https://gamefaqs.gamespot.com/faqs/1": { skippedSlugs: ["faq"] } },
 );
+assert.deepEqual(
+  mergeBundlePrefsAll(
+    {
+      "https://www.gamefaqs.gamespot.com/faqs/1": { skippedSlugs: ["a"], selectedSlugs: ["x"] },
+    },
+    {
+      "https://gamefaqs.gamespot.com/faqs/1": { skippedSlugs: ["b"], selectedSlugs: ["y"] },
+    },
+  ),
+  {
+    "https://gamefaqs.gamespot.com/faqs/1": { skippedSlugs: ["a", "b"], selectedSlugs: ["y"] },
+  },
+);
 
 assert.equal(MAX_GUIDE_URLS, 5);
 assert.deepEqual(

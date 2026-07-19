@@ -30,6 +30,7 @@ import {
   registerBundlePrefsSync,
   skipAllMissingBundlePages,
   skipBundlePage,
+  targetBundleSlugs,
   unskipBundlePage,
 } from "@/lib/bundle-prefs.js";
 import {
@@ -553,6 +554,49 @@ export default function Home() {
   // Path of a previously-uploaded cover that a new pick will replace, deleted once
   // the replacement is saved so the bucket doesn't keep the orphan.
   const replacedCoverRef = useRef<string | null>(null);
+  const indexingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopBundleIndexingPoll = useCallback(() => {
+    if (indexingPollRef.current) {
+      clearInterval(indexingPollRef.current);
+      indexingPollRef.current = null;
+    }
+  }, []);
+
+  const pollBundleIndexingProgress = useCallback(
+    async (url: string, targets: string[]) => {
+      try {
+        const response = await fetch(
+          `/api/guide-bundle/status?url=${encodeURIComponent(url)}`,
+        );
+        if (!response.ok) return;
+        const data = (await response.json()) as {
+          pages?: { slug: string }[];
+        };
+        const indexed = new Set(
+          (data.pages ?? []).map((page) => page.slug.toLowerCase()),
+        );
+        const remaining = targets.filter((slug) => !indexed.has(slug.toLowerCase())).length;
+        setIndexingGuideCount(remaining);
+      } catch {
+        // polling is best-effort
+      }
+    },
+    [],
+  );
+
+  const startBundleIndexingPoll = useCallback(
+    (url: string, targets: string[]) => {
+      stopBundleIndexingPoll();
+      void pollBundleIndexingProgress(url, targets);
+      indexingPollRef.current = setInterval(() => {
+        void pollBundleIndexingProgress(url, targets);
+      }, 2000);
+    },
+    [pollBundleIndexingProgress, stopBundleIndexingPoll],
+  );
+
+  useEffect(() => () => stopBundleIndexingPoll(), [stopBundleIndexingPoll]);
 
   // Grow the composer to fit its text (down to one line when empty), capped by
   // the CSS max-height which then scrolls. Runs on every input + after clearing.
@@ -1397,7 +1441,7 @@ export default function Home() {
       return changed ? next : prev;
     });
     setBundleStatusRev((rev) => rev + 1);
-  }, [user, preferredUrls]);
+  }, [user?.id, preferredUrls]);
 
   useEffect(() => {
     if (!game.trim()) {
@@ -2113,13 +2157,17 @@ export default function Home() {
               continue;
             }
             setIndexingIsBundlePages(Boolean(bundlePages));
-            setIndexingGuideCount(
-              bundlePages
-                ? meta.pageCount
-                : guideUrls.length > 1
-                  ? guideUrls.length
-                  : 1,
-            );
+            if (bundlePages) {
+              const targets = targetBundleSlugs(discovered, prefs);
+              const indexedSet = new Set(indexedSlugs.map((slug) => slug.toLowerCase()));
+              const pendingCount = targets.filter((slug) => !indexedSet.has(slug)).length;
+              setIndexingGuideCount(pendingCount);
+              if (pendingCount > 0) startBundleIndexingPoll(url, targets);
+            } else {
+              setIndexingGuideCount(
+                guideUrls.length > 1 ? guideUrls.length : 1,
+              );
+            }
             const ingestResponse = await fetch("/api/guide-ingest", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -2178,6 +2226,7 @@ export default function Home() {
             if (ingestHint) setToast(ingestHint);
           }
         } finally {
+          stopBundleIndexingPoll();
           setIndexingGuideCount(0);
           setIndexingIsBundlePages(false);
         }
@@ -3290,7 +3339,9 @@ export default function Home() {
               <p>
                 {indexingGuideCount
                   ? indexingIsBundlePages || bundlePageTotal > 1
-                    ? `Indexing GameFAQs bundle (${indexingGuideCount} pages). This may take a few minutes.`
+                    ? indexingGuideCount > 0
+                      ? `Indexing GameFAQs bundle (${indexingGuideCount} pages left). This may take a few minutes.`
+                      : "Finishing bundle indexing..."
                     : indexingGuideCount > 1
                       ? `Indexing ${indexingGuideCount} guides...`
                       : "Indexing your guide..."

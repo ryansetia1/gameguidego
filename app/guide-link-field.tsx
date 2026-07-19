@@ -139,7 +139,7 @@ export function GuideLinkField({
     const timeout = window.setTimeout(() => controller.abort(), 45_000);
     try {
       const response = await fetch(
-        `/api/guide-bundle?url=${encodeURIComponent(bundleUrl)}`,
+        `/api/guide-bundle?url=${encodeURIComponent(cleaned)}`,
         { signal: controller.signal },
       );
       const payload: {

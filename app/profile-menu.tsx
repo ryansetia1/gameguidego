@@ -77,11 +77,9 @@ export function ProfileMenu({
   const [themeOpen, setThemeOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const wrapRef = useRef<HTMLDivElement>(null);
-  const pushedThemeRef = useRef(false);
 
   useEffect(() => {
     if (!user) {
-      pushedThemeRef.current = false;
       const stored = loadTheme();
       setThemeMode(stored);
       applyTheme(stored);
@@ -96,9 +94,18 @@ export function ProfileMenu({
       const local = loadTheme();
       setThemeMode(local);
       applyTheme(local);
-      if (!pushedThemeRef.current && local !== "system") {
-        pushedThemeRef.current = true;
-        void persistThemeForUser(local);
+      if (local !== "system") {
+        const pushedKey = `gg:theme-pushed:${user.id}`;
+        const alreadyPushed =
+          typeof sessionStorage !== "undefined" && sessionStorage.getItem(pushedKey);
+        if (!alreadyPushed) {
+          try {
+            sessionStorage.setItem(pushedKey, "1");
+          } catch {
+            // private mode
+          }
+          void persistThemeForUser(local);
+        }
       }
     }
 
