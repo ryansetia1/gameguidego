@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { after } from "next/server";
 
 import { chunkGuide } from "@/lib/chunk-guide.js";
 import { embedTexts } from "@/lib/embed";
@@ -486,25 +487,22 @@ async function ingestGamefaqsBundle(
   const indexedSlugs = new Set<string>();
   let resolvedTitle = discovery.title ?? "GameFAQs guide";
 
-  for (let offset = 0; offset < targetPages.length; offset += EXTRACT_BATCH_SIZE) {
-    const batch = targetPages.slice(offset, offset + EXTRACT_BATCH_SIZE);
+  async function processBatch(batch: typeof targetPages, background: boolean) {
+    const activeSignal = background ? undefined : signal;
     const extracted = await extractGuidePages(
       batch.map((page) => page.url),
-      signal,
+      activeSignal,
     );
 
     const pending: PendingPage[] = [];
     for (const page of batch) {
       let content = extracted.get(page.url) ?? extracted.get(normalizeGuideUrl(page.url));
       if (!content) {
-        const solo = await extractGuidePage(page.url, signal);
+        const solo = await extractGuidePage(page.url, activeSignal);
         content = solo?.content;
       }
       const normalized = normalizeGuideUrl(page.url);
-      // Scope to THIS bundle: a page indexed standalone (guide_bundle=null) must
-      // not count as "already in the bundle" — that left it invisible to the panel
-      // and to bundle retrieval (match_guide_chunks filters by guide_bundle).
-      const { count: dbCountBefore } = await supabase
+      const { count: dbCountBefore } = await (supabase as SupabaseClient)
         .from("guide_chunks")
         .select("*", { count: "exact", head: true })
         .eq("guide_url", normalized)
@@ -516,7 +514,7 @@ async function ingestGamefaqsBundle(
         isGenericGamefaqsBundleTitle(resolvedTitle) &&
         (page.slug === "introduction" || page.slug === "walkthrough")
       ) {
-        const parsedTitle = parseGamefaqsGuideTitle(content, parsed);
+        const parsedTitle = parseGamefaqsGuideTitle(content, parsed as NonNullable<ReturnType<typeof parseGamefaqsFaqUrl>>);
         if (!isGenericGamefaqsBundleTitle(parsedTitle)) resolvedTitle = parsedTitle;
       }
 
@@ -538,30 +536,43 @@ async function ingestGamefaqsBundle(
     }
 
     const stored = await storePendingPages({
-      supabase,
+      supabase: supabase as SupabaseClient,
       pages: pending,
-      signal,
+      signal: activeSignal,
       embedLog: embedLogFromContext(ctx),
     });
     pagesIndexed += stored.pagesIndexed;
     chunkCount += stored.chunkCount;
     for (const slug of stored.indexedSlugs) indexedSlugs.add(slug);
-
-    const hasMore = offset + EXTRACT_BATCH_SIZE < targetPages.length;
-    if (hasMore && INGEST_BATCH_DELAY_MS) {
-      await sleep(INGEST_BATCH_DELAY_MS, signal);
-    }
   }
 
-  const pagesMissing = targetPages
-    .filter((page) => !indexedSlugs.has(page.slug))
-    .map((page) => ({ slug: page.slug, title: page.title, url: page.url }));
+  // 1. Process FIRST batch synchronously (Fast initial response)
+  const firstBatch = targetPages.slice(0, EXTRACT_BATCH_SIZE);
+  await processBatch(firstBatch, false);
 
+  // 2. Bookkeeping: Save the TOC so UI knows what's still missing.
   void setCachedBundleDiscovery(bundleKey, {
     canonicalUrl: parsed.canonicalUrl,
     title: pickGamefaqsBundleTitle(resolvedTitle, discovery.title),
     pages: discovery.pages,
   });
+
+  const pagesMissing = targetPages
+    .filter((page) => !indexedSlugs.has(page.slug))
+    .map((page) => ({ slug: page.slug, title: page.title, url: page.url }));
+
+  // 3. Process remaining batches in the background
+  if (targetPages.length > EXTRACT_BATCH_SIZE) {
+    after(async () => {
+      for (let offset = EXTRACT_BATCH_SIZE; offset < targetPages.length; offset += EXTRACT_BATCH_SIZE) {
+        if (INGEST_BATCH_DELAY_MS) {
+          await sleep(INGEST_BATCH_DELAY_MS); // No signal, let background task wait naturally
+        }
+        const batch = targetPages.slice(offset, offset + EXTRACT_BATCH_SIZE);
+        await processBatch(batch, true);
+      }
+    });
+  }
 
   const hubWarning = pagesIndexed === 0;
   return {
