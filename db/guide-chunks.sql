@@ -25,9 +25,14 @@ create index if not exists guide_chunks_bundle_idx
 create unique index if not exists guide_chunks_url_chunk_idx
   on public.guide_chunks (guide_url, chunk_index);
 
-create index if not exists guide_chunks_embedding_idx
-  on public.guide_chunks
-  using ivfflat (embedding vector_cosine_ops) with (lists = 100);
+-- No ANN (ivfflat/hnsw) index on `embedding`. Every retrieval filters by
+-- guide_url / guide_bundle first (both btree-indexed above), reducing to a few
+-- dozen rows, then does an EXACT cosine sort on that subset — trivially fast and
+-- 100% recall. An ivfflat index here actively HURT: with lists=100 + default
+-- probes=1 on a tiny per-guide set, the planner used it for ORDER BY and returned
+-- only ~1 (often wrong) chunk. Add hnsw only if the table ever needs unfiltered
+-- global KNN over 100k+ chunks.
+-- drop index if exists public.guide_chunks_embedding_idx;
 
 alter table public.guide_chunks enable row level security;
 

@@ -184,7 +184,8 @@ export async function retrieveFromPreferredGuides(input: {
     console.log(
       `[rag-calibrate] hit=${hit} top=${topSimilarity.toFixed(3)} ` +
         `scores=[${matches.map((m) => m.similarity.toFixed(3)).join(", ")}] ` +
-        `q=${JSON.stringify(input.query)}`,
+        `q=${JSON.stringify(input.query)} ` +
+        `top_chunk=${JSON.stringify((matches[0]?.chunk_text ?? "").slice(0, 180))}`,
     );
   }
 

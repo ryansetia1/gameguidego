@@ -326,9 +326,17 @@ Not blocking. Ledger so nothing rots into "later means never".
    → merge. Cleanup, not urgent.
 4. **Minor, safe as-is:** extract-map trailing-slash miss (wastes an occasional
    Tavily extract; recovery works), `faqId` injected raw into `new RegExp` (safe
-   while it's always digits), ivfflat `lists=100` (likely unused under the
-   `guide_url` filter), URL 300-char truncation, low-confidence branch feeding one
-   sub-`GUIDE_HIT` chunk (arguably intended — the user chose the guide).
+   while it's always digits), URL 300-char truncation, low-confidence branch
+   feeding one sub-`GUIDE_HIT` chunk (arguably intended — the user chose the guide).
+
+   **FIXED (was here as "ivfflat likely unused"):** the ivfflat index was NOT
+   unused. The planner used it for the ORDER BY and, with `lists=100` + default
+   `probes=1` on a tiny per-guide set, returned only ~1 (often wrong) chunk —
+   `scores=[0.720]` for a single chunk. That was the real cause of a single-page
+   guide answering off-guide. Dropped the ANN index; retrieval now filters by
+   `guide_url`/`guide_bundle` (btree) then does an exact cosine sort on the subset
+   (fast + full recall). Run `drop index if exists public.guide_chunks_embedding_idx;`
+   on existing databases.
 
 ## Bundle discovery/state audit — deferred (Tier 2/3)
 
