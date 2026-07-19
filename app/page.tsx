@@ -61,6 +61,25 @@ function mergedBundlePrefs(url: string, meta?: GuideBundleMeta) {
   };
 }
 
+function guideUrlNeedsIngest(
+  url: string,
+  meta: GuideBundleMeta | undefined,
+  indexStatus: { pages: { slug: string }[] } | undefined,
+) {
+  const bundlePages = meta?.pageCount && meta.pageCount > 1;
+  const discovered = meta?.pages ?? [];
+  const indexedSlugs = indexStatus?.pages?.map((page) => page.slug) ?? [];
+  const prefs = mergedBundlePrefs(url, meta);
+  if (
+    bundlePages &&
+    discovered.length &&
+    !bundleHasPendingPages(discovered, indexedSlugs, prefs)
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function isBundlePanelLoading(
   url: string,
   meta: GuideBundleMeta | undefined,
@@ -591,7 +610,7 @@ export default function Home() {
       void pollBundleIndexingProgress(url, targets);
       indexingPollRef.current = setInterval(() => {
         void pollBundleIndexingProgress(url, targets);
-      }, 2000);
+      }, 4000);
     },
     [pollBundleIndexingProgress, stopBundleIndexingPoll],
   );
@@ -2105,133 +2124,110 @@ export default function Home() {
     const controller = new AbortController();
     abortRef.current = controller;
 
+    const urlsNeedingIngest = guideUrls.filter((url) =>
+      guideUrlNeedsIngest(url, guideBundleMeta[url], bundleIndexStatus[url]),
+    );
+    if (urlsNeedingIngest.length) {
+      const bundleUrl = urlsNeedingIngest.find((url) =>
+        isActiveGamefaqsBundle(url, guideBundleMeta[url]),
+      );
+      if (bundleUrl) {
+        const meta = guideBundleMeta[bundleUrl];
+        const prefs = mergedBundlePrefs(bundleUrl, meta);
+        const discovered = meta?.pages ?? [];
+        const targets = discovered.length ? targetBundleSlugs(discovered, prefs) : [];
+        const indexedSlugs =
+          bundleIndexStatus[bundleUrl]?.pages?.map((page) => page.slug) ?? [];
+        const indexedSet = new Set(indexedSlugs.map((slug) => slug.toLowerCase()));
+        const pending = targets.length
+          ? targets.filter((slug) => !indexedSet.has(slug)).length
+          : Math.max(meta?.pageCount ?? 0, 1);
+        setIndexingIsBundlePages(true);
+        setIndexingGuideCount(Math.max(pending, 1));
+        if (targets.length && pending > 0) startBundleIndexingPoll(bundleUrl, targets);
+      } else {
+        setIndexingIsBundlePages(false);
+        setIndexingGuideCount(
+          urlsNeedingIngest.length > 1 ? urlsNeedingIngest.length : 1,
+        );
+      }
+    }
+
+    const runGuideIngest = async (): Promise<string | null> => {
+      if (!urlsNeedingIngest.length) return null;
+      const ingestResults: Array<Record<string, unknown>> = [];
+      let hubWarning = false;
+      let bundleMetaForRun = { ...guideBundleMeta };
+      try {
+        for (const url of urlsNeedingIngest) {
+          const ingestResponse = await fetch("/api/guide-ingest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: controller.signal,
+            body: JSON.stringify({
+              preferredUrls: [url],
+              game,
+              platform,
+              userId: user?.id ?? null,
+              bundlePrefs: buildBundlePrefsBody(guideUrls),
+            }),
+          });
+          if (ingestResponse.ok) {
+            const ingestData = (await ingestResponse.json()) as {
+              indexed?: boolean;
+              hubWarning?: boolean;
+              results?: Array<Record<string, unknown>>;
+            };
+            const row =
+              ingestData.results?.[0] ??
+              ({ indexed: ingestData.indexed, hubWarning: ingestData.hubWarning } as const);
+            ingestResults.push(row);
+            if (ingestData.hubWarning) hubWarning = true;
+            const updated = applyIngestRowToMeta(url, row, bundleMetaForRun[url]);
+            if (updated) {
+              bundleMetaForRun = { ...bundleMetaForRun, [url]: updated };
+            }
+          } else if (!controller.signal.aborted) {
+            ingestResults.push({ indexed: false });
+          }
+        }
+        if (ingestResults.length) {
+          const indexedCount = ingestResults.filter((row) => row.indexed).length;
+          const hint = guideIngestHintFromResponse({
+            available: true,
+            indexedCount,
+            total: guideUrls.length,
+            hubWarning,
+            results: ingestResults,
+          });
+          if (Object.keys(bundleMetaForRun).length) {
+            setGuideBundleMeta(bundleMetaForRun);
+          }
+          setBundleStatusRev((rev) => rev + 1);
+          return hint;
+        }
+      } catch (ingestError) {
+        if (!(ingestError instanceof DOMException && ingestError.name === "AbortError")) {
+          console.error("Guide ingest failed:", ingestError);
+          return guideIngestHint({
+            available: true,
+            indexed: false,
+            total: guideUrls.length,
+            indexedCount: 0,
+          });
+        }
+      } finally {
+        stopBundleIndexingPoll();
+        setIndexingGuideCount(0);
+        setIndexingIsBundlePages(false);
+      }
+      return null;
+    };
+
+    const ingestPromise = urlsNeedingIngest.length ? runGuideIngest() : null;
+
     try {
       let ingestHint: string | null = null;
-      if (guideUrls.length) {
-        const ingestResults: Array<Record<string, unknown>> = [];
-        let hubWarning = false;
-        let bundleMetaForRun = { ...guideBundleMeta };
-        for (const url of guideUrls) {
-          if (!isGamefaqsBundleUrl(url) || bundleMetaForRun[url]?.pageCount) continue;
-          try {
-            const previewRes = await fetch(
-              `/api/guide-bundle?url=${encodeURIComponent(url)}`,
-              { signal: controller.signal },
-            );
-            if (!previewRes.ok) continue;
-            const preview = (await previewRes.json()) as {
-              bundle?: boolean;
-              pageCount?: number;
-              title?: string;
-              pages?: { slug: string; title: string; url: string }[];
-            };
-            if (preview.bundle && preview.pageCount) {
-              bundleMetaForRun = {
-                ...bundleMetaForRun,
-                [url]: {
-                  title: preview.title ?? "GameFAQs guide",
-                  pageCount: preview.pageCount,
-                  pages: preview.pages,
-                },
-              };
-            }
-          } catch {
-            // preview is best-effort for loading copy
-          }
-        }
-        if (Object.keys(bundleMetaForRun).length > Object.keys(guideBundleMeta).length) {
-          setGuideBundleMeta(bundleMetaForRun);
-        }
-        try {
-          for (const url of guideUrls) {
-            const meta = bundleMetaForRun[url];
-            const bundlePages = meta?.pageCount && meta.pageCount > 1;
-            const discovered = meta?.pages ?? [];
-            const indexedSlugs = bundleIndexStatus[url]?.pages?.map((page) => page.slug) ?? [];
-            const prefs = mergedBundlePrefs(url, meta);
-            if (
-              bundlePages &&
-              discovered.length &&
-              !bundleHasPendingPages(discovered, indexedSlugs, prefs)
-            ) {
-              continue;
-            }
-            setIndexingIsBundlePages(Boolean(bundlePages));
-            if (bundlePages) {
-              const targets = targetBundleSlugs(discovered, prefs);
-              const indexedSet = new Set(indexedSlugs.map((slug) => slug.toLowerCase()));
-              const pendingCount = targets.filter((slug) => !indexedSet.has(slug)).length;
-              setIndexingGuideCount(pendingCount);
-              if (pendingCount > 0) startBundleIndexingPoll(url, targets);
-            } else {
-              setIndexingGuideCount(
-                guideUrls.length > 1 ? guideUrls.length : 1,
-              );
-            }
-            const ingestResponse = await fetch("/api/guide-ingest", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              signal: controller.signal,
-              body: JSON.stringify({
-                preferredUrls: [url],
-                game,
-                platform,
-                userId: user?.id ?? null,
-                bundlePrefs: buildBundlePrefsBody(guideUrls),
-              }),
-            });
-            if (ingestResponse.ok) {
-              const ingestData = (await ingestResponse.json()) as {
-                indexed?: boolean;
-                hubWarning?: boolean;
-                results?: Array<Record<string, unknown>>;
-              };
-              const row =
-                ingestData.results?.[0] ??
-                ({ indexed: ingestData.indexed, hubWarning: ingestData.hubWarning } as const);
-              ingestResults.push(row);
-              if (ingestData.hubWarning) hubWarning = true;
-              const updated = applyIngestRowToMeta(url, row, bundleMetaForRun[url]);
-              if (updated) {
-                bundleMetaForRun = { ...bundleMetaForRun, [url]: updated };
-              }
-            } else if (!controller.signal.aborted) {
-              ingestResults.push({ indexed: false });
-            }
-          }
-          if (ingestResults.length) {
-            const indexedCount = ingestResults.filter((row) => row.indexed).length;
-            ingestHint = guideIngestHintFromResponse({
-              available: true,
-              indexedCount,
-              total: guideUrls.length,
-              hubWarning,
-              results: ingestResults,
-            });
-            if (ingestHint) setToast(ingestHint);
-            if (Object.keys(bundleMetaForRun).length) {
-              setGuideBundleMeta(bundleMetaForRun);
-            }
-            setBundleStatusRev((rev) => rev + 1);
-          }
-        } catch (ingestError) {
-          if (!(ingestError instanceof DOMException && ingestError.name === "AbortError")) {
-            console.error("Guide ingest failed:", ingestError);
-            ingestHint = guideIngestHint({
-              available: true,
-              indexed: false,
-              total: guideUrls.length,
-              indexedCount: 0,
-            });
-            if (ingestHint) setToast(ingestHint);
-          }
-        } finally {
-          stopBundleIndexingPoll();
-          setIndexingGuideCount(0);
-          setIndexingIsBundlePages(false);
-        }
-      }
-
       const response = await fetch("/api/solve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2303,6 +2299,11 @@ export default function Home() {
       // Storage instead of leaving them orphaned.
       if (temporary && images.length) void deleteMessageImages([userMessage]);
       succeeded = true;
+      if (ingestPromise) {
+        void ingestPromise.then((hint) => {
+          if (hint) setToast(hint);
+        });
+      }
     } catch (caught) {
       setMessages(priorMessages);
       // A user-triggered Stop aborts the fetch — treat it as a silent cancel,
@@ -3345,7 +3346,9 @@ export default function Home() {
                     : indexingGuideCount > 1
                       ? `Indexing ${indexingGuideCount} guides...`
                       : "Indexing your guide..."
-                  : "Searching walkthroughs and player forums..."}
+                  : preferredUrls.length
+                    ? "Building your answer..."
+                    : "Searching walkthroughs and player forums..."}
               </p>
             </div>
           )}

@@ -418,20 +418,9 @@ async function ingestGamefaqsBundle(
   const discoveryCached = await discoverGamefaqsBundleResolved(rawUrl, signal, {
     refresh: false,
   });
-  const include = ctx?.includeSlugs?.length
-    ? ctx.includeSlugs.map((slug) => slug.toLowerCase())
-    : [];
-  const needsRefresh =
-    !discoveryCached.bundle ||
-    !discoveryCached.pages?.length ||
-    (include.length > 0 &&
-      include.some(
-        (slug) =>
-          !discoveryCached.pages!.some((page) => page.slug.toLowerCase() === slug),
-      ));
-  const discovery = needsRefresh
-    ? await discoverGamefaqsBundleResolved(rawUrl, signal, { refresh: true })
-    : discoveryCached;
+  // ponytail: never full refresh on ingest — manual "Refresh page list" only.
+  // Cache-first + light search is enough; full part-query discovery burns 100+ Tavily calls.
+  const discovery = discoveryCached;
   if (!discovery.bundle || !discovery.pages?.length) {
     return ingestSingleGuidePage(rawUrl, signal, ctx);
   }
