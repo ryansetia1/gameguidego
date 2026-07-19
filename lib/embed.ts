@@ -10,10 +10,13 @@ import { logEmbedCall, type EmbedLogMeta } from "@/lib/embed-log";
 
 const DEFAULT_EMBED_MODEL =
   "lucataco/qwen3-embedding-8b:42d968487820032a1535d81ea20df16f442ea308ec5abae6b5d6cf4675eb3e2f";
-// Qwen3-Embedding is trained asymmetrically: the QUERY carries a task
-// instruction, documents are embedded raw. Applied only in embedQuery.
-const QUERY_INSTRUCTION =
-  "Given a video game player's question, retrieve the walkthrough guide passages that answer it.";
+// Qwen3 supports an asymmetric query instruction, BUT it must be validated against
+// GUIDE_HIT before use: documents were embedded WITHOUT an instruction, so an
+// un-matched query instruction shifts the query vector out of alignment with the
+// document vectors and tanks relevance (answers drift off the guide). Default OFF
+// = symmetric with documents = known-aligned. Set EMBED_QUERY_INSTRUCTION to
+// re-enable after calibrating GUIDE_HIT (see docs/preferred-guide.md).
+const QUERY_INSTRUCTION = process.env.EMBED_QUERY_INSTRUCTION ?? "";
 const EMBED_DIM = 1024;
 const BATCH_SIZE = 32;
 // Defaults tuned for a funded account (withReplicateRetry backs off on 429, so
