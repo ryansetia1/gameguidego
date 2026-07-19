@@ -2317,10 +2317,16 @@ export default function Home() {
     } finally {
       abortRef.current = null;
       setLoading(false);
-      // Answer's in: hand focus back to the composer so a follow-up can be typed
-      // right away. rAF waits for the textarea to un-disable after loading clears.
+      // Answer's in: hand focus back to the composer on desktop so a follow-up
+      // can be typed right away. Skip on touch-primary devices — focus pops the
+      // keyboard over the answer. rAF waits for the textarea to un-disable.
       if (succeeded) {
-        requestAnimationFrame(() => composerRef.current?.focus());
+        const touchPrimary = window.matchMedia?.(
+          "(pointer: coarse) and (hover: none)",
+        )?.matches;
+        if (!touchPrimary) {
+          requestAnimationFrame(() => composerRef.current?.focus());
+        }
       }
     }
   }
