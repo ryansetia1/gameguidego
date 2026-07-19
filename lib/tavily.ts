@@ -194,6 +194,116 @@ export function looksLikeHub(rawUrl: string): boolean {
   }
 }
 
+const EXTRACT_BATCH_SIZE = 10;
+
+type TavilyExtractDepth = "basic" | "advanced";
+
+function mergeExtractResults(
+  target: Map<string, string>,
+  results: unknown,
+): void {
+  if (!Array.isArray(results)) return;
+  for (const item of results) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as { url?: unknown; raw_content?: unknown };
+    if (typeof record.url !== "string" || typeof record.raw_content !== "string") continue;
+    const content = cleanSnippet(record.raw_content);
+    if (content.length < MIN_CONTENT) continue;
+    try {
+      target.set(new URL(record.url).toString(), content);
+    } catch {
+      target.set(record.url, content);
+    }
+  }
+}
+
+async function runTavilyExtract(
+  urls: string[],
+  apiKey: string,
+  signal: AbortSignal | undefined,
+  depth: TavilyExtractDepth,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!urls.length) return out;
+
+  const body: { urls: string[]; extract_depth?: string } = { urls };
+  if (depth === "advanced") body.extract_depth = "advanced";
+
+  let response: Response;
+  try {
+    response = await fetch(TAVILY_EXTRACT_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: combineSignal(urls.length > 1 ? 60_000 : 30_000, signal),
+    });
+  } catch (error) {
+    if (!isAbortError(error)) {
+      logTavily("extract", `${depth} request error`, {
+        count: urls.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return out;
+  }
+
+  if (!response.ok) {
+    const detail = await tavilyResponseDetail(response);
+    logTavily("extract", `${depth} HTTP ${response.status}${detail ? `: ${detail}` : ""}`, {
+      count: urls.length,
+    });
+    return out;
+  }
+
+  const payload: unknown = await response.json();
+  const results =
+    payload && typeof payload === "object" && "results" in payload
+      ? (payload.results as unknown)
+      : null;
+  mergeExtractResults(out, results);
+  return out;
+}
+
+function normalizeExtractUrls(rawUrls: string[], cap = EXTRACT_BATCH_SIZE): string[] {
+  const urls: string[] = [];
+  for (const raw of rawUrls) {
+    try {
+      const parsed = new URL(raw);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
+      const normalized = parsed.toString();
+      if (!urls.includes(normalized)) urls.push(normalized);
+    } catch {
+      // skip invalid
+    }
+    if (urls.length >= cap) break;
+  }
+  return urls;
+}
+
+/** ponytail: some GameFAQs pages fail basic extract; advanced is the upgrade path. */
+async function extractWithAdvancedFallback(
+  urls: string[],
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<Map<string, string>> {
+  const out = await runTavilyExtract(urls, apiKey, signal, "basic");
+  const missing = urls.filter((url) => !out.has(url));
+  if (!missing.length) return out;
+
+  const advanced = await runTavilyExtract(missing, apiKey, signal, "advanced");
+  for (const [url, content] of advanced) out.set(url, content);
+  if (advanced.size) {
+    logTavily("extract", "advanced extract filled basic misses", {
+      recovered: advanced.size,
+      missing: missing.length,
+    });
+  }
+  return out;
+}
+
 /**
  * Pull the full text of a guide page for RAG ingest. Given page only — does not
  * follow child links. Returns null when Tavily is unconfigured or extract fails.
@@ -220,70 +330,17 @@ export async function extractGuidePage(
     return null;
   }
 
-  let response: Response;
-  try {
-    response = await fetch(TAVILY_EXTRACT_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ urls: [parsed.toString()] }),
-      signal: combineSignal(30_000, signal),
-    });
-  } catch (error) {
-    if (!isAbortError(error)) {
-      logTavily("extract", "request error", {
-        url: parsed.toString(),
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    return null;
-  }
-
-  if (!response.ok) {
-    const detail = await tavilyResponseDetail(response);
-    logTavily("extract", `HTTP ${response.status}${detail ? `: ${detail}` : ""}`, {
+  const map = await extractWithAdvancedFallback([parsed.toString()], apiKey, signal);
+  const content = map.get(parsed.toString());
+  if (!content) {
+    logTavily("extract", "no content after basic + advanced extract", {
       url: parsed.toString(),
-    });
-    return null;
-  }
-
-  const payload: unknown = await response.json();
-  const results =
-    payload && typeof payload === "object" && "results" in payload
-      ? (payload.results as unknown)
-      : null;
-  if (!Array.isArray(results) || results.length === 0) {
-    logTavily("extract", "response had no results", { url: parsed.toString() });
-    return null;
-  }
-
-  const first = results[0];
-  if (!first || typeof first !== "object" || !("raw_content" in first)) {
-    logTavily("extract", "result missing raw_content", { url: parsed.toString() });
-    return null;
-  }
-  const raw = (first as { raw_content: unknown }).raw_content;
-  if (typeof raw !== "string") {
-    logTavily("extract", "raw_content was not a string", { url: parsed.toString() });
-    return null;
-  }
-
-  const content = cleanSnippet(raw);
-  if (content.length < MIN_CONTENT) {
-    logTavily("extract", "extracted text too short after cleaning", {
-      url: parsed.toString(),
-      chars: content.length,
-      min: MIN_CONTENT,
     });
     return null;
   }
 
   return { url: parsed.toString(), content };
 }
-
-const EXTRACT_BATCH_SIZE = 10;
 
 /**
  * Pull full text for multiple guide pages (Tavily Extract). Returns a map of
@@ -293,74 +350,13 @@ export async function extractGuidePages(
   rawUrls: string[],
   signal?: AbortSignal,
 ): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
   const apiKey = process.env.TAVILY_API_KEY;
-  if (!apiKey || !rawUrls.length) return out;
+  if (!apiKey || !rawUrls.length) return new Map();
 
-  const urls: string[] = [];
-  for (const raw of rawUrls) {
-    try {
-      const parsed = new URL(raw);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
-      const normalized = parsed.toString();
-      if (!urls.includes(normalized)) urls.push(normalized);
-    } catch {
-      // skip invalid
-    }
-    if (urls.length >= EXTRACT_BATCH_SIZE) break;
-  }
-  if (!urls.length) return out;
+  const urls = normalizeExtractUrls(rawUrls);
+  if (!urls.length) return new Map();
 
-  let response: Response;
-  try {
-    response = await fetch(TAVILY_EXTRACT_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ urls }),
-      signal: combineSignal(60_000, signal),
-    });
-  } catch (error) {
-    if (!isAbortError(error)) {
-      logTavily("extract", "batch request error", {
-        count: urls.length,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    return out;
-  }
-
-  if (!response.ok) {
-    const detail = await tavilyResponseDetail(response);
-    logTavily("extract", `batch HTTP ${response.status}${detail ? `: ${detail}` : ""}`, {
-      count: urls.length,
-    });
-    return out;
-  }
-
-  const payload: unknown = await response.json();
-  const results =
-    payload && typeof payload === "object" && "results" in payload
-      ? (payload.results as unknown)
-      : null;
-  if (!Array.isArray(results)) return out;
-
-  for (const item of results) {
-    if (!item || typeof item !== "object") continue;
-    const record = item as { url?: unknown; raw_content?: unknown };
-    if (typeof record.url !== "string" || typeof record.raw_content !== "string") continue;
-    const content = cleanSnippet(record.raw_content);
-    if (content.length < MIN_CONTENT) continue;
-    try {
-      out.set(new URL(record.url).toString(), content);
-    } catch {
-      out.set(record.url, content);
-    }
-  }
-
-  return out;
+  return extractWithAdvancedFallback(urls, apiKey, signal);
 }
 
 /**

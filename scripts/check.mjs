@@ -49,6 +49,9 @@ import {
   parseGamefaqsFaqUrl,
   parseGamefaqsTocFromHtml,
   parseGamefaqsPagesFromUrls,
+  parseGamefaqsGuideTitle,
+  isGenericGamefaqsBundleTitle,
+  pickGamefaqsBundleTitle,
   titleFromGamefaqsSlug,
 } from "../lib/gamefaqs-bundle.js";
 import { coerceCachedBundleDiscovery } from "../lib/guide-bundle-cache.js";
@@ -445,6 +448,40 @@ assert.equal(searchPages[0].slug, "introduction");
 
 const parsed80674 = parseGamefaqsFaqUrl(suikodenBundle);
 assert.ok(parsed80674);
+assert.equal(
+  parseGamefaqsGuideTitle(
+    "Guide and Walkthrough (PS) by [Cyril](https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674/credit)",
+    parsed80674,
+  ),
+  "Suikoden — Guide and Walkthrough (PS) by Cyril",
+);
+assert.equal(
+  parseGamefaqsGuideTitle(
+    "**Guide and Walkthrough (PS)**\nby [Cyril](https://example.com)",
+    parsed80674,
+  ),
+  "Suikoden — Guide and Walkthrough (PS) by Cyril",
+);
+assert.equal(
+  parseGamefaqsGuideTitle(
+    "Introduction - Suikoden — Guide and Walkthrough (PS) by Cyril",
+    parsed80674,
+  ),
+  "Suikoden — Guide and Walkthrough (PS) by Cyril",
+);
+assert.equal(
+  parseGamefaqsGuideTitle(
+    "<title>Introduction - Suikoden — Guide and Walkthrough (PS) - GameFAQs</title>",
+    parsed80674,
+  ),
+  "Suikoden — Guide and Walkthrough (PS)",
+);
+assert.equal(isGenericGamefaqsBundleTitle("GameFAQs guide"), true);
+assert.equal(isGenericGamefaqsBundleTitle("Suikoden — Guide and Walkthrough (PS) by Cyril"), false);
+assert.equal(
+  pickGamefaqsBundleTitle("GameFAQs guide", "Suikoden — Guide and Walkthrough (PS) by Cyril"),
+  "Suikoden — Guide and Walkthrough (PS) by Cyril",
+);
 const baseQueries = buildGamefaqsDiscoveryBaseQueries(parsed80674);
 assert.ok(baseQueries.some((query) => query.includes("/part-")));
 const partQueries = buildGamefaqsPartDiscoveryQueries(parsed80674, 3);

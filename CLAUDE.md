@@ -226,8 +226,9 @@ do not sync to the cloud or use Storage uploads.
 - `app/api/guide-bundle/route.ts`: `GET ?url=` previews GameFAQs multi-page FAQ
   bundles (page count + section list) before the user confirms add. Discovery
   uses `lib/gamefaqs-discover.ts` (site search + extract TOC enrichment; GameFAQs
-  blocks direct HTML fetch). `GET /api/guide-bundle/status?url=` returns per-page
-  indexed rows from `guide_chunks` for the game-card collapsible panel
+  blocks direct HTML fetch). `GET /api/guide-bundle/status?url=` returns bundle
+  title + discovery page list from `guide_bundle_cache` and per-page indexed rows
+  from `guide_chunks` (Supabase only, no Tavily). Used for the game-card
   (`app/bundle-index-panel.tsx`: missing pages listed first with Skip/Include
   controls and optional Retry; toast names failed sections via `pagesMissing`.
   Page pick at add time in `app/guide-link-field.tsx`; skip/select prefs in
@@ -351,7 +352,9 @@ do not sync to the cloud or use Storage uploads.
   malformed entries. `prepareAutocompleteGames` dedupes noisy same-console
   duplicates and attaches a release-date hint when rows still differ.
   Covered by `npm run check`.
-- PWA + brand: UI font is **Rubik** via `next/font` in `app/layout.tsx`. The logo is `GGG.png` (2000x2000 source, `#00FFAA` bg), resized with `sips` into
+- PWA + brand: UI font is **Rubik** via `next/font` in `app/layout.tsx`. **Theme
+  rules** (no rounded corners, tokens, layout): [`docs/ui-theme.md`](docs/ui-theme.md).
+  The logo is `GGG.png` (2000x2000 source, `#00FFAA` bg), resized with `sips` into
   static icons — `app/icon.png` (favicon), `app/apple-icon.png` (apple-touch),
   `public/icon-192.png` / `public/icon-512.png` (manifest `purpose: "any"`), and
   `public/logo.png` (nav brand mark, `<img>` in `app/page.tsx`). Maskable is a
@@ -398,7 +401,7 @@ GameFAQs blocks direct HTML fetch (Cloudflare 403). `lib/gamefaqs-discover.ts`
 
 | Mode | When | Tavily? |
 |------|------|---------|
-| **Cache-first** (default) | Game card reload, normal `GET /api/guide-bundle` | No — reads `guide_bundle_cache` (stale OK) + `guide_chunks` URLs; optional direct fetch only |
+| **Cache-first** (default) | `GET /api/guide-bundle` (add-time preview only) | No — reads `guide_bundle_cache` + `guide_chunks` |
 | **Full refresh** (`?refresh=1`) | Add-bundle preview, **Refresh page list** button | Yes — full pipeline below |
 
 Full refresh pipeline:
@@ -467,19 +470,23 @@ Sent to server as `bundlePrefs` on `POST /api/guide-ingest` and `POST /api/solve
 
 ### Game card UI (`app/page.tsx`, `app/bundle-index-panel.tsx`)
 
-Two parallel client fetches per bundle URL on load / `bundleStatusRev` bump:
+Guide links and bundle panels are paired in `.game-card-guide-stack` (full card
+width, one stack per preferred URL). Spoiler toggle is in `.game-card-spoiler`
+below all guides (game-level, not per guide). See [`docs/ui-theme.md`](docs/ui-theme.md).
+
+One Supabase-only fetch per bundle URL on load / `bundleStatusRev` bump:
 
 | Fetch | Endpoint | Backend | Purpose |
 |-------|----------|---------|---------|
-| Page list | `/api/guide-bundle` | cache-first `discoverGamefaqsBundleResolved` | Supabase cache + DB; no Tavily |
-| Index status | `/api/guide-bundle/status` | `getBundleIndexStatus` → Supabase only | Fast |
+| Panel state | `/api/guide-bundle/status` | `getBundleIndexStatus` → `guide_bundle_cache` + `guide_chunks` | Title, page list, indexed rows |
+| Add preview | `/api/guide-bundle?refresh=1` | full Tavily discovery | Before user confirms add |
 | Refresh list | `/api/guide-bundle?refresh=1` | full Tavily discovery | User-triggered; costs credits |
 
 `bundlePanelLoad` tracks `{ meta, status }` per URL. While loading:
 
 - **Inline spinner** (`.game-card-bundle-spinner`) beside `IconArrowUpRight` on the
   guide link — **no vertical skeleton** (saves space).
-- Collapsible `BundleIndexPanel` hidden until both loads complete.
+- Collapsible `BundleIndexPanel` hidden until the status fetch completes.
 
 Panel when loaded:
 

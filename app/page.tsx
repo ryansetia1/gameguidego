@@ -71,6 +71,67 @@ function isBundlePanelLoading(
   return false;
 }
 
+function gameCardGuideRow(
+  url: string,
+  meta: GuideBundleMeta | undefined,
+  indexStatus: { pages: { slug: string; title: string; url: string; chunks: number }[] } | undefined,
+  panelLoad: { meta: boolean; status: boolean } | undefined,
+) {
+  const bundle = isGamefaqsBundleUrl(url);
+  const bundlePrefs = mergedBundlePrefs(url, meta);
+  const label = bundle
+    ? meta
+      ? `${meta.title} (${bundlePrefs.selectedSlugs?.length ?? meta.pageCount} pages)`
+      : "GameFAQs bundle"
+    : guideUrlsSummary([url]);
+  const selectionLocked = Boolean(bundlePrefs.selectedSlugs?.length);
+  const discoveredPages = filterBundlePanelPages(
+    meta?.pages?.map((page) => ({
+      slug: page.slug,
+      title: page.title,
+      url: page.url,
+    })) ?? [],
+    bundlePrefs.selectedSlugs,
+  );
+  const indexedPages = filterBundlePanelPages(
+    indexStatus?.pages ?? [],
+    bundlePrefs.selectedSlugs,
+  );
+  const skippedSlugs = meta?.skippedSlugs ?? getBundlePrefs(url).skippedSlugs ?? [];
+  const skippedSet = new Set(skippedSlugs.map((slug) => slug.toLowerCase()));
+  const missingPages = filterBundlePanelPages(
+    (
+      meta?.missingPages ??
+      discoveredPages
+        .filter((page) => !indexedPages.some((hit) => hit.slug === page.slug))
+        .map((page) => ({
+          slug: page.slug,
+          title: page.title,
+          url: page.url,
+        }))
+    ).filter((page) => !skippedSet.has(page.slug.toLowerCase())),
+    bundlePrefs.selectedSlugs,
+  );
+  const panelLoading = bundle && isBundlePanelLoading(url, meta, panelLoad);
+  const showPanel =
+    discoveredPages.length > 0 ||
+    indexedPages.length > 0 ||
+    missingPages.length > 0 ||
+    skippedSlugs.length > 0;
+
+  return {
+    bundle,
+    label,
+    selectionLocked,
+    discoveredPages,
+    indexedPages,
+    missingPages,
+    skippedSlugs,
+    panelLoading,
+    showPanel,
+  };
+}
+
 import { BundleIndexPanel } from "./bundle-index-panel";
 import { GuideLinkField, type GuideBundleMeta } from "./guide-link-field";
 import { HltbRow } from "./hltb-row";
@@ -837,7 +898,7 @@ export default function Home() {
     });
   }, [messages, activeChatId, game, platform, preferredUrls, cover, releaseYear, user, temporary]);
 
-  // Hydrate GameFAQs bundle page counts for saved chats / session restore.
+  // Hydrate GameFAQs bundle title, page list, and index status from Supabase only.
   useEffect(() => {
     let cancelled = false;
     const bundleUrls = preferredUrls.filter((url) => isGamefaqsBundleUrl(url));
@@ -846,69 +907,68 @@ export default function Home() {
     setBundlePanelLoad((prev) => {
       const next = { ...prev };
       for (const url of bundleUrls) {
-        const metaDone = Boolean(guideBundleMeta[url]?.pages?.length);
-        next[url] = {
-          meta: metaDone,
-          status: prev[url]?.status ?? false,
-        };
+        next[url] = { meta: false, status: false };
       }
       return next;
     });
 
-    const missing = bundleUrls.filter((url) => !guideBundleMeta[url]?.pages?.length);
-    if (!missing.length) {
-      setBundlePanelLoad((prev) => {
-        const next = { ...prev };
-        for (const url of bundleUrls) {
-          next[url] = { meta: true, status: prev[url]?.status ?? false };
-        }
-        return next;
-      });
-      return;
-    }
-
     void Promise.all(
-      missing.map(async (url) => {
+      bundleUrls.map(async (url) => {
         try {
           const response = await fetch(
-            `/api/guide-bundle?url=${encodeURIComponent(url)}`,
+            `/api/guide-bundle/status?url=${encodeURIComponent(url)}`,
           );
+          if (!response.ok) return null;
           const data: {
-            bundle?: boolean;
-            pageCount?: number;
             title?: string;
-            pages?: { slug: string; title: string; url: string }[];
+            pageCount?: number;
+            discoveryPages?: { slug: string; title: string; url: string }[];
+            pages?: { slug: string; title: string; url: string; chunks: number }[];
           } = await response.json();
-          if (!response.ok || !data.bundle || !data.pageCount) return null;
-          return {
-            url,
-            meta: {
-              title: data.title ?? "GameFAQs guide",
-              pageCount: data.pageCount,
-              pages: data.pages,
-            },
-          };
+          if (!data.discoveryPages?.length && !data.pages?.length) return null;
+          return { url, data };
         } catch {
           return null;
         } finally {
           if (!cancelled) {
             setBundlePanelLoad((prev) => ({
               ...prev,
-              [url]: { meta: true, status: prev[url]?.status ?? false },
+              [url]: { meta: true, status: true },
             }));
           }
         }
       }),
     ).then((rows) => {
       if (cancelled) return;
-      const found = rows.filter((row) => row !== null) as {
-        url: string;
-        meta: GuideBundleMeta;
-      }[];
+      const found = rows.filter((row): row is NonNullable<typeof row> => Boolean(row));
       if (!found.length) return;
       setGuideBundleMeta((prev) => {
         const next = { ...prev };
-        for (const row of found) next[row.url] = row.meta;
+        for (const row of found) {
+          const prefs = getBundlePrefs(row.url);
+          const pages = filterBundlePanelPages(
+            row.data.discoveryPages ?? [],
+            prefs.selectedSlugs,
+          );
+          next[row.url] = {
+            ...prev[row.url],
+            title: row.data.title ?? prev[row.url]?.title ?? "GameFAQs guide",
+            pageCount:
+              pages.length > 0
+                ? pages.length
+                : row.data.pageCount ?? prev[row.url]?.pageCount ?? 0,
+            pages: pages.length ? pages : row.data.discoveryPages,
+            selectedSlugs: prev[row.url]?.selectedSlugs ?? prefs.selectedSlugs,
+            skippedSlugs: prev[row.url]?.skippedSlugs ?? prefs.skippedSlugs,
+          };
+        }
+        return next;
+      });
+      setBundleIndexStatus((prev) => {
+        const next = { ...prev };
+        for (const row of found) {
+          if (row.data.pages?.length) next[row.url] = { pages: row.data.pages };
+        }
         return next;
       });
     });
@@ -916,7 +976,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [preferredUrls, guideBundleMeta]);
+  }, [preferredUrls, bundleStatusRev]);
 
   // Keep bundle skip/select prefs in sync with localStorage (survives refresh).
   useEffect(() => {
@@ -1103,65 +1163,6 @@ export default function Home() {
       setRefreshingBundleUrl(null);
     }
   }, []);
-
-  // Indexed page rows for GameFAQs bundles (DB truth for the collapsible panel).
-  useEffect(() => {
-    let cancelled = false;
-    const bundleUrls = preferredUrls.filter((url) => isGamefaqsBundleUrl(url));
-    if (!bundleUrls.length) return;
-
-    setBundlePanelLoad((prev) => {
-      const next = { ...prev };
-      for (const url of bundleUrls) {
-        next[url] = {
-          meta: next[url]?.meta ?? Boolean(guideBundleMeta[url]?.pages?.length),
-          status: false,
-        };
-      }
-      return next;
-    });
-
-    void Promise.all(
-      bundleUrls.map(async (url) => {
-        try {
-          const response = await fetch(
-            `/api/guide-bundle/status?url=${encodeURIComponent(url)}`,
-          );
-          if (!response.ok) return null;
-          const data: {
-            pages?: { slug: string; title: string; url: string; chunks: number }[];
-          } = await response.json();
-          if (!data.pages?.length) return null;
-          return { url, pages: data.pages };
-        } catch {
-          return null;
-        } finally {
-          if (!cancelled) {
-            setBundlePanelLoad((prev) => ({
-              ...prev,
-              [url]: { meta: prev[url]?.meta ?? false, status: true },
-            }));
-          }
-        }
-      }),
-    ).then((rows) => {
-      if (cancelled) return;
-      const found = rows.filter(
-        (row): row is { url: string; pages: { slug: string; title: string; url: string; chunks: number }[] } =>
-          Boolean(row),
-      );
-      if (!found.length) return;
-      setBundleIndexStatus((prev) => {
-        const next = { ...prev };
-        for (const row of found) next[row.url] = { pages: row.pages };
-        return next;
-      });
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [preferredUrls, bundleStatusRev]);
 
   const bundlePageTotal = preferredUrls.reduce(
     (sum, url) => sum + (guideBundleMeta[url]?.pageCount ?? 0),
@@ -2867,121 +2868,75 @@ export default function Home() {
               <p>{[displayPlatform(platform, cover), releaseYear].filter(Boolean).join(" · ")}</p>
             )}
             <HltbRow title={game} appId={steamAppIdFromCoverUrl(cover)?.toString()} />
-            {preferredUrls.length > 0 && (
-              <div className="game-card-guides">
-                {preferredUrls.map((url) => {
-                  const meta = guideBundleMeta[url];
-                  const bundle = isGamefaqsBundleUrl(url);
-                  const bundlePrefs = mergedBundlePrefs(url, meta);
-                  const label = bundle
-                    ? meta
-                      ? `${meta.title} (${bundlePrefs.selectedSlugs?.length ?? meta.pageCount} pages)`
-                      : "GameFAQs bundle"
-                    : guideUrlsSummary([url]);
-                  const selectionLocked = Boolean(bundlePrefs.selectedSlugs?.length);
-                  const discoveredPages = filterBundlePanelPages(
-                    meta?.pages?.map((page) => ({
-                      slug: page.slug,
-                      title: page.title,
-                      url: page.url,
-                    })) ?? [],
-                    bundlePrefs.selectedSlugs,
-                  );
-                  const indexedPages = filterBundlePanelPages(
-                    bundleIndexStatus[url]?.pages ?? [],
-                    bundlePrefs.selectedSlugs,
-                  );
-                  const skippedSlugs =
-                    meta?.skippedSlugs ?? getBundlePrefs(url).skippedSlugs ?? [];
-                  const skippedSet = new Set(
-                    skippedSlugs.map((slug) => slug.toLowerCase()),
-                  );
-                  const missingPages = filterBundlePanelPages(
-                    (
-                      meta?.missingPages ??
-                      discoveredPages
-                        .filter(
-                          (page) =>
-                            !indexedPages.some((hit) => hit.slug === page.slug),
-                        )
-                        .map((page) => ({
-                          slug: page.slug,
-                          title: page.title,
-                          url: page.url,
-                        }))
-                    ).filter((page) => !skippedSet.has(page.slug.toLowerCase())),
-                    bundlePrefs.selectedSlugs,
-                  );
-                  const panelLoading = isBundlePanelLoading(
-                    url,
-                    meta,
-                    bundlePanelLoad[url],
-                  );
-                  const showPanel =
-                    discoveredPages.length > 0 ||
-                    indexedPages.length > 0 ||
-                    missingPages.length > 0 ||
-                    skippedSlugs.length > 0;
-                  return (
-                    <div key={guideUrlDedupeKey(url)} className="game-card-guide-block">
-                      <a
-                        className="game-card-link"
-                        href={url}
-                        target="_blank"
-                        rel="noreferrer"
-                        aria-busy={bundle && panelLoading ? true : undefined}
-                      >
-                        <span className="icon-inline">
-                          {label}
-                          {bundle && panelLoading ? (
-                            <span
-                              className="game-card-bundle-spinner loader"
-                              aria-hidden="true"
-                            />
-                          ) : null}
-                          <IconArrowUpRight />
-                        </span>
-                      </a>
-                      {bundle && !panelLoading && showPanel ? (
-                        <BundleIndexPanel
-                          discoveredPages={discoveredPages}
-                          indexedPages={indexedPages}
-                          missingPages={missingPages}
-                          skippedSlugs={skippedSlugs}
-                          selectionLocked={selectionLocked}
-                          onSkipPage={(slug) => handleSkipBundlePage(url, slug)}
-                          onUnskipPage={(slug) => handleUnskipBundlePage(url, slug)}
-                          onSkipAllMissing={
-                            missingPages.length
-                              ? () =>
-                                  handleSkipAllMissingBundlePages(
-                                    url,
-                                    missingPages.map((page) => page.slug),
-                                  )
-                              : undefined
-                          }
-                          onRetryMissing={
-                            missingPages.length
-                              ? () => void retryBundleIngest(url)
-                              : undefined
-                          }
-                          onRefreshList={() => void refreshBundleDiscovery(url)}
-                          retrying={retryingBundleUrl === url}
-                          refreshingList={refreshingBundleUrl === url}
-                        />
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            <div className="spoiler-panel">
-              <SpoilerToggle
-                prefs={{ major: gameSpoilerMajor }}
-                onChange={updateGameSpoiler}
-                compact
-              />
+          </div>
+          {preferredUrls.length > 0 ? (
+            <div className="game-card-guides">
+              {preferredUrls.map((url) => {
+                const row = gameCardGuideRow(
+                  url,
+                  guideBundleMeta[url],
+                  bundleIndexStatus[url],
+                  bundlePanelLoad[url],
+                );
+                return (
+                  <div key={guideUrlDedupeKey(url)} className="game-card-guide-stack">
+                    <a
+                      className="game-card-link"
+                      href={url}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-busy={row.bundle && row.panelLoading ? true : undefined}
+                    >
+                      <span className="icon-inline">
+                        {row.label}
+                        {row.bundle && row.panelLoading ? (
+                          <span
+                            className="game-card-bundle-spinner loader"
+                            aria-hidden="true"
+                          />
+                        ) : null}
+                        <IconArrowUpRight />
+                      </span>
+                    </a>
+                    {row.bundle && !row.panelLoading && row.showPanel ? (
+                      <BundleIndexPanel
+                        discoveredPages={row.discoveredPages}
+                        indexedPages={row.indexedPages}
+                        missingPages={row.missingPages}
+                        skippedSlugs={row.skippedSlugs}
+                        selectionLocked={row.selectionLocked}
+                        onSkipPage={(slug) => handleSkipBundlePage(url, slug)}
+                        onUnskipPage={(slug) => handleUnskipBundlePage(url, slug)}
+                        onSkipAllMissing={
+                          row.missingPages.length
+                            ? () =>
+                                handleSkipAllMissingBundlePages(
+                                  url,
+                                  row.missingPages.map((page) => page.slug),
+                                )
+                            : undefined
+                        }
+                        onRetryMissing={
+                          row.missingPages.length
+                            ? () => void retryBundleIngest(url)
+                            : undefined
+                        }
+                        onRefreshList={() => void refreshBundleDiscovery(url)}
+                        retrying={retryingBundleUrl === url}
+                        refreshingList={refreshingBundleUrl === url}
+                      />
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
+          ) : null}
+          <div className="game-card-spoiler spoiler-panel">
+            <SpoilerToggle
+              prefs={{ major: gameSpoilerMajor }}
+              onChange={updateGameSpoiler}
+              compact
+            />
           </div>
         </section>
       ) : showSetupForm ? (

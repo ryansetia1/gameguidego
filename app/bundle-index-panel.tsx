@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 export type BundleIndexRow = {
   slug: string;
   title: string;
@@ -23,6 +25,62 @@ type Props = {
   refreshingList?: boolean;
 };
 
+const MISSING_PREVIEW = 4;
+
+function dotLabel(state: BundleIndexRow["state"]) {
+  if (state === "indexed") return "Indexed";
+  if (state === "skipped") return "Skipped";
+  return "Not indexed";
+}
+
+function PageRow({
+  row,
+  onSkipPage,
+  onUnskipPage,
+}: {
+  row: BundleIndexRow;
+  onSkipPage?: (slug: string) => void;
+  onUnskipPage?: (slug: string) => void;
+}) {
+  return (
+    <li className={`bundle-index-row is-${row.state}`}>
+      <span className="bundle-index-dot" aria-hidden="true" title={dotLabel(row.state)} />
+      <span className="bundle-index-title">
+        {row.url ? (
+          <a href={row.url} target="_blank" rel="noreferrer">
+            {row.title}
+          </a>
+        ) : (
+          <span className="bundle-index-name">{row.title}</span>
+        )}
+        {row.state === "indexed" && row.chunks ? (
+          <span className="bundle-index-meta">{row.chunks} chunks</span>
+        ) : null}
+      </span>
+      {row.state === "missing" && onSkipPage ? (
+        <button
+          type="button"
+          className="bundle-index-skip"
+          onClick={() => onSkipPage(row.slug)}
+          aria-label={`Skip ${row.title}`}
+        >
+          Skip
+        </button>
+      ) : null}
+      {row.state === "skipped" && onUnskipPage ? (
+        <button
+          type="button"
+          className="bundle-index-skip"
+          onClick={() => onUnskipPage(row.slug)}
+          aria-label={`Include ${row.title}`}
+        >
+          Include
+        </button>
+      ) : null}
+    </li>
+  );
+}
+
 export function BundleIndexPanel({
   discoveredPages,
   indexedPages,
@@ -37,6 +95,8 @@ export function BundleIndexPanel({
   retrying = false,
   refreshingList = false,
 }: Props) {
+  const [showAllMissing, setShowAllMissing] = useState(false);
+
   if (!discoveredPages.length && !indexedPages.length && !missingPages.length) {
     return null;
   }
@@ -76,120 +136,136 @@ export function BundleIndexPanel({
   const indexedCount = rows.filter((row) => row.state === "indexed").length;
   const missingRows = rows.filter((row) => row.state === "missing");
   const skippedRows = rows.filter((row) => row.state === "skipped");
-  const sortedRows = [
-    ...missingRows,
-    ...skippedRows,
-    ...rows.filter((row) => row.state === "indexed"),
-  ];
+  const indexedRows = rows.filter((row) => row.state === "indexed");
+  const progressPct = targetTotal > 0 ? Math.round((indexedCount / targetTotal) * 100) : 0;
+  const busy = retrying || refreshingList;
+  const visibleMissing =
+    showAllMissing || missingRows.length <= MISSING_PREVIEW
+      ? missingRows
+      : missingRows.slice(0, MISSING_PREVIEW);
+  const hiddenMissingCount = missingRows.length - visibleMissing.length;
 
   return (
-    <details className="bundle-index-panel" open={missingRows.length > 0}>
-      <summary>
-        Indexed {indexedCount} of {targetTotal} pages
-        {selectionLocked ? " (your selection)" : ""}
-        {missingRows.length > 0 ? ` (${missingRows.length} not indexed)` : ""}
-        {skippedRows.length > 0 ? ` · ${skippedRows.length} skipped` : ""}
+    <details className="bundle-index-panel">
+      <summary className="bundle-index-summary">
+        <span
+          className="bundle-index-progress"
+          role="progressbar"
+          aria-valuenow={progressPct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`${indexedCount} of ${targetTotal} pages indexed`}
+        >
+          <span className="bundle-index-progress-fill" style={{ width: `${progressPct}%` }} />
+        </span>
+        <span className="bundle-index-summary-text">
+          <strong>
+            {indexedCount}/{targetTotal}
+          </strong>{" "}
+          indexed
+          {selectionLocked ? <span className="bundle-index-tag">your pick</span> : null}
+          {missingRows.length > 0 ? (
+            <span className="bundle-index-pending"> · {missingRows.length} pending</span>
+          ) : null}
+          {skippedRows.length > 0 ? (
+            <span className="bundle-index-muted"> · {skippedRows.length} skipped</span>
+          ) : null}
+        </span>
       </summary>
-      {missingRows.length > 0 && (
-        <div className="bundle-index-missing-note">
-          <p>
-            Not indexed: {missingRows.map((row) => row.title).join(", ")}.
-            {onRetryMissing ? " Retry now, or ignore pages you do not need." : ""}
-          </p>
-          <div className="bundle-index-missing-actions">
-            {onRetryMissing ? (
+
+      <div className="bundle-index-body">
+        {missingRows.length > 0 ? (
+          <div className="bundle-index-section bundle-index-section--alert">
+            <div className="bundle-index-toolbar">
+              {onRetryMissing ? (
+                <button
+                  type="button"
+                  className="bundle-index-btn bundle-index-btn--primary"
+                  disabled={busy}
+                  onClick={onRetryMissing}
+                >
+                  {retrying ? "Retrying…" : "Retry"}
+                </button>
+              ) : null}
+              {onSkipAllMissing ? (
+                <button
+                  type="button"
+                  className="bundle-index-btn"
+                  disabled={busy}
+                  onClick={onSkipAllMissing}
+                >
+                  Ignore all
+                </button>
+              ) : null}
+            </div>
+            <ul className="bundle-index-list">
+              {visibleMissing.map((row) => (
+                <PageRow
+                  key={row.slug || row.url}
+                  row={row}
+                  onSkipPage={onSkipPage}
+                />
+              ))}
+            </ul>
+            {hiddenMissingCount > 0 ? (
               <button
                 type="button"
-                className="bundle-index-retry"
-                disabled={retrying || refreshingList}
-                onClick={onRetryMissing}
+                className="bundle-index-more"
+                onClick={() => setShowAllMissing(true)}
               >
-                {retrying ? "Retrying…" : "Retry missing pages"}
+                Show {hiddenMissingCount} more
               </button>
             ) : null}
-            {onSkipAllMissing ? (
+            {showAllMissing && missingRows.length > MISSING_PREVIEW ? (
               <button
                 type="button"
-                className="bundle-index-skip-all"
-                disabled={retrying || refreshingList}
-                onClick={onSkipAllMissing}
+                className="bundle-index-more"
+                onClick={() => setShowAllMissing(false)}
               >
-                Ignore remaining pages
+                Show less
               </button>
             ) : null}
           </div>
-        </div>
-      )}
-      {onRefreshList ? (
-        <div className="bundle-index-refresh-row">
+        ) : null}
+
+        {indexedRows.length > 0 ? (
+          <details className="bundle-index-subpanel">
+            <summary>Indexed ({indexedRows.length})</summary>
+            <ul className="bundle-index-list">
+              {indexedRows.map((row) => (
+                <PageRow key={row.slug || row.url} row={row} />
+              ))}
+            </ul>
+          </details>
+        ) : null}
+
+        {skippedRows.length > 0 ? (
+          <details className="bundle-index-subpanel">
+            <summary>Skipped ({skippedRows.length})</summary>
+            <ul className="bundle-index-list">
+              {skippedRows.map((row) => (
+                <PageRow
+                  key={row.slug || row.url}
+                  row={row}
+                  onUnskipPage={onUnskipPage}
+                />
+              ))}
+            </ul>
+          </details>
+        ) : null}
+
+        {onRefreshList ? (
           <button
             type="button"
-            className="bundle-index-refresh"
-            disabled={refreshingList || retrying}
+            className="bundle-index-refresh-link"
+            disabled={busy}
             onClick={onRefreshList}
+            title="Searches GameFAQs again for new sections (uses web search credits)."
           >
             {refreshingList ? "Refreshing page list…" : "Refresh page list"}
           </button>
-          <span className="bundle-index-refresh-hint">
-            Searches GameFAQs again for new sections (uses web search credits).
-          </span>
-        </div>
-      ) : null}
-      <ul className="bundle-index-list">
-        {sortedRows.map((row) => (
-          <li
-            key={row.slug || row.url}
-            className={`bundle-index-row is-${row.state}`}
-          >
-            <span
-              className="bundle-index-dot"
-              aria-hidden="true"
-              title={
-                row.state === "indexed"
-                  ? "Indexed"
-                  : row.state === "skipped"
-                    ? "Skipped"
-                    : "Not indexed"
-              }
-            />
-            {row.url ? (
-              <a href={row.url} target="_blank" rel="noreferrer">
-                {row.title}
-              </a>
-            ) : (
-              <span>{row.title}</span>
-            )}
-            <span className="bundle-index-status">
-              {row.state === "indexed"
-                ? "Indexed"
-                : row.state === "skipped"
-                  ? "Skipped"
-                  : "Not indexed"}
-            </span>
-            {row.state === "indexed" && row.chunks ? (
-              <span className="bundle-index-chunks">{row.chunks} chunks</span>
-            ) : null}
-            {row.state === "missing" && onSkipPage ? (
-              <button
-                type="button"
-                className="bundle-index-skip"
-                onClick={() => onSkipPage(row.slug)}
-              >
-                Skip
-              </button>
-            ) : null}
-            {row.state === "skipped" && onUnskipPage ? (
-              <button
-                type="button"
-                className="bundle-index-skip"
-                onClick={() => onUnskipPage(row.slug)}
-              >
-                Include
-              </button>
-            ) : null}
-          </li>
-        ))}
-      </ul>
+        ) : null}
+      </div>
     </details>
   );
 }

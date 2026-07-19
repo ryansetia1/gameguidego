@@ -218,6 +218,7 @@ See [`docs/troubleshooting.md`](docs/troubleshooting.md) for recurring issues
 
 Agent / implementation docs:
 
+- [`docs/ui-theme.md`](docs/ui-theme.md) — design tokens, no rounded corners, layout rules.
 - [`docs/voice-input.md`](docs/voice-input.md) — Web Speech mic, buffer-until-stop,
   platform quirks, and what not to re-introduce.
 

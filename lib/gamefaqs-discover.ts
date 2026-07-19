@@ -2,11 +2,13 @@ import {
   buildGamefaqsDiscoveryBaseQueries,
   buildGamefaqsPartDiscoveryQueries,
   discoverGamefaqsBundle,
+  isGenericGamefaqsBundleTitle,
   mergeGamefaqsBundlePages,
   parseGamefaqsFaqUrl,
   parseGamefaqsGuideTitle,
   parseGamefaqsPagesFromUrls,
   parseGamefaqsTocFromHtml,
+  pickGamefaqsBundleTitle,
 } from "@/lib/gamefaqs-bundle.js";
 import {
   getCachedBundleDiscovery,
@@ -41,6 +43,36 @@ function buildBundleDiscovery(
 
 function isBlockedGuideContent(text: string): boolean {
   return /Social Media Cookies|Just a moment|challenges\.cloudflare/i.test(text);
+}
+
+async function enrichGamefaqsBundleTitle(
+  parsed: ParsedFaq,
+  signal?: AbortSignal,
+): Promise<string> {
+  const candidates = [
+    `${parsed.canonicalUrl}/introduction`,
+    `${parsed.canonicalUrl}/walkthrough`,
+    parsed.canonicalUrl,
+  ];
+
+  for (const url of candidates) {
+    const extracted = await extractGuidePage(url, signal);
+    if (!extracted?.content || isBlockedGuideContent(extracted.content)) continue;
+    const title = parseGamefaqsGuideTitle(extracted.content, parsed);
+    if (!isGenericGamefaqsBundleTitle(title)) return title;
+  }
+
+  return "";
+}
+
+async function resolveDiscoveryTitle(
+  parsed: ParsedFaq,
+  title: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (!isGenericGamefaqsBundleTitle(title)) return title;
+  const enriched = await enrichGamefaqsBundleTitle(parsed, signal);
+  return isGenericGamefaqsBundleTitle(enriched) ? title : enriched;
 }
 
 async function enrichBundlePagesFromExtracts(
@@ -152,7 +184,7 @@ async function discoverViaTavily(
     );
     return {
       pages: enriched,
-      title: parseGamefaqsGuideTitle(extracted.content) || "GameFAQs guide",
+      title: parseGamefaqsGuideTitle(extracted.content, parsed) || "GameFAQs guide",
     };
   }
 
@@ -176,7 +208,7 @@ async function mergeAndCacheDiscovery(
   if (merged.length > 1) {
     void setCachedBundleDiscovery(parsed.bundleKey, {
       canonicalUrl: parsed.canonicalUrl,
-      title: cached?.title ?? title,
+      title: pickGamefaqsBundleTitle(title, cached?.title),
       pages: merged,
     });
   }
@@ -235,28 +267,43 @@ async function discoverGamefaqsBundleFull(
 
   const direct = await discoverGamefaqsBundle(rawUrl, signal);
   if (direct.bundle && direct.pages?.length) {
-    const merged = await mergeAndCacheDiscovery(
+    const directTitle = await resolveDiscoveryTitle(
       parsed,
-      direct.pages,
       direct.title ?? "GameFAQs guide",
+      signal,
     );
+    const merged = await mergeAndCacheDiscovery(parsed, direct.pages, directTitle);
     if (merged.length > 1) {
-      return buildBundleDiscovery(parsed, merged, direct.title ?? cached?.title ?? "GameFAQs guide");
+      return buildBundleDiscovery(
+        parsed,
+        merged,
+        pickGamefaqsBundleTitle(directTitle, cached?.title),
+      );
     }
   }
 
   const fresh = await discoverViaTavily(parsed, signal, seedPages);
-  const merged = await mergeAndCacheDiscovery(parsed, fresh.pages, fresh.title);
+  const resolvedTitle = await resolveDiscoveryTitle(parsed, fresh.title, signal);
+  const merged = await mergeAndCacheDiscovery(parsed, fresh.pages, resolvedTitle);
 
   if (merged.length > 1) {
-    return buildBundleDiscovery(parsed, merged, fresh.title ?? cached?.title ?? "GameFAQs guide");
+    return buildBundleDiscovery(
+      parsed,
+      merged,
+      pickGamefaqsBundleTitle(resolvedTitle, cached?.title),
+    );
   }
 
   if (seedPages.length > 1) {
+    const seedTitle = await resolveDiscoveryTitle(
+      parsed,
+      cached?.title ?? fresh.title ?? "GameFAQs guide",
+      signal,
+    );
     return buildBundleDiscovery(
       parsed,
       seedPages,
-      cached?.title ?? fresh.title ?? "GameFAQs guide",
+      pickGamefaqsBundleTitle(seedTitle, cached?.title),
     );
   }
 

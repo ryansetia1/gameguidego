@@ -9,9 +9,14 @@ import {
   parseGamefaqsFaqUrl,
   slugFromGamefaqsPageUrl,
   titleFromGamefaqsSlug,
+  mergeGamefaqsBundlePages,
+  parseGamefaqsGuideTitle,
+  isGenericGamefaqsBundleTitle,
+  pickGamefaqsBundleTitle,
 } from "@/lib/gamefaqs-bundle.js";
 import { discoverGamefaqsBundleResolved } from "@/lib/gamefaqs-discover";
 import { isGamefaqsBundleUrl } from "@/lib/guide-urls.js";
+import { getCachedBundleDiscovery, setCachedBundleDiscovery } from "@/lib/guide-bundle-cache.js";
 import { parsePositiveInt, sleep } from "@/lib/replicate-retry.js";
 import { extractGuidePage, extractGuidePages, looksLikeHub } from "@/lib/tavily";
 
@@ -100,12 +105,15 @@ export type BundleIndexPageStatus = {
 export type BundleIndexStatus = {
   bundleKey: string;
   canonicalUrl: string;
+  title: string;
+  pageCount: number;
+  discoveryPages: { slug: string; title: string; url: string }[];
   pagesIndexed: number;
   chunkCount: number;
   pages: BundleIndexPageStatus[];
 };
 
-/** Per-page index status for a GameFAQs bundle from guide_chunks. */
+/** Bundle panel state from Supabase only (guide_bundle_cache + guide_chunks). */
 export async function getBundleIndexStatus(
   rawUrl: string,
 ): Promise<BundleIndexStatus | null> {
@@ -114,6 +122,8 @@ export async function getBundleIndexStatus(
   if (!parsed || !supabase) return null;
 
   try {
+    const cached = await getCachedBundleDiscovery(parsed.bundleKey, { allowStale: true });
+
     const { data, error } = await supabase
       .from("guide_chunks")
       .select("guide_url")
@@ -139,10 +149,22 @@ export async function getBundleIndexStatus(
       })
       .sort((a, b) => a.title.localeCompare(b.title));
 
+    const discoveryPages = mergeGamefaqsBundlePages([
+      ...(cached?.pages ?? []),
+      ...pages.map((page) => ({
+        slug: page.slug,
+        title: page.title,
+        url: page.url,
+      })),
+    ]);
+
     const chunkCount = pages.reduce((sum, page) => sum + page.chunks, 0);
     return {
       bundleKey: parsed.bundleKey,
       canonicalUrl: parsed.canonicalUrl,
+      title: cached?.title ?? "GameFAQs guide",
+      pageCount: discoveryPages.length,
+      discoveryPages,
       pagesIndexed: pages.length,
       chunkCount,
       pages,
@@ -437,6 +459,7 @@ async function ingestGamefaqsBundle(
   let pagesIndexed = 0;
   let chunkCount = 0;
   const indexedSlugs = new Set<string>();
+  let resolvedTitle = discovery.title ?? "GameFAQs guide";
 
   for (let offset = 0; offset < targetPages.length; offset += EXTRACT_BATCH_SIZE) {
     const batch = targetPages.slice(offset, offset + EXTRACT_BATCH_SIZE);
@@ -447,22 +470,35 @@ async function ingestGamefaqsBundle(
 
     const pending: PendingPage[] = [];
     for (const page of batch) {
-      const content = extracted.get(page.url) ?? extracted.get(normalizeGuideUrl(page.url));
-      if (!content) continue;
-
+      let content = extracted.get(page.url) ?? extracted.get(normalizeGuideUrl(page.url));
+      if (!content) {
+        const solo = await extractGuidePage(page.url, signal);
+        content = solo?.content;
+      }
       const normalized = normalizeGuideUrl(page.url);
-      const { count } = await supabase
+      const { count: dbCountBefore } = await supabase
         .from("guide_chunks")
         .select("*", { count: "exact", head: true })
         .eq("guide_url", normalized);
-      if ((count ?? 0) > 0) {
+      const chunksPreview = content ? chunkGuide(content) : [];
+      if (!content) continue;
+
+      if (
+        isGenericGamefaqsBundleTitle(resolvedTitle) &&
+        (page.slug === "introduction" || page.slug === "walkthrough")
+      ) {
+        const parsedTitle = parseGamefaqsGuideTitle(content, parsed);
+        if (!isGenericGamefaqsBundleTitle(parsedTitle)) resolvedTitle = parsedTitle;
+      }
+
+      if ((dbCountBefore ?? 0) > 0) {
         pagesIndexed += 1;
-        chunkCount += count ?? 0;
+        chunkCount += dbCountBefore ?? 0;
         indexedSlugs.add(page.slug);
         continue;
       }
 
-      const chunks = chunkGuide(content);
+      const chunks = chunksPreview;
       if (!chunks.length) continue;
       pending.push({
         guideUrl: page.url,
@@ -491,6 +527,12 @@ async function ingestGamefaqsBundle(
   const pagesMissing = targetPages
     .filter((page) => !indexedSlugs.has(page.slug))
     .map((page) => ({ slug: page.slug, title: page.title, url: page.url }));
+
+  void setCachedBundleDiscovery(bundleKey, {
+    canonicalUrl: parsed.canonicalUrl,
+    title: pickGamefaqsBundleTitle(resolvedTitle, discovery.title),
+    pages: discovery.pages,
+  });
 
   const hubWarning = pagesIndexed === 0;
   return {
