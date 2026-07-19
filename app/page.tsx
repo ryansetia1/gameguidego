@@ -9,6 +9,7 @@ import { GameAutocomplete } from "./game-autocomplete";
 import {
   IconArrowLeft,
   IconArrowUpRight,
+  IconChevronDown,
   IconDiamond,
   IconDotsVertical,
   IconGrid,
@@ -197,6 +198,10 @@ import {
   saveSessionDraft,
   setChatUrl,
 } from "@/lib/chat-session.js";
+import {
+  shouldShowScrollToBottomFab,
+  windowScrollMetrics,
+} from "@/lib/chat-scroll.js";
 
 async function fetchSteamStatus(token?: string) {
   const headers: HeadersInit = {};
@@ -481,6 +486,7 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showScrollFab, setShowScrollFab] = useState(false);
   const [indexingGuideCount, setIndexingGuideCount] = useState(0);
   const [indexingIsBundlePages, setIndexingIsBundlePages] = useState(false);
   const [guideBundleMeta, setGuideBundleMeta] = useState<Record<string, GuideBundleMeta>>({});
@@ -1503,6 +1509,33 @@ export default function Home() {
     return () => observer.disconnect();
   }, [messages.length, editingGame]);
 
+  // Jump-to-bottom FAB: show when the thread overflows and the user scrolls up.
+  useEffect(() => {
+    if (typeof window === "undefined" || messages.length === 0) {
+      setShowScrollFab(false);
+      return;
+    }
+    const update = () => {
+      setShowScrollFab(shouldShowScrollToBottomFab(windowScrollMetrics()));
+    };
+    update();
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        update();
+      });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [messages.length, loading]);
+
   function dismissExamples() {
     window.localStorage.setItem(EXAMPLES_DISMISSED_KEY, "1");
     setExamplesDismissed(true);
@@ -1804,6 +1837,14 @@ export default function Home() {
 
   function scrollToTop() {
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function scrollToLatest() {
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    feedRef.current?.scrollIntoView({
+      behavior: reduceMotion ? "auto" : "smooth",
+      block: "end",
+    });
   }
 
   // Return to the empty home view. Pop the pushed chat entry so the history stack
@@ -3368,6 +3409,19 @@ export default function Home() {
           )}
           <div ref={feedRef} />
         </section>
+      )}
+
+      {started && (
+        <button
+          type="button"
+          className={`scroll-to-bottom-fab${showScrollFab ? " visible" : ""}`}
+          aria-label="Jump to latest message"
+          aria-hidden={!showScrollFab}
+          tabIndex={showScrollFab ? 0 : -1}
+          onClick={scrollToLatest}
+        >
+          <IconChevronDown />
+        </button>
       )}
 
       {/* Composer is useless in the idle carousel state (no game field visible);

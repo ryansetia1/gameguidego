@@ -726,6 +726,46 @@ h1 em {
   padding-bottom: 8px;
 }
 
+/* Jump-to-bottom FAB: hidden until the user scrolls up in a long thread. */
+.scroll-to-bottom-fab {
+  position: fixed;
+  z-index: 6;
+  right: max(16px, calc((100vw - min(100vw - 32px, 720px)) / 2 + 8px));
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + 84px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1.5px solid var(--ink);
+  background: var(--paper-strong);
+  box-shadow: 4px 4px 0 var(--ink);
+  color: var(--ink);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease,
+    background 140ms ease;
+}
+
+.scroll-to-bottom-fab.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.scroll-to-bottom-fab:hover {
+  background: var(--signal);
+}
+
+.scroll-to-bottom-fab:focus-visible {
+  outline: 3px solid var(--signal-dark);
+  outline-offset: 3px;
+}
+
 .turn {
   animation: rise 300ms ease-out backwards;
 }

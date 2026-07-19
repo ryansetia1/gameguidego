@@ -85,6 +85,14 @@ import {
   isChatId,
 } from "../lib/chat-session.js";
 import {
+  distanceFromBottom,
+  hasScrollableOverflow,
+  isNearBottom,
+  SCROLL_BOTTOM_MIN_OVERFLOW_PX,
+  SCROLL_BOTTOM_THRESHOLD_PX,
+  shouldShowScrollToBottomFab,
+} from "../lib/chat-scroll.js";
+import {
   buildHltbData,
   formatHltbHours,
   hasHltbData,
@@ -921,5 +929,20 @@ assert.equal(
   false,
 );
 assert.equal(hasHltbData(hadesData), true);
+
+const scrollNearBottom = { scrollTop: 900, scrollHeight: 1000, clientHeight: 100 };
+assert.equal(distanceFromBottom(scrollNearBottom), 0);
+assert.equal(isNearBottom(scrollNearBottom), true);
+assert.equal(shouldShowScrollToBottomFab(scrollNearBottom), false);
+const scrollFar = { scrollTop: 0, scrollHeight: 2000, clientHeight: 800 };
+assert.equal(shouldShowScrollToBottomFab(scrollFar), true);
+assert.equal(
+  hasScrollableOverflow({ scrollTop: 0, scrollHeight: 850, clientHeight: 800 }),
+  false,
+);
+assert.equal(shouldShowScrollToBottomFab({ scrollTop: 0, scrollHeight: 850, clientHeight: 800 }), false);
+assert.equal(isNearBottom({ scrollTop: 70, scrollHeight: 900, clientHeight: 800 }, -5), true);
+assert.equal(SCROLL_BOTTOM_THRESHOLD_PX, 72);
+assert.equal(SCROLL_BOTTOM_MIN_OVERFLOW_PX, 96);
 
 console.log("Self-check passed.");
