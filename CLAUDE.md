@@ -261,6 +261,7 @@ do not sync to the cloud or use Storage uploads.
   RPC (pgvector, 1024-dim). Query embeddings cached in `public.embed_cache` (7-day
   TTL). Fail-open to tiered web search when Supabase/pgvector/Sumopod API key is unset.
   Full design: [`docs/preferred-guide.md`](docs/preferred-guide.md).
+  Embedding model specs & migration checklist: [`docs/embedding-models.md`](docs/embedding-models.md).
 - `lib/tavily.ts`: `searchGuides(query)` orchestrates Tavily tiered search then a
   Serper.dev fallback; `extractGuidePage(url)` pulls full page text for RAG ingest
   (**Tavily Extract only** — Serper cannot replace this); `discoverGuideLinks(...)`
