@@ -15,7 +15,7 @@ import {
   getIndexedBundlePagesFromDb,
   setCachedBundleDiscovery,
 } from "@/lib/guide-bundle-cache.js";
-import { extractGuidePage, searchDiscoveryUrls } from "@/lib/tavily";
+import { extractGuidePage, searchDiscoveryUrls, isBlockedGuideContent } from "@/lib/tavily";
 import { logTraceEvent } from "@/lib/trace";
 
 type BundleDiscovery = Awaited<ReturnType<typeof discoverGamefaqsBundle>> & { isBlocked?: boolean };
@@ -40,12 +40,6 @@ function buildBundleDiscovery(
     pageCount: pages.length,
     pages,
   };
-}
-
-function isBlockedGuideContent(text: string): boolean {
-  return /Social Media Cookies|Just a moment|challenges\.cloudflare|Enable JavaScript and cookies to continue|Please stand by, while we are checking your browser|Cloudflare Ray ID|cf-browser-verification|DDoS protection by Cloudflare/i.test(
-    text,
-  );
 }
 
 async function enrichGamefaqsBundleTitle(

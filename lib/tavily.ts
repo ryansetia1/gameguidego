@@ -201,6 +201,12 @@ export function looksLikeHub(rawUrl: string): boolean {
   }
 }
 
+export function isBlockedGuideContent(text: string): boolean {
+  return /Social Media Cookies|Just a moment|challenges\.cloudflare|Enable JavaScript and cookies to continue|Please stand by, while we are checking your browser|Cloudflare Ray ID|cf-browser-verification|DDoS protection by Cloudflare/i.test(
+    text,
+  );
+}
+
 const EXTRACT_BATCH_SIZE = 10;
 
 type TavilyExtractDepth = "basic" | "advanced";
@@ -308,17 +314,40 @@ async function extractWithAdvancedFallback(
   raw = false,
 ): Promise<Map<string, string>> {
   const out = await runTavilyExtract(urls, apiKey, signal, "basic", raw);
-  const missing = urls.filter((url) => !out.has(url));
-  if (!missing.length) return out;
-
-  const advanced = await runTavilyExtract(missing, apiKey, signal, "advanced", raw);
-  for (const [url, content] of advanced) out.set(url, content);
-  if (advanced.size) {
-    logTavily("extract", "advanced extract filled basic misses", {
-      recovered: advanced.size,
-      missing: missing.length,
-    });
+  let missing = urls.filter((url) => !out.has(url));
+  
+  if (missing.length) {
+    const advanced = await runTavilyExtract(missing, apiKey, signal, "advanced", raw);
+    for (const [url, content] of advanced) out.set(url, content);
+    if (advanced.size) {
+      logTavily("extract", "advanced extract filled basic misses", {
+        recovered: advanced.size,
+        missing: missing.length,
+      });
+    }
   }
+
+  // Ponytail: fallback to Wayback Machine if Cloudflare blocked us
+  const blockedUrls = urls.filter(url => {
+    const content = out.get(url);
+    return content && isBlockedGuideContent(content);
+  });
+
+  if (blockedUrls.length > 0) {
+    void logTraceEvent("tavily_wayback_fallback", `GameFAQs blocked ${blockedUrls.length} URLs, falling back to Wayback Machine`, undefined, { urlsCount: blockedUrls.length });
+    const waybackUrls = blockedUrls.map(url => `https://web.archive.org/web/2/${url}`);
+    const waybackResults = await runTavilyExtract(waybackUrls, apiKey, signal, "basic", raw);
+    
+    for (let i = 0; i < blockedUrls.length; i++) {
+      const originalUrl = blockedUrls[i];
+      const waybackUrl = waybackUrls[i];
+      const waybackContent = waybackResults.get(waybackUrl);
+      if (waybackContent && !isBlockedGuideContent(waybackContent)) {
+        out.set(originalUrl, waybackContent);
+      }
+    }
+  }
+
   return out;
 }
 
