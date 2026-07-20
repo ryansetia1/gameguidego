@@ -317,6 +317,7 @@ export async function censorSpoilers(input: {
 
   try {
     const prompt = buildSpoilerCensorPrompt(input);
+    await logTraceEvent("censor_start", "Starting spoiler check...");
     const { output: rawOutput, durationMs, predictTimeMs, inputTokens, outputTokens } =
       await runModel(
       replicate,
@@ -333,6 +334,7 @@ export async function censorSpoilers(input: {
     );
 
     const trimmed = rawOutput.trim();
+    await logTraceEvent("censor_complete", "Finished spoiler check", durationMs);
     logLlmCall({
       kind: "censor",
       model,
