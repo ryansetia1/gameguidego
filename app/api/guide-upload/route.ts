@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 
 import { parseGuideFile } from "@/lib/parse-guide-file";
-import { ingestGuideFromText, isGuideRagAvailable } from "@/lib/guide-ingest";
+import {
+  ingestGuideFromText,
+  isGuideRagAvailable,
+  normalizeGuideUrl,
+} from "@/lib/guide-ingest";
 import { runWithTrace, logTraceEvent } from "@/lib/trace";
 
 export const runtime = "nodejs";
@@ -65,7 +69,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: msg }, { status: 422 });
     }
 
-    const guideUrl = `upload://${userId.trim()}/${file.name}`;
+    const guideUrl = normalizeGuideUrl(`upload://${userId.trim()}/${file.name}`);
 
     await logTraceEvent("guide_upload_received", `Uploaded ${parsed.fileType.toUpperCase()} guide: ${file.name} (${(file.size / 1024).toFixed(0)} KB, ${parsed.text.length} chars)`, undefined, {
       filename: file.name,

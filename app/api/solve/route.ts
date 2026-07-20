@@ -340,6 +340,7 @@ export async function POST(request: Request) {
                   sources: finalSources,
                   ...(highlights.length ? { highlights } : {}),
                   ...(spoilers.length && spoilerPrefs.major ? { spoilers } : {}),
+                  ...(pipelineType ? { pipelineType } : {}),
                 });
                 await supabase
                   .from("chats")

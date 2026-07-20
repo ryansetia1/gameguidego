@@ -444,6 +444,22 @@ assert.deepEqual(
   ["https://example.com/new"],
 );
 assert.equal(guideUrlsSummary(["https://www.ign.com/walkthroughs/foo"]), "ign.com");
+const uploadKey =
+  "upload://user-1/Mario%20Kart%20Wii%20-%20Guide%20and%20Walkthrough%20-%20Wii%20-%20By%20Crazyreyn%20-%20GameFAQs.pdf";
+assert.equal(cleanGuideUrl(uploadKey), uploadKey);
+assert.deepEqual(normalizeGuideUrlList([uploadKey, uploadKey]), [uploadKey]);
+assert.deepEqual(
+  guideUrlsPayload([uploadKey]),
+  { preferred_guide_url: uploadKey, preferred_guide_urls: [uploadKey] },
+);
+assert.deepEqual(
+  guideUrlsFromChat({ preferred_guide_urls: [uploadKey] }),
+  [uploadKey],
+);
+assert.equal(
+  guideUrlsSummary([uploadKey]),
+  "Mario Kart Wii - Guide and Walkthrough - Wii - By Crazyreyn - GameFAQs.pdf",
+);
 assert.equal(
   guideUrlsSummary(["https://a.com/1", "https://b.com/2"]),
   "2 guides",

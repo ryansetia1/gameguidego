@@ -45,7 +45,10 @@ import {
   guideUrlDedupeKey,
   isActiveGamefaqsBundle,
   isGamefaqsBundleUrl,
+  isUploadedGuideUrl,
   normalizeGuideUrlList,
+  uploadedGuideFileTypeLabel,
+  uploadedGuideFilename,
 } from "@/lib/guide-urls.js";
 import { compressImage } from "@/lib/image.js";
 
@@ -158,11 +161,14 @@ function gameCardGuideRow(
 ) {
   const bundle = isActiveGamefaqsBundle(url, meta);
   const bundlePrefs = mergedBundlePrefs(url, meta);
+  const uploaded = isUploadedGuideUrl(url);
   const label = bundle
     ? meta
       ? `${meta.title} (${bundlePrefs.selectedSlugs?.length ?? meta.pageCount} pages)`
       : "GameFAQs bundle"
-    : guideUrlsSummary([url]);
+    : uploaded
+      ? `${uploadedGuideFileTypeLabel(url)} · ${uploadedGuideFilename(url)}`
+      : guideUrlsSummary([url]);
   const selectionLocked = Boolean(bundlePrefs.selectedSlugs?.length);
   const discoveredPages = filterBundlePanelPages(
     meta?.pages?.map((page) => ({
@@ -217,6 +223,7 @@ function gameCardGuideRow(
 
   return {
     bundle,
+    uploaded,
     label,
     selectionLocked,
     discoveredPages,
@@ -327,6 +334,33 @@ function hostname(url: string) {
   }
 }
 
+function uploadedSourceGuideLabel(sources?: Source[]): string | null {
+  const uploadSrc = sources?.find((source) => isUploadedGuideUrl(source.url));
+  if (!uploadSrc) return null;
+  const fileType = uploadedGuideFileTypeLabel(uploadSrc.url);
+  if (fileType === "PDF" || fileType === "TXT" || fileType === "MD") {
+    return `Your ${fileType} guide`;
+  }
+  return "Your uploaded guide";
+}
+
+function pipelineSourceLabel(
+  pipelineType?: string,
+  sources?: Source[],
+): string {
+  const uploadLabel = uploadedSourceGuideLabel(sources);
+  if (uploadLabel) return uploadLabel;
+  if (pipelineType === "rag") return "Your guide";
+  if (pipelineType === "fallback_web" || pipelineType === "web") return "Web search";
+  return "AI knowledge";
+}
+
+function isUploadOnlySources(sources?: Source[]): boolean {
+  return Boolean(
+    sources?.length && sources.every((source) => isUploadedGuideUrl(source.url)),
+  );
+}
+
 function normGame(value: string) {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
@@ -379,6 +413,8 @@ function coerceMessages(value: unknown): Message[] {
     const images = Array.isArray(rawImages)
       ? rawImages.filter((url): url is string => typeof url === "string")
       : [];
+    const rawPipeline = (item as { pipelineType?: unknown }).pipelineType;
+    const pipelineType = typeof rawPipeline === "string" ? rawPipeline : undefined;
     return [
       {
         role,
@@ -387,6 +423,7 @@ function coerceMessages(value: unknown): Message[] {
         ...(highlights.length ? { highlights } : {}),
         ...(spoilers.length ? { spoilers } : {}),
         ...(images.length ? { images } : {}),
+        ...(pipelineType ? { pipelineType } : {}),
       },
     ];
   });
@@ -3561,6 +3598,14 @@ export default function Home() {
                 );
                 return (
                   <div key={guideUrlDedupeKey(url)} className="game-card-guide-stack">
+                    {row.uploaded ? (
+                      <div className={`game-card-link is-${row.state}`}>
+                        <span className="icon-inline" style={{ display: "inline-flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                          {row.label}
+                          {row.state && row.state !== "unknown" && renderStatusChip(row.state)}
+                        </span>
+                      </div>
+                    ) : (
                     <a
                       className={`game-card-link is-${row.state}`}
                       href={url}
@@ -3580,6 +3625,7 @@ export default function Home() {
                         <IconArrowUpRight />
                       </span>
                     </a>
+                    )}
                     {row.bundle && !row.panelLoading && row.showPanel ? (
                       <BundleIndexPanel
                         discoveredPages={row.discoveredPages}
@@ -3933,24 +3979,26 @@ export default function Home() {
                     ))}
                   </div>
                 )}
-                {message.sources && message.sources.length > 0 && (
+                {isUploadOnlySources(message.sources) && (
+                  <div className="sources sources-static" aria-label="Sources">
+                    <p className="sources-static-label">
+                      Sources
+                      {(() => {
+                        const uploadLabel = uploadedSourceGuideLabel(message.sources);
+                        return uploadLabel ? <span> · {uploadLabel}</span> : null;
+                      })()}
+                    </p>
+                  </div>
+                )}
+                {message.sources &&
+                  message.sources.length > 0 &&
+                  !isUploadOnlySources(message.sources) && (
                   <details className="sources">
                     <summary>
                       Sources ({message.sources.length})
                       {message.pipelineType && (
                         <span style={{ fontWeight: 'normal', color: 'var(--text-muted)' }}>
-                          {" · "}{
-                            message.pipelineType === "rag" ? (() => {
-                              const uploadSrc = message.sources?.find(s => s.url?.startsWith("upload://"));
-                              if (uploadSrc) {
-                                const ext = uploadSrc.url.split(".").pop()?.toUpperCase();
-                                return `Your ${ext === "PDF" || ext === "TXT" || ext === "MD" ? ext : "Uploaded"} guide`;
-                              }
-                              return "Your Guide";
-                            })() :
-                            message.pipelineType === "fallback_web" || message.pipelineType === "web" ? "Web Search" :
-                            "AI Knowledge"
-                          }
+                          {" · "}{pipelineSourceLabel(message.pipelineType, message.sources)}
                         </span>
                       )}
                     </summary>
@@ -3976,7 +4024,7 @@ export default function Home() {
                 )}
                 {message.pipelineType && (!message.sources || message.sources.length === 0) && (
                   <div className="source-pipeline-label" style={{ marginTop: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>
-                    Source: AI Knowledge
+                    Source: {pipelineSourceLabel(message.pipelineType, message.sources)}
                   </div>
                 )}
               </article>

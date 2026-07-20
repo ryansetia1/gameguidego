@@ -35,12 +35,17 @@ export async function parseGuideFile(
   const fileType = ext as GuideFileType;
 
   if (fileType === "pdf") {
-    const parser = new PDFParse(buffer);
-    const text = (await parser.getText()).trim();
-    if (!text) {
-      throw new Error("Could not extract text from this PDF. It may be a scanned document.");
+    const parser = new PDFParse({ data: buffer });
+    try {
+      const result = await parser.getText();
+      const text = result.text.trim();
+      if (!text) {
+        throw new Error("Could not extract text from this PDF. It may be a scanned document.");
+      }
+      return { text, fileType };
+    } finally {
+      await parser.destroy();
     }
-    return { text, fileType };
   }
 
   // TXT / MD — plain UTF-8

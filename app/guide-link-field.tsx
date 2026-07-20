@@ -561,7 +561,7 @@ export function GuideLinkField({
         </div>
       )}
 
-      {mode === "link" ? (
+      {mode === "link" && (
         <form className="guide-url-add-form" onSubmit={onAddSubmit} role="tabpanel">
           <input
             id={inputId}
@@ -591,7 +591,9 @@ export function GuideLinkField({
             {previewLoading ? "Checking…" : "Add"}
           </button>
         </form>
-      ) : (
+      )}
+      
+      {mode === "search" && (
         <div
           className={`guide-search-panel${canSearch ? "" : " is-inactive"}`}
           role="tabpanel"
@@ -672,30 +674,42 @@ export function GuideLinkField({
 
       {mode === "upload" && userId && (
         <div className="guide-upload-panel" role="tabpanel" aria-label="Upload a guide file">
-          <div className="guide-upload-form">
+          <div className="guide-upload-form" style={{ display: "flex", flexDirection: "column", gap: "10px", alignItems: "stretch", marginBottom: "8px" }}>
             <input
               ref={fileInputRef}
               type="file"
               accept=".pdf,.txt,.md"
               disabled={disabled || uploading || atMax}
+              style={{ display: "none" }}
               onChange={(e) => {
                 setUploadFile(e.target.files?.[0] ?? null);
                 setUploadError("");
               }}
             />
-            {uploadFile && (
-              <p className="field-hint" style={{ margin: "6px 0" }}>
-                {uploadFile.name} · {(uploadFile.size / 1024).toFixed(0)} KB
-              </p>
-            )}
             <button
               type="button"
               className="nav-button"
-              disabled={disabled || uploading || !uploadFile || atMax}
-              onClick={handleFileUpload}
+              disabled={disabled || uploading || atMax}
+              onClick={() => fileInputRef.current?.click()}
+              style={{ width: "100%", justifyContent: "center" }}
             >
-              {uploading ? "Uploading…" : "Upload & index"}
+              Choose File
             </button>
+            {uploadFile && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", alignItems: "flex-start" }}>
+                <span className="field-hint" style={{ margin: 0 }}>
+                  {uploadFile.name} · {(uploadFile.size / 1024).toFixed(0)} KB
+                </span>
+                <button
+                  type="button"
+                  className="nav-button"
+                  disabled={disabled || uploading || !uploadFile || atMax}
+                  onClick={handleFileUpload}
+                >
+                  {uploading ? "Uploading…" : "Upload & index"}
+                </button>
+              </div>
+            )}
           </div>
           {uploadError && <p className="guide-search-error">{uploadError}</p>}
           <p className="field-hint" style={{ marginTop: "8px" }}>

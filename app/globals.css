@@ -1258,6 +1258,26 @@ details.sources[open] > summary::after {
   content: "–";
 }
 
+.sources-static {
+  border-top: 1px solid var(--line);
+  background: #eeede6;
+}
+
+.sources-static-label {
+  margin: 0;
+  padding: 14px 18px;
+  font-family: var(--font-sans);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.sources-static-label span {
+  font-weight: 400;
+  color: var(--muted);
+}
+
 details.sources ol {
   margin: 0;
   padding: 0 18px 14px;
@@ -4336,6 +4356,7 @@ details.sources small {
 }
 
 :root[data-theme="dark"] details.sources,
+:root[data-theme="dark"] .sources-static,
 :root[data-theme="dark"] .combo-group-label {
   background: #22282b;
 }
@@ -4416,6 +4437,7 @@ details.sources small {
   }
 
   :root:not([data-theme="light"]) details.sources,
+  :root:not([data-theme="light"]) .sources-static,
   :root:not([data-theme="light"]) .combo-group-label {
     background: #22282b;
   }
