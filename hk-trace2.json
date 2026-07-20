@@ -1,0 +1,339 @@
+[
+  {
+    "event_type": "ingest_start",
+    "message": "Starting guide ingest for 1 URLs",
+    "metadata": null,
+    "created_at": "2026-07-20T20:44:32.438672+00:00"
+  },
+  {
+    "event_type": "discovery_cache_miss",
+    "message": "Discovery cache miss for gamefaqs:76039, running Tavily discovery",
+    "metadata": {
+      "bundleKey": "gamefaqs:76039",
+      "seedPageCount": 0
+    },
+    "created_at": "2026-07-20T20:44:32.671203+00:00"
+  },
+  {
+    "event_type": "tavily_extract_start",
+    "message": "Tavily Extract: 1 URLs",
+    "metadata": {
+      "depth": "basic",
+      "urlsCount": 1
+    },
+    "created_at": "2026-07-20T20:44:32.675381+00:00"
+  },
+  {
+    "event_type": "tavily_extract_end",
+    "message": "Tavily Extract Complete (Status 200)",
+    "metadata": {
+      "status": 200
+    },
+    "created_at": "2026-07-20T20:44:33.674089+00:00"
+  },
+  {
+    "event_type": "tavily_extract_start",
+    "message": "Tavily Extract: 1 URLs",
+    "metadata": {
+      "depth": "advanced",
+      "urlsCount": 1
+    },
+    "created_at": "2026-07-20T20:44:33.682609+00:00"
+  },
+  {
+    "event_type": "tavily_extract_start",
+    "message": "Tavily Extract: 1 URLs",
+    "metadata": {
+      "depth": "basic",
+      "urlsCount": 1
+    },
+    "created_at": "2026-07-20T20:44:38.292254+00:00"
+  },
+  {
+    "event_type": "tavily_extract_end",
+    "message": "Tavily Extract Complete (Status 200)",
+    "metadata": {
+      "status": 200
+    },
+    "created_at": "2026-07-20T20:44:38.297957+00:00"
+  },
+  {
+    "event_type": "tavily_wayback_fallback",
+    "message": "GameFAQs blocked 1 URLs, falling back to Wayback Machine",
+    "metadata": {
+      "urlsCount": 1
+    },
+    "created_at": "2026-07-20T20:44:38.303791+00:00"
+  },
+  {
+    "event_type": "ingest_bundle_blocked",
+    "message": "GameFAQs anti-bot blocked bundle discovery for https://gamefaqs.gamespot.com/pc/179341-hollow-knight/faqs/76039",
+    "metadata": {
+      "bundleKey": "gamefaqs:76039"
+    },
+    "created_at": "2026-07-20T20:44:40.861594+00:00"
+  },
+  {
+    "event_type": "tavily_wayback_empty",
+    "message": "Wayback Machine has no readable archive for https://gamefaqs.gamespot.com/pc/179341-hollow-knight/faqs/76039/introduction",
+    "metadata": {
+      "url": "https://gamefaqs.gamespot.com/pc/179341-hollow-knight/faqs/76039/introduction"
+    },
+    "created_at": "2026-07-20T20:44:40.864551+00:00"
+  },
+  {
+    "event_type": "tavily_extract_end",
+    "message": "Tavily Extract Complete (Status 200)",
+    "metadata": {
+      "status": 200
+    },
+    "created_at": "2026-07-20T20:44:40.86666+00:00"
+  },
+  {
+    "event_type": "ingest_url_complete",
+    "message": "Ingested URL: https://gamefaqs.gamespot.com/pc/179341-hollow-knight/faqs/76039",
+    "metadata": {
+      "result": {
+        "indexed": false,
+        "chunkCount": 0,
+        "hubWarning": false
+      }
+    },
+    "created_at": "2026-07-20T20:44:40.896013+00:00"
+  },
+  {
+    "event_type": "solve_start",
+    "message": "Started solve generation",
+    "metadata": {
+      "game": "Hollow Knight",
+      "platform": "PC",
+      "question": "nah kalau udah ketemu sly, harus kemana ya?"
+    },
+    "created_at": "2026-07-20T20:44:58.394052+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: starting",
+    "metadata": {
+      "status": "starting"
+    },
+    "created_at": "2026-07-20T20:44:58.804804+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T20:44:59.097815+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T20:44:59.886512+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T20:45:00.670525+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: succeeded",
+    "metadata": {
+      "status": "succeeded"
+    },
+    "created_at": "2026-07-20T20:45:01.466451+00:00"
+  },
+  {
+    "event_type": "rewrite_complete",
+    "message": "Resolved question into search topic",
+    "metadata": {
+      "searchTopic": "After defeating the False Knight, what should the player do next after meeting Sly in"
+    },
+    "created_at": "2026-07-20T20:45:01.491916+00:00"
+  },
+  {
+    "event_type": "discovery_cache_miss",
+    "message": "Discovery cache miss for gamefaqs:76039, running Tavily discovery",
+    "metadata": {
+      "bundleKey": "gamefaqs:76039",
+      "seedPageCount": 0
+    },
+    "created_at": "2026-07-20T20:45:01.669263+00:00"
+  },
+  {
+    "event_type": "tavily_extract_start",
+    "message": "Tavily Extract: 1 URLs",
+    "metadata": {
+      "depth": "basic",
+      "urlsCount": 1
+    },
+    "created_at": "2026-07-20T20:45:01.669434+00:00"
+  },
+  {
+    "event_type": "tavily_extract_end",
+    "message": "Tavily Extract Complete (Status 200)",
+    "metadata": {
+      "status": 200
+    },
+    "created_at": "2026-07-20T20:45:02.405036+00:00"
+  },
+  {
+    "event_type": "tavily_wayback_fallback",
+    "message": "GameFAQs blocked 1 URLs, falling back to Wayback Machine",
+    "metadata": {
+      "urlsCount": 1
+    },
+    "created_at": "2026-07-20T20:45:02.406434+00:00"
+  },
+  {
+    "event_type": "tavily_extract_start",
+    "message": "Tavily Extract: 1 URLs",
+    "metadata": {
+      "depth": "basic",
+      "urlsCount": 1
+    },
+    "created_at": "2026-07-20T20:45:02.408576+00:00"
+  },
+  {
+    "event_type": "tavily_extract_end",
+    "message": "Tavily Extract Complete (Status 200)",
+    "metadata": {
+      "status": 200
+    },
+    "created_at": "2026-07-20T20:45:03.568698+00:00"
+  },
+  {
+    "event_type": "tavily_wayback_empty",
+    "message": "Wayback Machine has no readable archive for https://gamefaqs.gamespot.com/pc/179341-hollow-knight/faqs/76039/introduction",
+    "metadata": {
+      "url": "https://gamefaqs.gamespot.com/pc/179341-hollow-knight/faqs/76039/introduction"
+    },
+    "created_at": "2026-07-20T20:45:03.570281+00:00"
+  },
+  {
+    "event_type": "ingest_bundle_blocked",
+    "message": "GameFAQs anti-bot blocked bundle discovery for https://gamefaqs.gamespot.com/pc/179341-hollow-knight/faqs/76039",
+    "metadata": {
+      "bundleKey": "gamefaqs:76039"
+    },
+    "created_at": "2026-07-20T20:45:03.574898+00:00"
+  },
+  {
+    "event_type": "tavily_search_start",
+    "message": "Tavily Search: Hollow Knight PC After defeating the False Knight, what should the player do next after meeting Sly in walkthrough guide",
+    "metadata": {
+      "query": "Hollow Knight PC After defeating the False Knight, what should the player do next after meeting Sly in walkthrough guide",
+      "maxResults": 5,
+      "includeDomains": [
+        "gamefaqs.gamespot.com"
+      ]
+    },
+    "created_at": "2026-07-20T20:45:03.607213+00:00"
+  },
+  {
+    "event_type": "retrieval_complete",
+    "message": "Finished gathering sources",
+    "metadata": {
+      "sourceCount": 3,
+      "pipelineType": "fallback_web"
+    },
+    "created_at": "2026-07-20T20:45:08.266223+00:00"
+  },
+  {
+    "event_type": "tavily_search_end",
+    "message": "Tavily Search Complete (Status 200)",
+    "metadata": {
+      "status": 200
+    },
+    "created_at": "2026-07-20T20:45:08.267844+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: starting",
+    "metadata": {
+      "status": "starting"
+    },
+    "created_at": "2026-07-20T20:45:08.606928+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T20:45:08.900455+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T20:45:09.68756+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T20:45:10.472211+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T20:45:11.258251+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T20:45:12.04363+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T20:45:12.827294+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T20:45:13.625327+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: succeeded",
+    "metadata": {
+      "status": "succeeded"
+    },
+    "created_at": "2026-07-20T20:45:14.39269+00:00"
+  },
+  {
+    "event_type": "generation_complete",
+    "message": "Answer generated in 6103ms",
+    "metadata": {
+      "sourceCount": 3,
+      "pipelineType": "fallback_web"
+    },
+    "created_at": "2026-07-20T20:45:14.427267+00:00"
+  }
+]

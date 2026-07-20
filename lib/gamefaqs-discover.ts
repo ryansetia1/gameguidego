@@ -332,6 +332,9 @@ async function discoverGamefaqsBundleCacheFirst(
     if (seedPages.length > 0) {
       return buildBundleDiscovery(parsed, seedPages, title);
     }
+    if (extracted.isBlocked) {
+      void setCachedBundleDiscovery(parsed.bundleKey, { isBlocked: true });
+    }
     return { bundle: false, isBlocked: extracted.isBlocked };
   }
 
