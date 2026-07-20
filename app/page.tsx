@@ -4177,7 +4177,7 @@ export default function Home() {
                     ? "Enter a game name first"
                     : started
                       ? "Ask a follow-up..."
-                      : "Where are you stuck?"
+                      : "Ask for hints, strategy, or next steps..."
               }
               rows={1}
               maxLength={300}
