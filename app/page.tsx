@@ -762,6 +762,7 @@ export default function Home() {
   >({});
   const [confirmFallbackModal, setConfirmFallbackModal] = useState<{
     hint: string;
+    hasIndexedGuides: boolean;
     onConfirm: () => void;
     onCancel: () => void;
   } | null>(null);
@@ -2582,7 +2583,7 @@ export default function Home() {
       }
     }
 
-    const runGuideIngest = async (): Promise<string | null> => {
+    const runGuideIngest = async (): Promise<{ hint: string; hasIndexedGuides: boolean } | null> => {
       if (!urlsNeedingIngest.length) return null;
       setGuideIndexState((prev) => {
         const next = { ...prev };
@@ -2639,10 +2640,13 @@ export default function Home() {
           }
         }
         if (ingestResults.length) {
-          const indexedCount = ingestResults.filter((row) => row.indexed).length;
+          const previouslyIndexedCount = guideUrls.filter((url) => !urlsNeedingIngest.includes(url)).length;
+          const newlyIndexedCount = ingestResults.filter((row) => row.indexed).length;
+          const totalIndexedCount = previouslyIndexedCount + newlyIndexedCount;
+
           const hint = guideIngestHintFromResponse({
             available: true,
-            indexedCount,
+            indexedCount: totalIndexedCount,
             total: guideUrls.length,
             hubWarning,
             results: ingestResults,
@@ -2651,7 +2655,7 @@ export default function Home() {
             setGuideBundleMeta(bundleMetaForRun);
           }
           setBundleStatusRev((rev) => rev + 1);
-          return hint;
+          return hint ? { hint, hasIndexedGuides: totalIndexedCount > 0 } : null;
         }
       } catch (ingestError) {
         if (!(ingestError instanceof DOMException && ingestError.name === "AbortError")) {
@@ -2665,12 +2669,14 @@ export default function Home() {
             }
             return next;
           });
-          return guideIngestHint({
+          const previouslyIndexedCount = guideUrls.filter((url) => !urlsNeedingIngest.includes(url)).length;
+          const hint = guideIngestHint({
             available: true,
             indexed: false,
             total: guideUrls.length,
-            indexedCount: 0,
+            indexedCount: previouslyIndexedCount,
           });
+          return hint ? { hint, hasIndexedGuides: previouslyIndexedCount > 0 } : null;
         }
       } finally {
         stopBundleIndexingPoll();
@@ -2723,12 +2729,13 @@ export default function Home() {
         accessToken = sessionData.session?.access_token || "";
       }
 
-      let ingestHint: string | null = ingestPromise ? await ingestPromise : null;
+      let ingestResult = ingestPromise ? await ingestPromise : null;
       let userConfirmedFallback = true;
-      if (ingestHint && ingestHint.includes("Couldn't read")) {
+      if (ingestResult?.hint && ingestResult.hint.includes("Couldn't read")) {
         userConfirmedFallback = await new Promise<boolean>((resolve) => {
           setConfirmFallbackModal({
-            hint: ingestHint!,
+            hint: ingestResult!.hint,
+            hasIndexedGuides: ingestResult!.hasIndexedGuides,
             onConfirm: () => {
               setConfirmFallbackModal(null);
               resolve(true);
@@ -2839,7 +2846,7 @@ export default function Home() {
         "guideHint" in data &&
         typeof data.guideHint === "string" &&
         data.guideHint &&
-        data.guideHint !== ingestHint
+        data.guideHint !== ingestResult?.hint
       ) {
         setToast(data.guideHint);
       }
@@ -2879,7 +2886,7 @@ export default function Home() {
       if (temporary && images.length) void deleteMessageImages([userMessage]);
       succeeded = true;
       if (activeId === activeChatIdRef.current || !activeId) {
-        if (ingestHint) setToast(ingestHint);
+        if (ingestResult?.hint) setToast(ingestResult.hint);
       }
     } catch (caught) {
       const isNetworkDrop = caught instanceof TypeError && caught.message.toLowerCase().includes("fetch");
@@ -4224,7 +4231,7 @@ export default function Home() {
                 className="confirm-confirm"
                 onClick={confirmFallbackModal.onConfirm}
               >
-                Search Web
+                {confirmFallbackModal.hasIndexedGuides ? "Use Indexed Guides" : "Search Web"}
               </button>
             </div>
           </div>
