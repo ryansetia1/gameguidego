@@ -1,0 +1,197 @@
+[
+  {
+    "event_type": "solve_start",
+    "message": "Started solve generation",
+    "metadata": {
+      "game": "Hollow Knight",
+      "platform": "PC",
+      "question": "aku baru aja ketemu sama sly nih"
+    },
+    "created_at": "2026-07-20T21:11:36.239135+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: starting",
+    "metadata": {
+      "status": "starting"
+    },
+    "created_at": "2026-07-20T21:11:38.639878+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T21:11:39.494551+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T21:11:40.296501+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: succeeded",
+    "metadata": {
+      "status": "succeeded"
+    },
+    "created_at": "2026-07-20T21:11:41.102113+00:00"
+  },
+  {
+    "event_type": "rewrite_complete",
+    "message": "Resolved question into search topic",
+    "metadata": {
+      "searchTopic": "Information regarding the encounter with Sly and the immediate next steps or objectives following this meeting."
+    },
+    "created_at": "2026-07-20T21:11:41.170332+00:00"
+  },
+  {
+    "event_type": "embed_texts_start",
+    "message": "Embedding 1 text(s) via text-embedding-3-large",
+    "metadata": {
+      "kind": "embed_query",
+      "model": "text-embedding-3-large",
+      "textCount": 1
+    },
+    "created_at": "2026-07-20T21:11:41.294759+00:00"
+  },
+  {
+    "event_type": "embed_query_start",
+    "message": "Embedding query: Information regarding the encounter with Sly and the immediate next steps or obj",
+    "metadata": {
+      "query": "Information regarding the encounter with Sly and the immediate next steps or objectives following this meeting."
+    },
+    "created_at": "2026-07-20T21:11:41.351318+00:00"
+  },
+  {
+    "event_type": "embed_texts_end",
+    "message": "Embedding complete: 1 text(s) in 519ms",
+    "metadata": {
+      "kind": "embed_query",
+      "textCount": 1
+    },
+    "created_at": "2026-07-20T21:11:41.812586+00:00"
+  },
+  {
+    "event_type": "embed_query_end",
+    "message": "Embed query complete in 520ms",
+    "metadata": null,
+    "created_at": "2026-07-20T21:11:41.81637+00:00"
+  },
+  {
+    "event_type": "rag_similarity_score",
+    "message": "Top RAG similarity: 0.341 (Hit: false)",
+    "metadata": {
+      "hit": false,
+      "threshold": 0.35,
+      "topSimilarity": 0.340956994363679
+    },
+    "created_at": "2026-07-20T21:11:41.964962+00:00"
+  },
+  {
+    "event_type": "rag_db_check",
+    "message": "Checked DB for RAG chunks",
+    "metadata": {
+      "matchCount": 5
+    },
+    "created_at": "2026-07-20T21:11:41.968969+00:00"
+  },
+  {
+    "event_type": "tavily_search_start",
+    "message": "Tavily Search: Hollow Knight PC Information regarding the encounter with Sly and the immediate next steps or objectives following this meeting. walkthrough guide",
+    "metadata": {
+      "query": "Hollow Knight PC Information regarding the encounter with Sly and the immediate next steps or objectives following this meeting. walkthrough guide",
+      "maxResults": 5,
+      "includeDomains": [
+        "gamefaqs.gamespot.com"
+      ]
+    },
+    "created_at": "2026-07-20T21:11:42.007652+00:00"
+  },
+  {
+    "event_type": "tavily_search_end",
+    "message": "Tavily Search Complete (Status 200)",
+    "metadata": {
+      "status": 200
+    },
+    "created_at": "2026-07-20T21:11:46.442577+00:00"
+  },
+  {
+    "event_type": "retrieval_complete",
+    "message": "Finished gathering sources",
+    "metadata": {
+      "sourceCount": 3,
+      "pipelineType": "fallback_web"
+    },
+    "created_at": "2026-07-20T21:11:46.450895+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: starting",
+    "metadata": {
+      "status": "starting"
+    },
+    "created_at": "2026-07-20T21:11:47.396223+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T21:11:48.228061+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T21:11:49.511475+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T21:11:50.31534+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T21:11:51.32403+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: processing",
+    "metadata": {
+      "status": "processing"
+    },
+    "created_at": "2026-07-20T21:11:52.627154+00:00"
+  },
+  {
+    "event_type": "replicate_status",
+    "message": "Replicate prediction status: succeeded",
+    "metadata": {
+      "status": "succeeded"
+    },
+    "created_at": "2026-07-20T21:11:53.418614+00:00"
+  },
+  {
+    "event_type": "generation_complete",
+    "message": "Answer generated in 6937ms",
+    "metadata": {
+      "sourceCount": 3,
+      "pipelineType": "fallback_web"
+    },
+    "created_at": "2026-07-20T21:11:53.481124+00:00"
+  }
+]

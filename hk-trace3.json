@@ -1,0 +1,87 @@
+[
+  {
+    "event_type": "ingest_start",
+    "message": "Starting guide ingest for 1 URLs",
+    "metadata": null,
+    "created_at": "2026-07-20T20:53:19.27464+00:00"
+  },
+  {
+    "event_type": "tavily_extract_start",
+    "message": "Tavily Extract: 1 URLs",
+    "metadata": {
+      "depth": "basic",
+      "urlsCount": 1
+    },
+    "created_at": "2026-07-20T20:53:19.524999+00:00"
+  },
+  {
+    "event_type": "discovery_cache_miss",
+    "message": "Discovery cache miss for gamefaqs:76039, running Tavily discovery",
+    "metadata": {
+      "bundleKey": "gamefaqs:76039",
+      "seedPageCount": 0
+    },
+    "created_at": "2026-07-20T20:53:19.532697+00:00"
+  },
+  {
+    "event_type": "tavily_extract_start",
+    "message": "Tavily Extract: 1 URLs",
+    "metadata": {
+      "depth": "basic",
+      "urlsCount": 1
+    },
+    "created_at": "2026-07-20T20:53:20.223158+00:00"
+  },
+  {
+    "event_type": "tavily_wayback_fallback",
+    "message": "GameFAQs blocked 1 URLs, falling back to Wayback Machine",
+    "metadata": {
+      "urlsCount": 1
+    },
+    "created_at": "2026-07-20T20:53:20.223949+00:00"
+  },
+  {
+    "event_type": "tavily_extract_end",
+    "message": "Tavily Extract Complete (Status 200)",
+    "metadata": {
+      "status": 200
+    },
+    "created_at": "2026-07-20T20:53:20.240618+00:00"
+  },
+  {
+    "event_type": "tavily_extract_end",
+    "message": "Tavily Extract Complete (Status 200)",
+    "metadata": {
+      "status": 200
+    },
+    "created_at": "2026-07-20T20:53:21.601169+00:00"
+  },
+  {
+    "event_type": "tavily_wayback_empty",
+    "message": "Wayback Machine has no readable archive for https://gamefaqs.gamespot.com/pc/179341-hollow-knight/faqs/76039/introduction",
+    "metadata": {
+      "url": "https://gamefaqs.gamespot.com/pc/179341-hollow-knight/faqs/76039/introduction"
+    },
+    "created_at": "2026-07-20T20:53:21.606566+00:00"
+  },
+  {
+    "event_type": "ingest_url_complete",
+    "message": "Ingested URL: https://gamefaqs.gamespot.com/pc/179341-hollow-knight/faqs/76039",
+    "metadata": {
+      "result": {
+        "indexed": false,
+        "chunkCount": 0,
+        "hubWarning": false
+      }
+    },
+    "created_at": "2026-07-20T20:53:21.618529+00:00"
+  },
+  {
+    "event_type": "ingest_bundle_blocked",
+    "message": "GameFAQs anti-bot blocked bundle discovery for https://gamefaqs.gamespot.com/pc/179341-hollow-knight/faqs/76039",
+    "metadata": {
+      "bundleKey": "gamefaqs:76039"
+    },
+    "created_at": "2026-07-20T20:53:21.62728+00:00"
+  }
+]

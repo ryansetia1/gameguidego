@@ -2752,6 +2752,25 @@ export default function Home() {
         setLoading(false);
         setGenerationStatus(null);
         setMessages(priorMessages);
+        
+        if (priorMessages.length > 0) {
+          setEditingGame(true);
+        } else {
+          setEditingGame(false);
+          setNewGameOpen(true);
+        }
+        
+        setOptPanel("guide");
+        setTimeout(() => {
+          const panel = document.getElementById("opt-panel-guide");
+          if (panel) {
+            panel.scrollIntoView({ behavior: "smooth", block: "center" });
+            const input = panel.querySelector("input[type='url']") as HTMLInputElement | null;
+            if (input) {
+              input.focus();
+            }
+          }
+        }, 100);
         return;
       }
 

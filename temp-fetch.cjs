@@ -18,13 +18,13 @@ async function main() {
   const { data, error } = await supabase
     .from('trace_events')
     .select('event_type, message, metadata, created_at')
-    .eq('trace_id', 'ea02aae1-4178-4299-aded-f83606efc0b1')
+    .eq('trace_id', 'f7b52570-a453-4b55-9faa-c1a979d45ab6')
     .order('created_at', { ascending: true });
 
   if (error) {
     console.error(error);
   } else {
-    fs.writeFileSync('hk-trace2.json', JSON.stringify(data, null, 2));
+    fs.writeFileSync('hk-trace4.json', JSON.stringify(data, null, 2));
   }
 }
 
