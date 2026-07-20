@@ -13,6 +13,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [traces, setTraces] = useState<any[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   useEffect(() => {
     const supabase = getSupabase();
@@ -130,8 +131,6 @@ export default function AdminPage() {
       </main>
     );
   }
-
-  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Group traces for display
   const grouped = new Map<string, any[]>();
