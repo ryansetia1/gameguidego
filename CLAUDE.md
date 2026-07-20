@@ -740,6 +740,7 @@ accounts, saved chats, and the search cache:
 - Keep the UI accessible; the only runtime dependency is `@supabase/supabase-js`.
 - No login wall: signed-out users must keep full access.
 - Preserve source links alongside every generated guide.
+- **CRITICAL LINTING RULE**: Setiap kali mengedit file React komponen (`.tsx`) atau TypeScript (`.ts`), Anda WAJIB menjalankan linter (misalnya melalui npm run lint atau mengecek *warning* pada IDE) dan memperbaiki semua error seperti pelanggaran *Rules of Hooks*, missing imports, dsb sebelum menyatakan tugas selesai kepada Tuan muda.
 - Update this file when architecture, providers, commands, or environment
   requirements change significantly.
 
