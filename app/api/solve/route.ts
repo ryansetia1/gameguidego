@@ -74,7 +74,7 @@ function parseHistory(value: unknown): Turn[] {
 
 async function tieredWebSearch(
   searchQuery: string,
-  signal: AbortSignal,
+  signal?: AbortSignal,
 ): Promise<SearchResult[]> {
   const cacheKey = `${searchQuery}::web`;
   const cached = await getCachedSearch(cacheKey);
@@ -259,7 +259,6 @@ export async function POST(request: Request) {
             game,
             platform,
             userId,
-            signal,
           });
           if (cleaned) {
             answer = cleaned.answer;
