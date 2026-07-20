@@ -37,6 +37,13 @@ export type GuideRagResult = {
 };
 
 function hostLabel(guideUrl: string): string {
+  if (guideUrl.startsWith("upload://")) {
+    const ext = guideUrl.split(".").pop()?.toLowerCase();
+    if (ext === "pdf") return "Your PDF guide";
+    if (ext === "txt") return "Your TXT guide";
+    if (ext === "md") return "Your MD guide";
+    return "Your uploaded guide";
+  }
   try {
     return new URL(guideUrl).hostname.replace(/^www\./, "");
   } catch {

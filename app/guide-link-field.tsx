@@ -7,9 +7,12 @@ import {
   cleanGuideUrl,
   guideUrlDedupeKey,
   isActiveGamefaqsBundle,
+  isUploadedGuideUrl,
   isSamePreferredGuide,
   normalizeGuideUrlList,
   normalizePreferredGuideUrl,
+  uploadedGuideFilename,
+  uploadedGuideFileTypeLabel,
 } from "@/lib/guide-urls.js";
 import { parseGamefaqsFaqUrl } from "@/lib/gamefaqs-bundle.js";
 import { setBundlePrefs } from "@/lib/bundle-prefs.js";
@@ -39,6 +42,7 @@ type Props = {
   game: string;
   platform: string;
   disabled?: boolean;
+  userId?: string | null;
   bundleMeta?: Record<string, GuideBundleMeta>;
   onBundleMetaChange?: (meta: Record<string, GuideBundleMeta>) => void;
   onGuideCheckChange?: (checking: boolean) => void;
@@ -98,12 +102,13 @@ export function GuideLinkField({
   game,
   platform,
   disabled,
+  userId,
   bundleMeta = {},
   onBundleMetaChange,
   onGuideCheckChange,
   guideIndexState = {},
 }: Props) {
-  const [mode, setMode] = useState<"link" | "search">("link");
+  const [mode, setMode] = useState<"link" | "search" | "upload">("link");
   const [draftUrl, setDraftUrl] = useState("");
   const [addError, setAddError] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -114,6 +119,10 @@ export function GuideLinkField({
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [searchAvailable, setSearchAvailable] = useState(true);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
   const searchInputId = useId();
   const autoRanRef = useRef(false);
@@ -369,6 +378,50 @@ export function GuideLinkField({
     return value.some((entry) => isSamePreferredGuide(entry, cleaned));
   };
 
+  const handleFileUpload = useCallback(async () => {
+    if (!uploadFile || !userId || uploading) return;
+    if (atMax) {
+      setUploadError(`You can add up to ${MAX_GUIDE_URLS} guides.`);
+      return;
+    }
+
+    setUploading(true);
+    setUploadError("");
+    try {
+      const form = new FormData();
+      form.append("file", uploadFile);
+      form.append("userId", userId);
+      if (trimmedGame) form.append("game", trimmedGame);
+      if (platform.trim()) form.append("platform", platform.trim());
+
+      const response = await fetch("/api/guide-upload", { method: "POST", body: form });
+      const payload: {
+        indexed?: boolean;
+        chunkCount?: number;
+        guideUrl?: string;
+        fileType?: string;
+        error?: string;
+      } = await response.json();
+
+      if (!response.ok) {
+        setUploadError(payload.error ?? "Upload failed. Try again.");
+        return;
+      }
+
+      if (payload.guideUrl) {
+        const next = [...value, payload.guideUrl];
+        onChange(next);
+        setUploadFile(null);
+        setUploadError("");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      }
+    } catch {
+      setUploadError("Upload failed. Check your connection and try again.");
+    } finally {
+      setUploading(false);
+    }
+  }, [uploadFile, userId, uploading, atMax, trimmedGame, platform, value, onChange]);
+
   return (
     <div className="guide-link-field">
       <div className="guide-link-modes" role="tablist" aria-label="Preferred guide sources">
@@ -392,6 +445,18 @@ export function GuideLinkField({
         >
           Search web
         </button>
+        {userId && (
+          <button
+            type="button"
+            role="tab"
+            className={mode === "upload" ? "active" : undefined}
+            aria-selected={mode === "upload"}
+            disabled={disabled}
+            onClick={() => setMode("upload")}
+          >
+            Upload file
+          </button>
+        )}
       </div>
 
       {value.length > 0 && (
@@ -399,26 +464,35 @@ export function GuideLinkField({
           {value.map((url) => {
             const meta = bundleMeta[url];
             const bundle = isActiveGamefaqsBundle(url, meta);
+            const uploaded = isUploadedGuideUrl(url);
             return (
               <li key={guideUrlDedupeKey(url)} className="guide-url-row">
                 <div className="guide-url-row-body">
                   <div className="guide-url-row-header" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                    <a href={url} target="_blank" rel="noreferrer" className="guide-url-host">
-                      {bundle ? "GameFAQs bundle" : hostLabel(url)}
-                    </a>
+                    {uploaded ? (
+                      <span className="guide-url-host">
+                        {uploadedGuideFileTypeLabel(url)} file
+                      </span>
+                    ) : (
+                      <a href={url} target="_blank" rel="noreferrer" className="guide-url-host">
+                        {bundle ? "GameFAQs bundle" : hostLabel(url)}
+                      </a>
+                    )}
                     {guideIndexState[url] && guideIndexState[url] !== "unknown" && renderStatusChip(guideIndexState[url])}
                   </div>
                   <span className="guide-url-path">
-                    {bundle && meta
-                      ? `${meta.title} · ${meta.pageCount} pages`
-                      : url}
+                    {uploaded
+                      ? uploadedGuideFilename(url)
+                      : bundle && meta
+                        ? `${meta.title} · ${meta.pageCount} pages`
+                        : url}
                   </span>
                 </div>
                 <button
                   type="button"
                   className="guide-url-remove"
                   disabled={disabled}
-                  aria-label={`Remove ${bundle ? "bundle" : hostLabel(url)}`}
+                  aria-label={`Remove ${uploaded ? uploadedGuideFilename(url) : bundle ? "bundle" : hostLabel(url)}`}
                   onClick={() => removeUrl(url)}
                 >
                   Remove
@@ -593,6 +667,40 @@ export function GuideLinkField({
               })}
             </ul>
           )}
+        </div>
+      )}
+
+      {mode === "upload" && userId && (
+        <div className="guide-upload-panel" role="tabpanel" aria-label="Upload a guide file">
+          <div className="guide-upload-form">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.txt,.md"
+              disabled={disabled || uploading || atMax}
+              onChange={(e) => {
+                setUploadFile(e.target.files?.[0] ?? null);
+                setUploadError("");
+              }}
+            />
+            {uploadFile && (
+              <p className="field-hint" style={{ margin: "6px 0" }}>
+                {uploadFile.name} · {(uploadFile.size / 1024).toFixed(0)} KB
+              </p>
+            )}
+            <button
+              type="button"
+              className="nav-button"
+              disabled={disabled || uploading || !uploadFile || atMax}
+              onClick={handleFileUpload}
+            >
+              {uploading ? "Uploading…" : "Upload & index"}
+            </button>
+          </div>
+          {uploadError && <p className="guide-search-error">{uploadError}</p>}
+          <p className="field-hint" style={{ marginTop: "8px" }}>
+            Upload a PDF, TXT, or MD walkthrough file (max 10 MB).
+          </p>
         </div>
       )}
 

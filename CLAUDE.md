@@ -260,6 +260,10 @@ do not sync to the cloud or use Storage uploads.
   `text-embedding-3-large`), shared `public.guide_chunks` + `match_guide_chunks`
   RPC (pgvector, 1024-dim). Query embeddings cached in `public.embed_cache` (7-day
   TTL). Fail-open to tiered web search when Supabase/pgvector/Sumopod API key is unset.
+  Also supports **file uploads** (PDF/TXT/MD) via `POST /api/guide-upload` —
+  files are parsed in memory (zero storage), chunked, and embedded into the same
+  `guide_chunks` table with a synthetic `upload://<uid>/<filename>` key.
+  `lib/parse-guide-file.ts` handles PDF extraction (pdf-parse) and plain text.
   Full design: [`docs/preferred-guide.md`](docs/preferred-guide.md).
   Embedding model specs & migration checklist: [`docs/embedding-models.md`](docs/embedding-models.md).
 - `lib/tavily.ts`: `searchGuides(query)` orchestrates Tavily tiered search then a

@@ -673,8 +673,63 @@ export async function ensureGuideIngested(
   signal?: AbortSignal,
   ctx?: IngestContext,
 ): Promise<IngestResult> {
+  // Uploaded files use a synthetic upload:// key — they're already ingested at
+  // upload time, so just check if chunks exist and skip Tavily entirely.
+  if (rawUrl.startsWith("upload://")) {
+    const supabase = getServerClient();
+    if (!supabase) return { indexed: false, chunkCount: 0, hubWarning: false };
+    const { count } = await supabase
+      .from("guide_chunks")
+      .select("*", { count: "exact", head: true })
+      .eq("guide_url", rawUrl);
+    return { indexed: (count ?? 0) > 0, chunkCount: count ?? 0, hubWarning: false };
+  }
   if (parseGamefaqsFaqUrl(rawUrl)) {
     return ingestGamefaqsBundle(rawUrl, signal, ctx);
   }
   return ingestSingleGuidePage(rawUrl, signal, ctx);
+}
+
+/**
+ * Ingest a guide from pre-extracted text (e.g. uploaded PDF/TXT/MD).
+ * Skips Tavily extract — text is already available. Idempotent per guideUrl.
+ */
+export async function ingestGuideFromText(input: {
+  guideUrl: string;
+  text: string;
+  signal?: AbortSignal;
+  ctx?: IngestContext;
+}): Promise<IngestResult> {
+  const supabase = getServerClient();
+  if (!supabase || !process.env.SUMOPOD_API_KEY) {
+    return { indexed: false, chunkCount: 0, hubWarning: false };
+  }
+
+  if (await isGuideIndexed(input.guideUrl)) {
+    const { count } = await supabase
+      .from("guide_chunks")
+      .select("*", { count: "exact", head: true })
+      .eq("guide_url", input.guideUrl);
+    return { indexed: true, chunkCount: count ?? 0, hubWarning: false };
+  }
+
+  void logTraceEvent("ingest_upload_start", `Ingesting uploaded guide: ${input.guideUrl}`, undefined, { guideUrl: input.guideUrl });
+  const startMs = Date.now();
+
+  const stored = await storeGuideChunks({
+    supabase,
+    guideUrl: input.guideUrl,
+    guideBundle: null,
+    text: input.text,
+    signal: input.signal,
+    embedLog: embedLogFromContext(input.ctx),
+  });
+
+  if (!stored.indexed) {
+    void logTraceEvent("ingest_upload_error", `Failed to store uploaded guide: ${input.guideUrl}`, Date.now() - startMs, { guideUrl: input.guideUrl });
+    return { indexed: false, chunkCount: 0, hubWarning: false };
+  }
+
+  void logTraceEvent("ingest_upload_complete", `Uploaded guide ingested: ${input.guideUrl}`, Date.now() - startMs, { guideUrl: input.guideUrl, chunkCount: stored.chunkCount });
+  return { indexed: true, chunkCount: stored.chunkCount, hubWarning: false };
 }

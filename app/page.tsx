@@ -2671,6 +2671,7 @@ export default function Home() {
 
     const ingestPromise = urlsNeedingIngest.length ? runGuideIngest() : null;
     let streamStarted = false;
+    let currentContext: any = null;
 
     try {
       // Finish indexing BEFORE asking solve. solve runs its own safety
@@ -2738,7 +2739,6 @@ export default function Home() {
       let buffer = "";
       let answerData: any = null;
       let streamError: Error | null = null;
-      let currentContext: any = null;
 
       if (reader) {
         while (true) {
@@ -3747,6 +3747,7 @@ export default function Home() {
                   game={game}
                   platform={platform}
                   disabled={loading}
+                  userId={user?.id}
                 />
               </div>
             )}
@@ -3939,7 +3940,14 @@ export default function Home() {
                       {message.pipelineType && (
                         <span style={{ fontWeight: 'normal', color: 'var(--text-muted)' }}>
                           {" · "}{
-                            message.pipelineType === "rag" ? "Your Guide" :
+                            message.pipelineType === "rag" ? (() => {
+                              const uploadSrc = message.sources?.find(s => s.url?.startsWith("upload://"));
+                              if (uploadSrc) {
+                                const ext = uploadSrc.url.split(".").pop()?.toUpperCase();
+                                return `Your ${ext === "PDF" || ext === "TXT" || ext === "MD" ? ext : "Uploaded"} guide`;
+                              }
+                              return "Your Guide";
+                            })() :
                             message.pipelineType === "fallback_web" || message.pipelineType === "web" ? "Web Search" :
                             "AI Knowledge"
                           }
