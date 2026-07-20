@@ -2685,18 +2685,15 @@ export default function Home() {
       let ingestHint: string | null = ingestPromise ? await ingestPromise : null;
       let userConfirmedFallback = true;
       if (ingestHint && ingestHint.includes("Couldn't read")) {
-        pushOverlayHistory();
         userConfirmedFallback = await new Promise<boolean>((resolve) => {
           setConfirmFallbackModal({
             hint: ingestHint!,
             onConfirm: () => {
               setConfirmFallbackModal(null);
-              dismissOverlay();
               resolve(true);
             },
             onCancel: () => {
               setConfirmFallbackModal(null);
-              dismissOverlay();
               resolve(false);
             },
           });
@@ -3929,7 +3926,18 @@ export default function Home() {
                 )}
                 {message.sources && message.sources.length > 0 && (
                   <details className="sources">
-                    <summary>Sources ({message.sources.length})</summary>
+                    <summary>
+                      Sources ({message.sources.length})
+                      {message.pipelineType && (
+                        <span style={{ fontWeight: 'normal', color: 'var(--text-muted)' }}>
+                          {" · "}{
+                            message.pipelineType === "rag" ? "Your Guide" :
+                            message.pipelineType === "fallback_web" || message.pipelineType === "web" ? "Web Search" :
+                            "AI Knowledge"
+                          }
+                        </span>
+                      )}
+                    </summary>
                     <ol>
                       {message.sources.map((source, i) => (
                         <li key={`${source.url}-${i}`}>
@@ -3950,13 +3958,9 @@ export default function Home() {
                     </ol>
                   </details>
                 )}
-                {message.pipelineType && (
+                {message.pipelineType && (!message.sources || message.sources.length === 0) && (
                   <div className="source-pipeline-label" style={{ marginTop: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>
-                    Source: {
-                      message.pipelineType === "rag" ? "Your Guide" :
-                      message.pipelineType === "fallback_web" || message.pipelineType === "web" ? "Web Search" :
-                      "AI Knowledge"
-                    }
+                    Source: AI Knowledge
                   </div>
                 )}
               </article>
