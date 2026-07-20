@@ -618,6 +618,9 @@ The following Tier 3 cleanup tasks were deliberately skipped to prioritize stabi
 - Every turn runs two sequential Gemini calls (`resolveQuestion` then
   `summarize`). Web rewrite `max_output_tokens` ~200; preferred-guide RAG rewrite
   ~400 (`forRag`). Too tight a cap returns empty even with thinking off.
+- `solve_logs.pipeline_type` now correctly records `"rag"` when preferred-guide
+  RAG succeeds (`skipWebSearch`). Error-path `totalLatencyMs` uses `startedAt`
+  (was previously `Date.now() - Date.now()` ≡ 0).
 - `summarize` asks for JSON (`answer` + `highlights`); `parseSummary` tolerates
   prose/markdown fences when the model drifts. ponytail: prompt-instructed JSON
   rather than `response_mime_type` (not exposed on Replicate's Gemini input).

@@ -196,6 +196,7 @@ export async function POST(request: Request) {
 
           if (rag?.skipWebSearch) {
             sources = rag.sources;
+            pipelineType = "rag";
           } else if (rag) {
             if (hasSearchProvider) {
               sendEvent("status", { text: "Searching the web..." });
@@ -300,7 +301,7 @@ export async function POST(request: Request) {
           question,
           preferredUrls,
           pipelineType: "knowledge_only", // Default fallback if failed early
-          totalLatencyMs: Date.now() - (Date.now()), // Not exact since we don't have startedAt in catch context if it failed before initialization, but actually startedAt is in try block! Wait, I must declare startedAt outside try or just fallback to generic. 
+          totalLatencyMs: Date.now() - startedAt,
           status: "error",
           errorMessage: error instanceof Error ? error.message : String(error),
         }).catch(console.error);
