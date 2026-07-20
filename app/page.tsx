@@ -4210,11 +4210,6 @@ export default function Home() {
         <div
           className="confirm-overlay"
           role="presentation"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              confirmFallbackModal.onCancel();
-            }
-          }}
         >
           <div className="confirm-modal" role="dialog" aria-modal="true">
             <p className="confirm-message">{confirmFallbackModal.hint}</p>
@@ -4242,12 +4237,6 @@ export default function Home() {
         <div
           className="confirm-overlay"
           role="presentation"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              confirmState.resolve(false);
-              setConfirmState(null);
-            }
-          }}
         >
           <div className="confirm-modal" role="dialog" aria-modal="true">
             <p className="confirm-message">{confirmState.message}</p>
