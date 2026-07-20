@@ -898,6 +898,10 @@ export default function Home() {
 
   useEffect(() => {
     function onPopState() {
+      if (confirmFallbackModal) {
+        confirmFallbackModal.onCancel();
+        return;
+      }
       if (steamLibraryOpen) {
         setSteamLibraryOpen(false);
         return;
@@ -922,7 +926,7 @@ export default function Home() {
     }
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [authOpen, libraryOpen, sidebarOpen, steamLibraryOpen, messages.length]);
+  }, [authOpen, libraryOpen, sidebarOpen, steamLibraryOpen, messages.length, confirmFallbackModal]);
 
   // Give the browser a history entry to pop when a chat thread is showing, so the
   // hardware/gesture back returns home instead of leaving the app.
@@ -2681,15 +2685,18 @@ export default function Home() {
       let ingestHint: string | null = ingestPromise ? await ingestPromise : null;
       let userConfirmedFallback = true;
       if (ingestHint && ingestHint.includes("Couldn't read")) {
+        pushOverlayHistory();
         userConfirmedFallback = await new Promise<boolean>((resolve) => {
           setConfirmFallbackModal({
             hint: ingestHint!,
             onConfirm: () => {
               setConfirmFallbackModal(null);
+              dismissOverlay();
               resolve(true);
             },
             onCancel: () => {
               setConfirmFallbackModal(null);
+              dismissOverlay();
               resolve(false);
             },
           });
@@ -4112,12 +4119,32 @@ export default function Home() {
       {authOpen && <AuthPanel onClose={dismissOverlay} />}
 
       {confirmFallbackModal && (
-        <div className="overlay open" onClick={confirmFallbackModal.onCancel}>
-          <div className="confirm-modal" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="confirm-overlay"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              confirmFallbackModal.onCancel();
+            }
+          }}
+        >
+          <div className="confirm-modal" role="dialog" aria-modal="true">
             <p className="confirm-message">{confirmFallbackModal.hint}</p>
             <div className="confirm-actions">
-              <button className="btn" type="button" onClick={confirmFallbackModal.onCancel}>Cancel (Change Guide)</button>
-              <button className="btn primary" type="button" onClick={confirmFallbackModal.onConfirm}>Continue with Web Search</button>
+              <button
+                type="button"
+                className="confirm-cancel"
+                onClick={confirmFallbackModal.onCancel}
+              >
+                Change Guide
+              </button>
+              <button
+                type="button"
+                className="confirm-confirm"
+                onClick={confirmFallbackModal.onConfirm}
+              >
+                Search Web
+              </button>
             </div>
           </div>
         </div>
