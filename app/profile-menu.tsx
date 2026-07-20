@@ -228,6 +228,17 @@ export function ProfileMenu({
                 Profile
               </Link>
 
+              {user.email === "ryansetiawan.works@gmail.com" && (
+                <Link
+                  href="/admin"
+                  className="profile-menu-item"
+                  role="menuitem"
+                  onClick={() => setOpen(false)}
+                >
+                  Dashboard
+                </Link>
+              )}
+
               <label className="profile-menu-item profile-menu-toggle">
                 <span>{GLOBAL_SPOILER_TOGGLE_LABEL}</span>
                 <input
