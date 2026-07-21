@@ -6,7 +6,7 @@ import {
   buildAssistantVariantBody,
   mergeAssistantIntoMessages,
 } from "@/lib/chat-persist.js";
-import { persistAssistantResponse } from "@/lib/chat-thread-persist.js";
+import { persistAssistantResponse, fetchNormalizedThread } from "@/lib/chat-thread-persist.js";
 import { getCachedSearch, setCachedSearch } from "@/lib/search-cache";
 import { censorSpoilers, resolveQuestion, summarize, type Turn } from "@/lib/replicate";
 import { guideIngestHint } from "@/lib/guide-hints.js";
@@ -353,13 +353,9 @@ export async function POST(request: Request) {
               process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
               { global: { headers: { Authorization: authHeader } } },
             );
-            const { data: chatData } = await supabase
-              .from("chats")
-              .select("messages")
-              .eq("id", chatId)
-              .single();
-            if (chatData?.messages) {
-              const messages = chatData.messages as any[];
+            const normalized = await fetchNormalizedThread(supabase, chatId);
+            const messages = normalized ? [...normalized] : [];
+            if (messages.length) {
               const variantBody = buildAssistantVariantBody({
                 content: finalAnswer,
                 sources: finalSources,
@@ -400,6 +396,11 @@ export async function POST(request: Request) {
                       : undefined,
                 });
               }
+            } else {
+              console.warn("[chat-thread] No normalized thread for background save", {
+                chatId,
+                traceId,
+              });
             }
           } catch (err) {
             console.error("Failed to save background chat to Supabase:", err);

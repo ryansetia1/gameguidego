@@ -767,8 +767,10 @@ large chat or persistence work:
   Phase 0–1: `lib/chat-messages.js` + `lib/chat-persist.js` (variant coercion, single
   writer). Phase 2: `db/chat-threads.sql` (`chat_turns`, `chat_responses`,
   `chat_turn_state` keyed by `chat_id` → `chats.id`), `lib/chat-thread.js` +
-  `lib/chat-thread-persist.js` (canonical rows + `chats.messages` cache rebuild;
-  `trace_id` on each response). Apply `db/chat-threads.sql` before using in prod.
+  `lib/chat-thread-persist.js` (canonical rows + `chats.messages` write-only cache;
+  `trace_id` on each response). Phase 3: `scripts/backfill-chat-threads.mjs`
+  backfills legacy JSONB; signed-in reads use `loadThreadMessages` (normalized only).
+  Apply `db/chat-threads.sql` before using in prod.
 - [`docs/plan/page-decomposition.md`](docs/plan/page-decomposition.md): split
   `app/page.tsx` after persistence helpers move to `lib/chat-*`.
 

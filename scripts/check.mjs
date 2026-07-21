@@ -104,6 +104,7 @@ import {
   userTurnCount,
   variantRowsFromPersistedAssistant,
 } from "../lib/chat-thread.js";
+import { compareThreadSources } from "../lib/chat-thread-audit.js";
 import {
   CHAT_QUERY_PARAM,
   coerceSessionDraft,
@@ -1251,5 +1252,16 @@ const paired = pairMessagesIntoTurns([
 ]);
 assert.equal(paired.length, 2);
 assert.equal(userTurnCount(duplicatePoor), 2);
+
+const pendingTurn = pairMessagesIntoTurns([{ role: "user", content: "waiting" }]);
+assert.equal(pendingTurn.length, 1);
+assert.equal(pendingTurn[0].assistant, null);
+
+const auditOk = compareThreadSources(singleTurnRich, singleTurnRich);
+assert.equal(auditOk.match, true);
+
+const auditBad = compareThreadSources(singleTurnRich, duplicatePoor);
+assert.equal(auditBad.match, false);
+assert.ok(auditBad.issues.some((issue) => issue.startsWith("turn_count")));
 
 console.log("Self-check passed.");

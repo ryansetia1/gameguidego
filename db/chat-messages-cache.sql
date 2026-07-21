@@ -1,0 +1,4 @@
+-- chats.messages (jsonb) is a write-only denormalized cache after Phase 3.
+-- Signed-in reads use chat_turns / chat_responses / chat_turn_state (see chat-threads.sql).
+-- Anon users keep messages inline via localStorage (lib/local-games.js).
+-- Backfill + verify: npm run backfill:chats / backfill:chats:verify

@@ -28,6 +28,7 @@ export type Chat = {
   // Supabase Storage public URL from a device upload.
   cover_url?: string;
   release_year?: string;
-  messages: unknown;
+  /** Signed-in: read from normalized tables. Anon/local: stored inline. */
+  messages?: unknown;
   updated_at: string;
 };

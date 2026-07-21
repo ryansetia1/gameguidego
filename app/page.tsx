@@ -34,11 +34,10 @@ import {
   shouldApplySyncedMessages,
 } from "@/lib/chat-persist.js";
 import {
-  fetchNormalizedThread,
-  resolveThreadMessages,
-  syncVariantStateFromMessages,
+  loadThreadMessages,
+  syncThreadFromMessages,
 } from "@/lib/chat-thread-persist.js";
-import { pickRicherThread, priorMessagesForRegen } from "@/lib/chat-thread.js";
+import { priorMessagesForRegen } from "@/lib/chat-thread.js";
 import {
   WRITING_ANSWER_PLACEHOLDER,
   coerceMessages,
@@ -1143,9 +1142,9 @@ export default function Home() {
     }
     const { data, error: loadError } = await supabase
       .from("chats")
-      // select("*") tolerates the cover-metadata columns being absent before the
-      // migration is applied (a named select would error on a missing column).
-      .select("*")
+      .select(
+        "id, game, platform, preferred_guide_url, preferred_guide_urls, cover_url, release_year, updated_at",
+      )
       .order("updated_at", { ascending: false });
     if (!loadError && data) setChats(data as Chat[]);
   }, []);
@@ -2099,7 +2098,7 @@ export default function Home() {
       const supabase = getSupabase();
       const loaded: Message[] =
         supabase && user
-          ? ((await resolveThreadMessages(supabase, chat)) as Message[])
+          ? ((await loadThreadMessages(supabase, chat.id)) as Message[])
           : parseStoredMessages(chat.messages);
       setMessages(loaded);
     }
@@ -2512,11 +2511,12 @@ export default function Home() {
       setChats(loadLocalGames());
       return;
     }
-    // Collect this chat's own Storage files (cover + message images) so deleting
-    // the chat doesn't orphan them in the bucket.
+    const thread = await loadThreadMessages(supabase, chat.id);
     const urls = [
       chat.cover_url ?? "",
-      ...parseStoredMessages(chat.messages).flatMap((message) => message.images ?? []),
+      ...thread.flatMap((message) =>
+        Array.isArray(message.images) ? message.images : [],
+      ),
     ];
     const paths = urls
       .map(coverStoragePath)
@@ -2580,9 +2580,7 @@ export default function Home() {
     try {
       if (targetChatId) {
         await supabase.from("chats").update(payload).eq("id", targetChatId);
-        void syncVariantStateFromMessages(supabase, targetChatId, nextMessages).catch(
-          () => {},
-        );
+        void syncThreadFromMessages(supabase, targetChatId, nextMessages).catch(() => {});
         void loadChats();
         return targetChatId;
       }
@@ -2594,6 +2592,7 @@ export default function Home() {
       const newId = data ? (data as { id: string }).id : null;
       if (newId) {
         setActiveChatId(newId);
+        void syncThreadFromMessages(supabase, newId, nextMessages).catch(() => {});
         void loadChats();
       }
       return newId;
@@ -3043,15 +3042,8 @@ export default function Home() {
           void (async () => {
             const synced = await pollUntilMessagesRecovered({
               fetchMessages: async () => {
-                const normalized = await fetchNormalizedThread(supabase, syncChatId);
-                const { data: row } = await supabase
-                  .from("chats")
-                  .select("messages")
-                  .eq("id", syncChatId)
-                  .single();
-                const legacy = row?.messages ? parseStoredMessages(row.messages) : [];
-                const merged = pickRicherThread(normalized, legacy);
-                return merged.length ? merged : null;
+                const loaded = await loadThreadMessages(supabase, syncChatId);
+                return loaded.length ? loaded : null;
               },
               optimistic,
             });
@@ -3101,23 +3093,21 @@ export default function Home() {
                backgroundStatusRef.current[activeId] = "Still working in background...";
                if (activeChatIdRef.current === activeId) setGenerationStatus("Still working in background...");
              }
-             const { data } = await supabase.from("chats").select("messages").eq("id", activeId).single();
-             if (data?.messages) {
-               const msgs = parseStoredMessages(data.messages);
-               if (pollRecoveredMessages(optimistic, msgs)) {
-                 backgroundMessagesRef.current[activeId] = msgs;
-                 backgroundLoadingRef.current[activeId] = false;
-                 backgroundStatusRef.current[activeId] = null;
-                 delete abortRefs.current[activeId];
-                 if (activeChatIdRef.current === activeId) {
-                   setMessages(msgs);
-                   setLoading(false);
-                   setGenerationStatus(null);
-                 }
-                 void loadChats();
-                 succeeded = true;
-                 return;
+             const loaded = await loadThreadMessages(supabase, activeId);
+             if (loaded.length && pollRecoveredMessages(optimistic, loaded)) {
+               const msgs = loaded as Message[];
+               backgroundMessagesRef.current[activeId] = msgs;
+               backgroundLoadingRef.current[activeId] = false;
+               backgroundStatusRef.current[activeId] = null;
+               delete abortRefs.current[activeId];
+               if (activeChatIdRef.current === activeId) {
+                 setMessages(msgs);
+                 setLoading(false);
+                 setGenerationStatus(null);
                }
+               void loadChats();
+               succeeded = true;
+               return;
              }
            }
            if (attempts >= 150) {

@@ -8,7 +8,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "check": "node scripts/check.mjs"
+    "check": "node scripts/check.mjs",
+    "backfill:chats": "node scripts/backfill-chat-threads.mjs",
+    "backfill:chats:verify": "node scripts/backfill-chat-threads.mjs --verify",
+    "backfill:chats:dry": "node scripts/backfill-chat-threads.mjs --dry-run"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",

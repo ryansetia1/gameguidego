@@ -264,6 +264,11 @@ normalized tables so client code converges.
 
 ### Phase 3 — Legacy migration & JSONB retirement (1–2 weeks)
 
+**Status:** In progress (July 2026) — `scripts/backfill-chat-threads.mjs`,
+`lib/chat-thread-audit.js`, `backfillChatFromMessages` / `verifyChatThread`.
+`resolveThreadMessages` reads normalized when rows exist (legacy JSONB fallback
+only for not-yet-backfilled chats). Run `npm run backfill:chats` with service role.
+
 **Goal:** Move existing `chats` rows into `chat_threads` + children; drop reliance on blob.
 
 1. **Backfill script** (SQL or one-off Node):
@@ -346,9 +351,11 @@ Phase 2  [x] SQL migration files in db/ (chat-threads.sql)
          [x] apply db/chat-threads.sql on Supabase project
          [ ] manual QA on FF8 chat
 
-Phase 3  [ ] backfill script
-         [ ] dual-read validation
-         [ ] retire chats.messages
+Phase 3  [x] backfill script (scripts/backfill-chat-threads.mjs)
+         [x] dual-read validation (lib/chat-thread-audit.js, verifyChatThread)
+         [x] canonical read from normalized (loadThreadMessages / resolveThreadMessages)
+         [x] run backfill on all production chats (8/8, 0 mismatches)
+         [x] retire chats.messages reads (signed-in: normalized only; JSONB write-only cache; anon localStorage)
 
 Phase 4  [ ] page decomposition (see sibling doc)
 ```
