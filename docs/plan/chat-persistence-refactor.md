@@ -364,6 +364,7 @@ Phase 4  [ ] page decomposition (see sibling doc)
 
 ## Related docs
 
+- [chat-persistence-cutover-fixes.md](./chat-persistence-cutover-fixes.md) — review follow-up: read fallback, server save race, sync reliability (July 2026)
 - [audit-send-to-answer.md](../audit-send-to-answer.md) — solve pipeline bugs
 - [troubleshooting.md](../troubleshooting.md) — Steam link, auth edge cases
 - `CLAUDE.md` — live architecture contract (update when each phase ships)
