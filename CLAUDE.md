@@ -772,8 +772,8 @@ large chat or persistence work:
   backfills legacy JSONB; signed-in reads use `loadThreadMessages` (normalized only).
   Apply `db/chat-threads.sql` before using in prod.
 - [`docs/plan/page-decomposition.md`](docs/plan/page-decomposition.md): Phase 4 in
-  progress — `app/chat/message-list.tsx`, `composer-shell.tsx`, `answer-body.tsx`,
-  `types.ts`, `lib/chat-message-ui.js` extracted; `use-chat-turn.ts` next.
+  progress — `app/chat/message-list.tsx`, `composer-shell.tsx`, `use-chat-turn.tsx`,
+  `answer-body.tsx`, `types.ts`, `lib/chat-message-ui.js` extracted (~3614 lines remain).
 
 ## Working conventions
 

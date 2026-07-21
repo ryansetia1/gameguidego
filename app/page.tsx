@@ -6,7 +6,8 @@ import { FormEvent, type MouseEvent, useCallback, useEffect, useRef, useState } 
 import { AuthPanel } from "./auth-panel";
 import { ComposerShell } from "./chat/composer-shell";
 import { MessageList } from "./chat/message-list";
-import { type Message, type Source, parseStoredMessages } from "./chat/types";
+import { useChatTurn } from "./chat/use-chat-turn";
+import { type Message, parseStoredMessages } from "./chat/types";
 import { ClearButton } from "./clear-button";
 import { GameAutocomplete } from "./game-autocomplete";
 import {
@@ -24,23 +25,8 @@ import {
   IconAlert,
 } from "./icons";
 import {
-  buildAssistantVariantBody,
-  buildTurnMessagesWithAssistant,
-  pollUntilMessagesRecovered,
-  serverOwnsAssistantPersist,
-  shouldApplySyncedMessages,
-} from "@/lib/chat-persist.js";
-import {
   loadThreadMessages,
-  syncThreadFromMessages,
 } from "@/lib/chat-thread-persist.js";
-import { priorMessagesForRegen } from "@/lib/chat-thread.js";
-import {
-  WRITING_ANSWER_PLACEHOLDER,
-  coerceMessages,
-  pollRecoveredMessages,
-  snapshotAssistantVariants,
-} from "@/lib/chat-messages.js";
 import { FUN_ROLES, HERO_LINES } from "@/lib/hero-copy.js";
 import { lerpTilt, mouseToTilt, orientationToTilt, tiltTransform } from "@/lib/hero-tilt.js";
 import { guideIngestHint, guideIngestHintFromResponse } from "@/lib/guide-hints.js";
@@ -69,7 +55,6 @@ import {
   uploadedGuideFilename,
 } from "@/lib/guide-urls.js";
 import { compressImage } from "@/lib/image.js";
-import { uploadedSourceGuideLabel } from "@/lib/chat-message-ui.js";
 
 function buildBundlePrefsBody(
   urls: string[],
@@ -265,10 +250,6 @@ import { PlatformSelect } from "./platform-select";
 import { SteamLibrary, type SteamGame } from "./steam-library";
 import { ProfileMenu } from "./profile-menu";
 import { Lightbox } from "./lightbox";
-import {
-  coerceHighlights,
-  coerceSpoilers,
-} from "@/lib/highlights.js";
 import { tgdbPlatformToLabel } from "@/lib/platforms.js";
 import {
   GAME_SPOILER_HINT,
@@ -2418,752 +2399,70 @@ export default function Home() {
     if (await askConfirm("Discard this game?")) newGame();
   }
 
-  async function persistChat(nextMessages: Message[], targetChatId: string | null) {
-    if (temporary) return null; // temporary chat: nothing gets written anywhere
-    const supabase = getSupabase();
-    // Anon: persist to localStorage (Chat-shaped, no Storage — cover is CDN/"").
-    if (!supabase || !user) {
-      const id = targetChatId ?? crypto.randomUUID();
-      upsertLocalGame({
-        id,
-        game,
-        platform,
-        ...guideUrlsPayload(preferredUrls),
-        cover_url: cover.startsWith("blob:") ? "" : cover,
-        release_year: releaseYear,
-        messages: nextMessages,
-        updated_at: new Date().toISOString(),
-      });
-      if (!targetChatId) setActiveChatId(id);
-      setChats(loadLocalGames());
-      return id;
-    }
-    // Upload a pending device cover only now (message is being saved), so covers
-    // never land in Storage for abandoned drafts.
-    const coverUrl = await resolveCoverUrl();
-    const payload = {
-      game,
-      platform,
-      ...guideUrlsPayload(preferredUrls),
-      cover_url: coverUrl,
-      release_year: releaseYear,
-      messages: nextMessages,
-      updated_at: new Date().toISOString(),
-    };
-    try {
-      if (targetChatId) {
-        await supabase.from("chats").update(payload).eq("id", targetChatId);
-        void syncThreadFromMessages(supabase, targetChatId, nextMessages).catch(() => {});
-        void loadChats();
-        return targetChatId;
-      }
-      const { data } = await supabase
-        .from("chats")
-        .insert({ ...payload, user_id: user.id })
-        .select("id")
-        .single();
-      const newId = data ? (data as { id: string }).id : null;
-      if (newId) {
-        setActiveChatId(newId);
-        void syncThreadFromMessages(supabase, newId, nextMessages).catch(() => {});
-        void loadChats();
-      }
-      return newId;
-    } catch (caught) {
-      console.error("Failed to save chat:", caught);
-      return targetChatId;
-    }
-  }
-
-  async function runTurn(
-    question: string,
-    priorMessages: Message[],
-    targetChatId: string | null,
-    images: string[] = [],
-    retryContext: any = null,
-    oldAssistantMessage?: Message,
-  ) {
-    const traceId = crypto.randomUUID();
-    setError("");
-    setRetryAction(null);
-    if (!navigator.onLine) {
-      setError("You are offline. Please check your internet connection.");
-      return;
-    }
-    setLoading(true);
-    setGenerationStatus(null);
-    setEditingIndex(null);
-    let succeeded = false;
-    const guideUrls = normalizeGuideUrlList(preferredUrls);
-
-    const history = priorMessages
-      .slice(-10)
-      .map(({ role, content }) => ({ role, content }));
-    const userMessage: Message = {
-      role: "user",
-      content: question,
-      ...(images.length ? { images } : {}),
-    };
-    const optimistic: Message[] = oldAssistantMessage
-      ? [
-          ...(priorMessagesForRegen(priorMessages, userMessage) as Message[]),
-          {
-            ...oldAssistantMessage,
-            content: WRITING_ANSWER_PLACEHOLDER,
-            variants: snapshotAssistantVariants(oldAssistantMessage) as NonNullable<Message["variants"]>,
-          },
-        ]
-      : [...priorMessages, userMessage];
-    setMessages(optimistic);
-    let activeId = targetChatId;
-    if (!temporary) {
-      activeId = await persistChat(optimistic, targetChatId) || activeId;
-    }
-    if (activeId) activeChatIdRef.current = activeId;
-
-    if (activeId) {
-      backgroundMessagesRef.current[activeId] = optimistic;
-      backgroundLoadingRef.current[activeId] = true;
-      backgroundStatusRef.current[activeId] = null;
-    }
-
-    const controller = new AbortController();
-    if (activeId) abortRefs.current[activeId] = controller;
-
-    const urlsNeedingIngest = guideUrls.filter((url) =>
-      guideUrlNeedsIngest(url, guideBundleMeta[url], bundleIndexStatus[url], guideIndexState[url]),
-    );
-    // T2-3: hoist so the finally block can do a final status check.
-    let ingestBundleUrl: string | undefined;
-    let bundleTargets: string[] = [];
-    if (urlsNeedingIngest.length) {
-      ingestBundleUrl = urlsNeedingIngest.find((url) =>
-        isActiveGamefaqsBundle(url, guideBundleMeta[url]),
-      );
-      if (ingestBundleUrl) {
-        const meta = guideBundleMeta[ingestBundleUrl];
-        const prefs = mergedBundlePrefs(ingestBundleUrl, meta);
-        const discovered = meta?.pages ?? [];
-        bundleTargets = discovered.length ? targetBundleSlugs(discovered, prefs) : [];
-        const indexedSlugs =
-          bundleIndexStatus[ingestBundleUrl]?.pages?.map((page) => page.slug) ?? [];
-        const indexedSet = new Set(indexedSlugs.map((slug) => slug.toLowerCase()));
-        const pending = bundleTargets.length
-          ? bundleTargets.filter((slug) => !indexedSet.has(slug)).length
-          : Math.max(meta?.pageCount ?? 0, 1);
-        setIndexingIsBundlePages(true);
-        setIndexingGuideCount(Math.max(pending, 1));
-        if (bundleTargets.length && pending > 0) startBundleIndexingPoll(ingestBundleUrl, bundleTargets);
-      } else {
-        setIndexingIsBundlePages(false);
-        setIndexingGuideCount(
-          urlsNeedingIngest.length > 1 ? urlsNeedingIngest.length : 1,
-        );
-      }
-    }
-
-    const runGuideIngest = async (): Promise<{ hint: string; hasIndexedGuides: boolean } | null> => {
-      if (!urlsNeedingIngest.length) return null;
-      setGuideIndexState((prev) => {
-        const next = { ...prev };
-        for (const url of urlsNeedingIngest) {
-          next[url] = "checking";
-        }
-        return next;
-      });
-      const ingestResults: Array<Record<string, unknown>> = [];
-      let hubWarning = false;
-      let bundleMetaForRun = { ...guideBundleMeta };
-      try {
-        for (const url of urlsNeedingIngest) {
-          const ingestResponse = await fetch("/api/guide-ingest", {
-            method: "POST",
-            headers: { 
-              "Content-Type": "application/json",
-              "X-Trace-Id": traceId
-            },
-            signal: controller.signal,
-            body: JSON.stringify({
-              preferredUrls: [url],
-              game,
-              platform,
-              userId: user?.id ?? null,
-              bundlePrefs: buildBundlePrefsBody(guideUrls, guideBundleMeta),
-            }),
-          });
-          if (ingestResponse.ok) {
-            const ingestData = (await ingestResponse.json()) as {
-              indexed?: boolean;
-              hubWarning?: boolean;
-              results?: Array<Record<string, unknown>>;
-            };
-            const row =
-              ingestData.results?.[0] ??
-              ({ indexed: ingestData.indexed, hubWarning: ingestData.hubWarning } as const);
-            ingestResults.push(row);
-            if (ingestData.hubWarning) hubWarning = true;
-            const updated = applyIngestRowToMeta(url, row, bundleMetaForRun[url]);
-            if (updated) {
-              bundleMetaForRun = { ...bundleMetaForRun, [url]: updated };
-            }
-            setGuideIndexState((prev) => ({
-              ...prev,
-              [url]: row.indexed ? "indexed" : "failed",
-            }));
-          } else if (!controller.signal.aborted) {
-            ingestResults.push({ indexed: false });
-            setGuideIndexState((prev) => ({
-              ...prev,
-              [url]: "failed",
-            }));
-          }
-        }
-        if (ingestResults.length) {
-          const previouslyIndexedCount = guideUrls.filter((url) => !urlsNeedingIngest.includes(url)).length;
-          const newlyIndexedCount = ingestResults.filter((row) => row.indexed).length;
-          const totalIndexedCount = previouslyIndexedCount + newlyIndexedCount;
-
-          const hint = guideIngestHintFromResponse({
-            available: true,
-            indexedCount: totalIndexedCount,
-            total: guideUrls.length,
-            hubWarning,
-            results: ingestResults,
-          });
-          if (Object.keys(bundleMetaForRun).length) {
-            setGuideBundleMeta(bundleMetaForRun);
-          }
-          setBundleStatusRev((rev) => rev + 1);
-          return hint ? { hint, hasIndexedGuides: totalIndexedCount > 0 } : null;
-        }
-      } catch (ingestError) {
-        if (!(ingestError instanceof DOMException && ingestError.name === "AbortError")) {
-          console.error("Guide ingest failed:", ingestError);
-          setGuideIndexState((prev) => {
-            const next = { ...prev };
-            for (const url of urlsNeedingIngest) {
-              if (next[url] === "checking") {
-                next[url] = "failed";
-              }
-            }
-            return next;
-          });
-          const previouslyIndexedCount = guideUrls.filter((url) => !urlsNeedingIngest.includes(url)).length;
-          const hint = guideIngestHint({
-            available: true,
-            indexed: false,
-            total: guideUrls.length,
-            indexedCount: previouslyIndexedCount,
-          });
-          return hint ? { hint, hasIndexedGuides: previouslyIndexedCount > 0 } : null;
-        }
-      } finally {
-        stopBundleIndexingPoll();
-        // T2-3: Honest polling finish — do a final status read to verify
-        // actual indexed state instead of blindly showing "complete".
-        if (ingestBundleUrl && bundleTargets.length) {
-          try {
-            const finalRes = await fetch(
-              `/api/guide-bundle/status?url=${encodeURIComponent(ingestBundleUrl)}`,
-            );
-            if (finalRes.ok) {
-              const finalData = (await finalRes.json()) as {
-                pages?: { slug: string }[];
-              };
-              const indexed = new Set(
-                (finalData.pages ?? []).map((p: { slug: string }) => p.slug.toLowerCase()),
-              );
-              const remaining = bundleTargets.filter(
-                (slug) => !indexed.has(slug.toLowerCase()),
-              ).length;
-              setIndexingGuideCount(remaining);
-            } else {
-              setIndexingGuideCount(0);
-            }
-          } catch {
-            setIndexingGuideCount(0);
-          }
-        } else {
-          setIndexingGuideCount(0);
-        }
-        setIndexingIsBundlePages(false);
-      }
-      return null;
-    };
-
-    const ingestPromise = urlsNeedingIngest.length ? runGuideIngest() : null;
-    let streamStarted = false;
-    let currentContext: any = null;
-
-    try {
-      // Finish indexing BEFORE asking solve. solve runs its own safety
-      // ensureGuideIngested, so firing both concurrently double-ingests a fresh
-      // guide (2x Tavily extract + 2x embed, racing each other). Awaiting first
-      // makes solve's ingest a no-op skip while keeping the answer grounded in
-      // the guide (and the indexing progress UI runs during this await).
-      const supabase = getSupabase();
-      let accessToken = "";
-      if (supabase) {
-        const { data: sessionData } = await supabase.auth.getSession();
-        accessToken = sessionData.session?.access_token || "";
-      }
-
-      let ingestResult = ingestPromise ? await ingestPromise : null;
-      let userConfirmedFallback = true;
-      if (ingestResult?.hint && ingestResult.hint.includes("Couldn't read")) {
-        userConfirmedFallback = await new Promise<boolean>((resolve) => {
-          setConfirmFallbackModal({
-            hint: ingestResult!.hint,
-            hasIndexedGuides: ingestResult!.hasIndexedGuides,
-            onConfirm: () => {
-              setConfirmFallbackModal(null);
-              resolve(true);
-            },
-            onCancel: () => {
-              setConfirmFallbackModal(null);
-              resolve(false);
-            },
-          });
-        });
-      }
-
-      if (!userConfirmedFallback) {
-        setLoading(false);
-        setGenerationStatus(null);
-        setMessages(
-          oldAssistantMessage
-            ? ([...priorMessagesForRegen(priorMessages, userMessage), oldAssistantMessage] as Message[])
-            : priorMessages,
-        );
-        
-        if (priorMessages.length > 0) {
-          setEditingGame(true);
-        } else {
-          setEditingGame(false);
-          setNewGameOpen(true);
-        }
-        
-        setOptPanel("guide");
-        setTimeout(() => {
-          const panel = document.getElementById("opt-panel-guide");
-          if (panel) {
-            panel.scrollIntoView({ behavior: "smooth", block: "center" });
-            const input = panel.querySelector("input[type='url']") as HTMLInputElement | null;
-            if (input) {
-              input.focus();
-            }
-          }
-        }, 100);
-        return;
-      }
-
-      const response = await fetch("/api/solve", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "X-Trace-Id": traceId,
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
-        },
-        signal: controller.signal,
-        body: JSON.stringify({
-          chatId: activeId,
-          game,
-          platform,
-          question,
-          history,
-          preferredUrls: guideUrls,
-          images,
-          spoilerPrefs,
-          playerName: user ? displayNameFromMetadata(user.user_metadata) : "",
-          userId: user?.id ?? null,
-          bundlePrefs: buildBundlePrefsBody(guideUrls, guideBundleMeta),
-          retryContext,
-        }),
-      });
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let answerData: any = null;
-      let streamError: Error | null = null;
-
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          streamStarted = true;
-          buffer += decoder.decode(value, { stream: true });
-
-          const parts = buffer.split("\n\n");
-          buffer = parts.pop() || "";
-
-          for (const part of parts) {
-            if (!part.trim()) continue;
-            const eventMatch = part.match(/^event:\s*([^\n]+)/m);
-            const dataMatch = part.match(/^data:\s*([^\n]+)/m);
-            if (eventMatch && dataMatch) {
-              const eventName = eventMatch[1].trim();
-              const payloadStr = dataMatch[1].trim();
-              try {
-                const payload = JSON.parse(payloadStr);
-                if (eventName === "status" && payload.text) {
-                  if (activeId) backgroundStatusRef.current[activeId] = payload.text;
-                  if (activeId === activeChatIdRef.current || !activeId) {
-                    setGenerationStatus(payload.text);
-                  }
-                } else if (eventName === "prediction_id" && payload.id) {
-                  if (activeId) predictionIdsRef.current[activeId] = payload.id;
-                } else if (eventName === "context_ready") {
-                  currentContext = payload;
-                } else if (eventName === "result") {
-                  answerData = payload;
-                } else if (eventName === "error" && payload.error) {
-                  streamError = new Error(payload.error);
-                }
-              } catch (e) {
-                // Ignore parsing errors for incomplete chunks
-              }
-            }
-          }
-        }
-      }
-
-      if (streamError) throw streamError;
-
-      const data: unknown = answerData;
-      if (
-        !response.ok ||
-        !data ||
-        typeof data !== "object" ||
-        !("answer" in data) ||
-        typeof data.answer !== "string"
-      ) {
-        throw new Error("Couldn't build a guide. Please try again.");
-      }
-
-      const sources =
-        "sources" in data && Array.isArray(data.sources)
-          ? (data.sources as Source[])
-          : [];
-      const pipelineType = "pipelineType" in data && typeof data.pipelineType === "string" ? data.pipelineType : undefined;
-      let finalToast: string | undefined = undefined;
-      
-      if (
-        "guideHint" in data &&
-        typeof data.guideHint === "string" &&
-        data.guideHint &&
-        data.guideHint !== ingestResult?.hint
-      ) {
-        finalToast = data.guideHint;
-      }
-      if (pipelineType === "fallback_web") {
-        const uploadLabel = uploadedSourceGuideLabel(sources);
-        if (uploadLabel) {
-          finalToast = `Answered from ${uploadLabel.toLowerCase()} + web search`;
-        }
-      }
-      
-      const highlights = coerceHighlights(
-        "highlights" in data ? data.highlights : undefined,
-      );
-      const spoilers = coerceSpoilers("spoilers" in data ? data.spoilers : undefined);
-      
-      const variantBody = buildAssistantVariantBody({
-        content: data.answer as string,
-        sources,
-        highlights,
-        spoilers,
-        pipelineType,
-        spoilerMajor: spoilerPrefs.major,
-      });
-
-      const nextMessages = buildTurnMessagesWithAssistant({
-        priorMessages,
-        userMessage,
-        oldAssistantMessage,
-        variantBody,
-      }) as Message[];
-
-      if (activeId) {
-        backgroundMessagesRef.current[activeId] = nextMessages;
-        backgroundLoadingRef.current[activeId] = false;
-        backgroundStatusRef.current[activeId] = null;
-      }
-      if (activeId === activeChatIdRef.current || !activeId) {
-        setMessages(nextMessages);
-      }
-      conversationGame.current = game;
-      if (activeId) delete abortRefs.current[activeId];
-      succeeded = true;
-      if (activeId === activeChatIdRef.current || !activeId) {
-        setLoading(false);
-        setGenerationStatus(null);
-        if (finalToast) setToast(finalToast);
-        else if (ingestResult?.hint) setToast(ingestResult.hint);
-      }
-
-      const serverPersistsAssistant = serverOwnsAssistantPersist({
-        hasUser: Boolean(user),
-        isTemporary: temporary,
-        hasChatId: Boolean(activeId),
-        hasAuthToken: Boolean(accessToken),
-      });
-
-      if (serverPersistsAssistant && activeId) {
-        const syncChatId = activeId;
-        const supabase = getSupabase();
-        if (supabase) {
-          void (async () => {
-            const synced = await pollUntilMessagesRecovered({
-              fetchMessages: async () => {
-                const loaded = await loadThreadMessages(supabase, syncChatId);
-                return loaded.length ? loaded : null;
-              },
-              optimistic,
-            });
-            if (synced) {
-              const syncedMessages = synced as Message[];
-              backgroundMessagesRef.current[syncChatId] = syncedMessages;
-              if (
-                activeChatIdRef.current === syncChatId &&
-                shouldApplySyncedMessages(nextMessages, syncedMessages)
-              ) {
-                setMessages(syncedMessages);
-              }
-            } else {
-              await persistChat(nextMessages, syncChatId);
-            }
-            void loadChats();
-          })();
-        } else {
-          await persistChat(nextMessages, activeId);
-          void loadChats();
-        }
-      } else {
-        await persistChat(nextMessages, activeId);
-        void loadChats();
-      }
-      if (activeId) activeChatIdRef.current = activeId;
-      // Temporary chat never persists, and images are base64, so no need to clean up Storage.
-    } catch (caught) {
-      const isNetworkDrop = caught instanceof TypeError && caught.message.toLowerCase().includes("fetch");
-      const isServerSidePersistent = Boolean(user);
-      const isAbort = caught instanceof DOMException && caught.name === "AbortError";
-
-      // If stream never started (e.g. no connection at all, backend down), don't pretend it's in background
-      if (!isAbort && isNetworkDrop && isServerSidePersistent && activeId && streamStarted) {
-        const msg = "Continuing process...";
-        backgroundStatusRef.current[activeId] = msg;
-        if (activeChatIdRef.current === activeId) setGenerationStatus(msg);
-        
-        const supabase = getSupabase();
-        if (supabase) {
-           let attempts = 0;
-           while (attempts < 150) {
-             if (controller.signal.aborted) break;
-             await new Promise((res) => setTimeout(res, 2000));
-             attempts++;
-             if (attempts === 30) {
-               backgroundStatusRef.current[activeId] = "Still working in background...";
-               if (activeChatIdRef.current === activeId) setGenerationStatus("Still working in background...");
-             }
-             const loaded = await loadThreadMessages(supabase, activeId);
-             if (loaded.length && pollRecoveredMessages(optimistic, loaded)) {
-               const msgs = loaded as Message[];
-               backgroundMessagesRef.current[activeId] = msgs;
-               backgroundLoadingRef.current[activeId] = false;
-               backgroundStatusRef.current[activeId] = null;
-               delete abortRefs.current[activeId];
-               if (activeChatIdRef.current === activeId) {
-                 setMessages(msgs);
-                 setLoading(false);
-                 setGenerationStatus(null);
-               }
-               void loadChats();
-               succeeded = true;
-               return;
-             }
-           }
-           if (attempts >= 150) {
-             // Timeout: leave the optimistic message in place and stop spinning
-             succeeded = true;
-             return;
-           }
-        }
-      }
-
-      if (activeId) {
-        backgroundMessagesRef.current[activeId] = priorMessages;
-        backgroundLoadingRef.current[activeId] = false;
-        delete abortRefs.current[activeId];
-        if (!temporary) {
-          await persistChat(priorMessages, activeId).catch(() => {});
-        }
-      }
-      if (activeChatIdRef.current === activeId) {
-        setMessages(
-          oldAssistantMessage
-            ? ([...priorMessagesForRegen(priorMessages, userMessage), oldAssistantMessage] as Message[])
-            : priorMessages,
-        );
-        setLoading(false);
-        if (!isAbort) {
-          setError(
-            caught instanceof Error ? caught.message : "An unknown error occurred.",
-          );
-          setRetryAction(() => () => void runTurn(question, priorMessages, activeId, images, currentContext));
-        }
-      }
-    } finally {
-      if (activeId && !succeeded) {
-        backgroundLoadingRef.current[activeId] = false;
-        delete abortRefs.current[activeId];
-      }
-      if (activeChatIdRef.current === activeId) {
-        setLoading(false);
-        if (succeeded) setGenerationStatus(null);
-      }
-      // Answer's in: hand focus back to the composer on desktop so a follow-up
-      // can be typed right away. Skip on touch-primary devices — focus pops the
-      // keyboard over the answer. rAF waits for the textarea to un-disable.
-      if (succeeded) {
-        const touchPrimary = window.matchMedia?.(
-          "(pointer: coarse) and (hover: none)",
-        )?.matches;
-        if (!touchPrimary) {
-          requestAnimationFrame(() => composerRef.current?.focus());
-        }
-      }
-    }
-  }
-
-  function stopGeneration() {
-    if (activeChatIdRef.current) {
-      const activeId = activeChatIdRef.current;
-      abortRefs.current[activeId]?.abort();
-      
-      const pid = predictionIdsRef.current[activeId];
-      if (pid) {
-        fetch("/api/solve/cancel", { 
-          method: "POST", 
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ predictionId: pid })
-        }).catch(console.error);
-      }
-    }
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (editingIndex !== null) {
-      await saveEdit(editingIndex);
-      return;
-    }
-    const question = input.trim();
-    if (!game.trim() || question.length < 2 || loading) return;
-
-    const switching =
-      messages.length > 0 &&
-      normGame(game) !== normGame(conversationGame.current);
-    const priorMessages = switching ? [] : messages;
-    const targetChatId = switching ? null : activeChatIdRef.current;
-    if (switching) setActiveChatId(null);
-
-    setInput("");
-    setLoading(true); // cover the upload gap before runTurn takes over
-    const images = await uploadMessageImages();
-    clearPendingImages();
-    await runTurn(question, priorMessages, targetChatId, images);
-  }
-
-  function startEdit(index: number) {
-    if (loading) return;
-    setEditingIndex(index);
-    const msg = messages[index];
-    setInput(msg.content);
-    if (msg.images && msg.images.length > 0) {
-      setPendingImages(msg.images.map((url) => ({ preview: url, isExisting: true })));
-    } else {
-      setPendingImages([]);
-    }
-    setTimeout(() => {
-      composerRef.current?.focus();
-      document.getElementById(`msg-${index}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-    }, 0);
-  }
-
-  function cancelEdit() {
-    setEditingIndex(null);
-    setInput("");
-    clearPendingImages();
-  }
-
-  // Editing/retrying discards the dropped turns' attached images. Confirm first
-  // when there's actually an image to lose; plain text edits stay instant.
-  async function confirmDropImages(dropped: Message[]) {
-    const count = dropped.reduce((n, m) => n + (m.images?.length ?? 0), 0);
-    if (count === 0) return true;
-    return askConfirm(
-      `This action will discard ${count} attached image${count > 1 ? "s" : ""} from the messages after this one. Continue?`,
-    );
-  }
-
-  async function saveEdit(index: number) {
-    const text = input.trim();
-    if (text.length < 2 || loading) return;
-
-    const dropped = messages.slice(index + 2);
-    if (!(await confirmDropImages(dropped))) return;
-
-    setLoading(true);
-    const newImages = await uploadMessageImages();
-    await deleteMessageImages(dropped);
-
-    const oldImages = messages[index].images || [];
-    const removedImages = oldImages.filter(url => !newImages.includes(url));
-    if (removedImages.length > 0 && !temporary) {
-      await deleteMessageImages([{ role: "user", content: "", images: removedImages }]);
-    }
-
-    clearPendingImages();
-    setInput("");
-    setEditingIndex(null);
-    const oldAssistantMessage = messages.length > index + 1 && messages[index + 1].role === "assistant" ? messages[index + 1] : undefined;
-    await runTurn(text, messages.slice(0, index), activeChatIdRef.current, newImages, null, oldAssistantMessage);
-  }
-
-  async function retry(index: number) {
-    if (loading || index < 1 || messages[index - 1].role !== "user") return;
-    const question = messages[index - 1].content;
-    const existingImages = messages[index - 1].images || [];
-    const dropped = messages.slice(index + 1);
-    if (!(await confirmDropImages(dropped))) return;
-    await deleteMessageImages(dropped);
-    await runTurn(question, messages.slice(0, index), activeChatIdRef.current, existingImages, null, messages[index]);
-  }
-
-  function onNavigateVariant(msgIndex: number, variantIndex: number) {
-    setMessages((prev) => {
-      const next = [...prev];
-      const msg = next[msgIndex];
-      if (!msg || msg.role !== "assistant" || !msg.variants || variantIndex < 0 || variantIndex >= msg.variants.length) return next;
-      
-      const variant = msg.variants[variantIndex];
-      next[msgIndex] = {
-        ...msg,
-        content: variant.content,
-        sources: variant.sources,
-        highlights: variant.highlights,
-        spoilers: variant.spoilers,
-        pipelineType: variant.pipelineType,
-        activeVariantIndex: variantIndex,
-      };
-      
-      if (activeChatIdRef.current) {
-        void persistChat(next, activeChatIdRef.current).catch(() => {});
-      }
-      return next;
-    });
-  }
+  const {
+    runTurn,
+    stopGeneration,
+    handleSubmit,
+    startEdit,
+    cancelEdit,
+    saveEdit,
+    retry,
+    onNavigateVariant,
+  } = useChatTurn({
+    temporary,
+    user,
+    game,
+    platform,
+    preferredUrls,
+    cover,
+    releaseYear,
+    messages,
+    input,
+    editingIndex,
+    loading,
+    guideBundleMeta,
+    bundleIndexStatus,
+    guideIndexState,
+    spoilerPrefs,
+    setActiveChatId,
+    setChats,
+    setMessages,
+    setError,
+    setRetryAction,
+    setLoading,
+    setGenerationStatus,
+    setEditingIndex,
+    setIndexingIsBundlePages,
+    setIndexingGuideCount,
+    setGuideIndexState,
+    setGuideBundleMeta,
+    setBundleStatusRev,
+    setConfirmFallbackModal,
+    setEditingGame,
+    setNewGameOpen,
+    setOptPanel,
+    setToast,
+    setInput,
+    setPendingImages,
+    activeChatIdRef,
+    backgroundMessagesRef,
+    backgroundLoadingRef,
+    backgroundStatusRef,
+    abortRefs,
+    predictionIdsRef,
+    conversationGame,
+    composerRef,
+    loadChats,
+    resolveCoverUrl,
+    uploadMessageImages,
+    clearPendingImages,
+    deleteMessageImages,
+    askConfirm,
+    applyIngestRowToMeta,
+    startBundleIndexingPoll,
+    stopBundleIndexingPoll,
+    normGame,
+  });
 
   const started = messages.length > 0;
   const hasGame = Boolean(game.trim());

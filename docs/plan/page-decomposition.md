@@ -31,7 +31,7 @@ UI shells follow.
 | `app/chat/answer-body.tsx` | Done | Markdown answer rendering |
 | `app/chat/message-list.tsx` | Done | User/assistant bubbles, variant nav |
 | `app/chat/composer-shell.tsx` | Done | Composer + extras wiring |
-| `app/chat/use-chat-turn.ts` | Pending | `runTurn`, abort, background poll, regen |
+| `app/chat/use-chat-turn.tsx` | Done | `runTurn`, persist, edit/retry, variant nav |
 | `app/page.tsx` | Layout orchestration only (~800–1200 lines) |
 
 ## Rules
@@ -45,11 +45,11 @@ UI shells follow.
 
 1. `lib/chat-messages.js` — done
 2. `lib/chat-thread` + persist — done (Phase 2–3)
-3. `message-list.tsx` + `composer-shell.tsx` — done
-4. `use-chat-turn.ts` — largest risk; next extraction
+3. `message-list.tsx` + `composer-shell.tsx` + `use-chat-turn.tsx` — done
+4. Further splits (game card, sidebar, setup form) — optional
 
 ## Exit criteria
 
-- `page.tsx` under 3000 lines (currently ~4300 after first UI split)
+- `page.tsx` under 3000 lines (currently ~3614 after `use-chat-turn` extraction)
 - Chat bugs fixed in `lib/chat-*` without scrolling a monolith
 - No new circular imports (`page.tsx` → chat modules → `page.tsx`)
