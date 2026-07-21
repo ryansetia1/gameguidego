@@ -169,9 +169,11 @@ export async function POST(request: Request) {
         sendEvent("status", { text: "Understanding your question..." });
         const rewriteStart = Date.now();
         const forRag = preferredUrls.length > 0;
-        const rawInputs = JSON.stringify({ question, history, game, platform, forRag });
+        // images are part of the query context now (vision-aware rewrite), so they
+        // must key the cache too — else a text-only query gets served for a screenshot.
+        const rawInputs = JSON.stringify({ question, history, game, platform, forRag, images });
         const rewriteCacheKey = `rewrite::${createHash("sha256").update(rawInputs).digest("hex")}`;
-        
+
         let searchTopic = retryContext?.searchTopic || (await getCachedSearch(rewriteCacheKey)) as string | null;
         if (typeof searchTopic !== "string") {
           searchTopic = await resolveQuestion({
@@ -180,6 +182,7 @@ export async function POST(request: Request) {
             game,
             platform,
             userId,
+            images,
             forRag,
           });
           void setCachedSearch(rewriteCacheKey, searchTopic);

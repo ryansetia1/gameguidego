@@ -158,6 +158,7 @@ export async function resolveQuestion(input: {
   game?: string;
   platform?: string;
   userId?: string | null;
+  images?: string[];
   signal?: AbortSignal;
   /** Preferred-guide RAG: longer contextual retrieval query instead of a short web-search string. */
   forRag?: boolean;
@@ -170,9 +171,12 @@ export async function resolveQuestion(input: {
   const instruction = forRag ? REWRITE_RAG_INSTRUCTION : REWRITE_INSTRUCTION;
   const maxOutputTokens = forRag ? 400 : 200;
   const maxChars = forRag ? 600 : 200;
+  // Vision-aware rewrite: without the image, "how do I beat this boss?" rewrites
+  // to a blind query that drives search/RAG retrieval at the wrong target.
+  const images = (input.images ?? []).filter((url) => typeof url === "string" && url);
 
   try {
-    const prompt = buildRewritePrompt(input);
+    const prompt = buildRewritePrompt({ ...input, imageCount: images.length });
     const { output: rawOutput, durationMs, predictTimeMs, inputTokens, outputTokens } =
       await runModel(
       replicate,
@@ -180,6 +184,7 @@ export async function resolveQuestion(input: {
       {
         prompt,
         system_instruction: instruction,
+        ...(images.length ? { images } : {}),
         temperature: 0.2,
         max_output_tokens: maxOutputTokens,
         thinking_budget: 0,
