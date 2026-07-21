@@ -48,6 +48,8 @@ type Props = {
   bundleMeta?: Record<string, GuideBundleMeta>;
   onBundleMetaChange?: (meta: Record<string, GuideBundleMeta>) => void;
   onGuideCheckChange?: (checking: boolean) => void;
+  onPendingChange?: (pending: boolean) => void;
+  onRequestConfirm?: (options: { message: string; confirmLabel?: string; danger?: boolean }) => Promise<boolean>;
   guideIndexState?: Record<string, "unknown" | "checking" | "indexed" | "failed" | "unavailable" | "pending">;
 };
 
@@ -108,6 +110,8 @@ export function GuideLinkField({
   bundleMeta = {},
   onBundleMetaChange,
   onGuideCheckChange,
+  onPendingChange,
+  onRequestConfirm,
   guideIndexState = {},
 }: Props) {
   const [mode, setMode] = useState<"link" | "search" | "upload">("link");
@@ -342,6 +346,11 @@ export function GuideLinkField({
   }, [previewLoading, bundlePreview, onGuideCheckChange]);
 
   useEffect(() => {
+    onPendingChange?.(Boolean(uploadFile) || Boolean(bundlePreview));
+    return () => onPendingChange?.(false);
+  }, [uploadFile, bundlePreview, onPendingChange]);
+
+  useEffect(() => {
     if (canSearch) return;
     setResults([]);
     setSearchError("");
@@ -421,6 +430,14 @@ export function GuideLinkField({
       return;
     }
 
+    const isDuplicate = value.some(
+      (url) => isUploadedGuideUrl(url) && uploadedGuideFilename(url) === uploadFile.name
+    );
+    if (isDuplicate) {
+      setUploadError("That file is already in your guide list.");
+      return;
+    }
+
     setUploading(true);
     setUploadError("");
     try {
@@ -460,40 +477,42 @@ export function GuideLinkField({
 
   return (
     <div className="guide-link-field">
-      <div className="guide-link-modes" role="tablist" aria-label="Preferred guide sources">
-        <button
-          type="button"
-          role="tab"
-          className={mode === "link" ? "active" : undefined}
-          aria-selected={mode === "link"}
-          disabled={disabled}
-          onClick={() => setMode("link")}
-        >
-          Paste link
-        </button>
-        <button
-          type="button"
-          role="tab"
-          className={mode === "search" ? "active" : undefined}
-          aria-selected={mode === "search"}
-          disabled={disabled}
-          onClick={() => setMode("search")}
-        >
-          Search web
-        </button>
-        {userId && (
+      {!atMax && (
+        <div className="guide-link-modes" role="tablist" aria-label="Preferred guide sources">
           <button
             type="button"
             role="tab"
-            className={mode === "upload" ? "active" : undefined}
-            aria-selected={mode === "upload"}
+            className={mode === "link" ? "active" : undefined}
+            aria-selected={mode === "link"}
             disabled={disabled}
-            onClick={() => setMode("upload")}
+            onClick={() => setMode("link")}
           >
-            Upload file
+            Paste link
           </button>
-        )}
-      </div>
+          <button
+            type="button"
+            role="tab"
+            className={mode === "search" ? "active" : undefined}
+            aria-selected={mode === "search"}
+            disabled={disabled}
+            onClick={() => setMode("search")}
+          >
+            Search web
+          </button>
+          {userId && (
+            <button
+              type="button"
+              role="tab"
+              className={mode === "upload" ? "active" : undefined}
+              aria-selected={mode === "upload"}
+              disabled={disabled}
+              onClick={() => setMode("upload")}
+            >
+              Upload file
+            </button>
+          )}
+        </div>
+      )}
 
       {value.length > 0 && (
         <ul className="guide-url-list" aria-label="Added guides">
@@ -602,7 +621,7 @@ export function GuideLinkField({
         </div>
       )}
 
-      {mode === "link" && (
+      {!atMax && mode === "link" && (
         <form className="guide-url-add-form" onSubmit={onAddSubmit} role="tabpanel">
           <div className="guide-url-input-wrapper">
             <input
@@ -654,7 +673,7 @@ export function GuideLinkField({
         </form>
       )}
       
-      {mode === "search" && (
+      {!atMax && mode === "search" && (
         <div
           className={`guide-search-panel${canSearch ? "" : " is-inactive"}`}
           role="tabpanel"
@@ -743,7 +762,7 @@ export function GuideLinkField({
         </div>
       )}
 
-      {mode === "upload" && userId && (
+      {!atMax && mode === "upload" && userId && (
         <div className="guide-upload-panel" role="tabpanel" aria-label="Upload a guide file">
           <div className="guide-upload-form" style={{ display: "flex", flexDirection: "column", gap: "10px", alignItems: "stretch", marginBottom: "8px" }}>
             <input
@@ -757,27 +776,64 @@ export function GuideLinkField({
                 setUploadError("");
               }}
             />
-            <button
-              type="button"
-              className="nav-button"
-              disabled={disabled || uploading || atMax}
-              onClick={() => fileInputRef.current?.click()}
-              style={{ width: "100%", justifyContent: "center" }}
-            >
-              Choose File
-            </button>
-            {uploadFile && (
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px", alignItems: "flex-start" }}>
-                <span className="field-hint" style={{ margin: 0 }}>
-                  {uploadFile.name} · {(uploadFile.size / 1024).toFixed(0)} KB
-                </span>
+            {!uploadFile ? (
+              <button
+                type="button"
+                className="nav-button"
+                disabled={disabled || uploading || atMax}
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  background: "var(--signal)",
+                  color: "var(--on-signal)",
+                  borderColor: "var(--signal)",
+                  width: "100%",
+                  justifyContent: "center",
+                }}
+              >
+                Choose File
+              </button>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", alignItems: "flex-start", width: "100%", padding: "12px", border: "1px dashed var(--line)", borderRadius: "6px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "2px", overflow: "hidden" }}>
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>Ready to upload</span>
+                    <span className="field-hint" style={{ margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink)" }}>
+                      {uploadFile.name} <span style={{ color: "var(--muted)" }}>· {(uploadFile.size / 1024).toFixed(0)} KB</span>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const confirmed = onRequestConfirm
+                        ? await onRequestConfirm({ message: "Remove this file from the staging area?", confirmLabel: "Remove", danger: true })
+                        : window.confirm("Remove this file from the staging area?");
+                      if (confirmed) {
+                        setUploadFile(null);
+                        setUploadError("");
+                        if (fileInputRef.current) fileInputRef.current.value = "";
+                      }
+                    }}
+                    aria-label="Remove selected file"
+                    title="Remove selected file"
+                    style={{ background: "var(--paper)", border: "1px solid var(--line)", borderRadius: "4px", cursor: "pointer", color: "var(--text-subtle)", display: "flex", padding: "4px", flexShrink: 0 }}
+                  >
+                    <IconX size={14} />
+                  </button>
+                </div>
                 <button
                   type="button"
                   className="nav-button"
                   disabled={disabled || uploading || !uploadFile || atMax}
                   onClick={handleFileUpload}
+                  style={{
+                    background: "var(--signal)",
+                    color: "var(--on-signal)",
+                    borderColor: "var(--signal)",
+                    width: "100%",
+                    justifyContent: "center",
+                  }}
                 >
-                  {uploading ? "Uploading…" : "Upload & index"}
+                  {uploading ? "Uploading…" : `Upload & index (${(uploadFile.size / (1024 * 1024)).toFixed(2)} MB)`}
                 </button>
               </div>
             )}

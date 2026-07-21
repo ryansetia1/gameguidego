@@ -766,6 +766,7 @@ export default function Home() {
     Record<string, { meta: boolean; status: boolean }>
   >({});
   const [guideChecking, setGuideChecking] = useState(false);
+  const [guidePending, setGuidePending] = useState(false);
   const [guideIndexState, setGuideIndexState] = useState<
     Record<string, "unknown" | "checking" | "indexed" | "failed" | "unavailable" | "pending">
   >({});
@@ -3652,6 +3653,8 @@ export default function Home() {
                       bundleMeta={guideBundleMeta}
                       onBundleMetaChange={setGuideBundleMeta}
                       onGuideCheckChange={setGuideChecking}
+                      onPendingChange={setGuidePending}
+                      onRequestConfirm={(opts) => new Promise(resolve => setConfirmState({ ...opts, resolve }))}
                       guideIndexState={guideIndexState}
                       game={game}
                       platform={platform}
@@ -3662,8 +3665,28 @@ export default function Home() {
                       <button 
                         type="button"
                         className="nav-button" 
-                        onClick={() => { setShowQuickAdd(false); void saveGameMeta(); }}
-                        style={{ background: 'var(--action)', color: 'white', borderColor: 'var(--action)', width: '100%', justifyContent: 'center' }}
+                        onClick={async () => {
+                          if (guidePending) {
+                            const ok = await new Promise<boolean>((resolve) => {
+                              setConfirmState({
+                                message: "You have a guide selected but haven't added it. Close anyway?",
+                                confirmLabel: "Close without adding",
+                                danger: true,
+                                resolve,
+                              });
+                            });
+                            if (!ok) return;
+                          }
+                          setShowQuickAdd(false); 
+                          void saveGameMeta(); 
+                        }}
+                        style={{ 
+                          background: preferredUrls.length > 0 ? 'var(--signal)' : 'var(--action)', 
+                          color: preferredUrls.length > 0 ? 'var(--on-signal)' : 'white', 
+                          borderColor: preferredUrls.length > 0 ? 'var(--signal)' : 'var(--action)', 
+                          width: '100%', 
+                          justifyContent: 'center' 
+                        }}
                       >
                         Done
                       </button>
@@ -3926,6 +3949,8 @@ export default function Home() {
                   bundleMeta={guideBundleMeta}
                   onBundleMetaChange={setGuideBundleMeta}
                   onGuideCheckChange={setGuideChecking}
+                  onPendingChange={setGuidePending}
+                  onRequestConfirm={(opts) => new Promise(resolve => setConfirmState({ ...opts, resolve }))}
                   guideIndexState={guideIndexState}
                   game={game}
                   platform={platform}
@@ -3946,7 +3971,29 @@ export default function Home() {
           </div>
           {editingGame && (
             <div className="field field-wide setup-done">
-              <button type="button" className="nav-button" onClick={() => void saveGameMeta()}>
+              <button 
+                type="button" 
+                className="nav-button"
+                style={
+                  preferredUrls.length > 0
+                    ? { background: "var(--signal)", color: "var(--on-signal)", borderColor: "var(--signal)" }
+                    : undefined
+                }
+                onClick={async () => {
+                  if (guidePending) {
+                    const ok = await new Promise<boolean>((resolve) => {
+                      setConfirmState({
+                        message: "You have a guide selected but haven't added it. Close anyway?",
+                        confirmLabel: "Close without adding",
+                        danger: true,
+                        resolve,
+                      });
+                    });
+                    if (!ok) return;
+                  }
+                  void saveGameMeta();
+                }}
+              >
                 Done
               </button>
             </div>
