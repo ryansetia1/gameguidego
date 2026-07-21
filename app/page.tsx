@@ -3696,14 +3696,6 @@ export default function Home() {
               </div>
             );
 
-            if (preferredUrls.length === 0) {
-              return (
-                <div className="game-card-guides">
-                  {renderQuickAdd()}
-                </div>
-              );
-            }
-
             const renderGuideStack = (url: string) => {
               const row = gameCardGuideRow(
                 url,
