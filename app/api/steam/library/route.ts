@@ -74,7 +74,7 @@ export async function GET(request: Request) {
       });
       const foundIds = new Set<number>();
       if (!error && Array.isArray(cached)) {
-        for (const row of cached) {
+        for (const row of cached as any[]) {
           years[row.app_id] = row.release_year ?? "";
           foundIds.add(row.app_id);
         }
