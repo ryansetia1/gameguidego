@@ -31,8 +31,10 @@ export async function GET(request: Request) {
 
   let accountSteamId: string | null = null;
   let authed = false;
+  let supabase: ReturnType<typeof createClient> | null = null;
+  
   if (token && url && anonKey) {
-    const supabase = createClient(url, anonKey, {
+    supabase = createClient(url, anonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
     const { data, error } = await supabase.auth.getUser();
@@ -59,13 +61,66 @@ export async function GET(request: Request) {
 
   try {
     const games = await fetchOwnedGames(steamId, steamKey);
-    // Owned-games has no release date; enrich with a batch GetItems lookup so the
-    // shelf can show platform · year. Best-effort — years just stay absent on
-    // failure. (`games` is typed loosely from the JS helper.)
-    const years = await fetchSteamReleaseYears(
-      games.map((game: { appId: number }) => game.appId),
-      steamKey,
-    );
+    const allAppIds = games.map((game: { appId: number }) => game.appId);
+    
+    const years: Record<number, string> = {};
+    const missingAppIds: number[] = [];
+
+    // 1. Read from Supabase Cache
+    if (supabase) {
+      const { data: cached, error } = await supabase.rpc("get_and_touch_steam_games", {
+        p_app_ids: allAppIds,
+      });
+      const foundIds = new Set<number>();
+      if (!error && Array.isArray(cached)) {
+        for (const row of cached) {
+          years[row.app_id] = row.release_year ?? "";
+          foundIds.add(row.app_id);
+        }
+      }
+      for (const id of allAppIds) {
+        if (!foundIds.has(id)) missingAppIds.push(id);
+      }
+    } else {
+      missingAppIds.push(...allAppIds);
+    }
+
+    // 2. Fetch missing release years from Steam
+    if (missingAppIds.length > 0) {
+      const missingYears = await fetchSteamReleaseYears(missingAppIds, steamKey);
+      
+      const p_app_ids: number[] = [];
+      const p_names: string[] = [];
+      const p_platforms: string[] = [];
+      const p_release_years: string[] = [];
+      const p_cover_urls: string[] = [];
+
+      for (const id of missingAppIds) {
+        const year = missingYears[id] ?? "";
+        years[id] = year;
+        
+        if (supabase) {
+          p_app_ids.push(id);
+          const game = games.find((g: any) => g.appId === id);
+          p_names.push(game?.name ?? "Unknown");
+          p_platforms.push("Steam");
+          p_release_years.push(year);
+          p_cover_urls.push(game?.cover ?? "");
+        }
+      }
+
+      // Upsert missing back to Cache
+      if (supabase && p_app_ids.length > 0) {
+        const { error } = await supabase.rpc("upsert_steam_games_meta", {
+          p_app_ids,
+          p_names,
+          p_platforms,
+          p_release_years,
+          p_cover_urls,
+        });
+        if (error) console.error("Failed to upsert steam games cache:", error);
+      }
+    }
     const enriched = games.map((game: { appId: number }) => ({
       ...game,
       releaseYear: years[game.appId] ?? "",
