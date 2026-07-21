@@ -1,7 +1,7 @@
 # `app/page.tsx` decomposition plan
 
-**Status:** Draft  
-**Depends on:** [chat-persistence-refactor.md](./chat-persistence-refactor.md) Phase 1 (optional but recommended)
+**Status:** In progress (Phase 4 started)  
+**Depends on:** [chat-persistence-refactor.md](./chat-persistence-refactor.md) Phase 3 (complete)
 
 ## Problem
 
@@ -25,11 +25,13 @@ UI shells follow.
 | Module | Responsibility |
 |--------|----------------|
 | `lib/chat-messages.js` | Done | `coerceMessages`, `snapshotAssistantVariants`, `pollRecoveredMessages` |
-| `lib/chat-thread.ts` | After Phase 1 single-writer decision | Supabase load/save |
-| `lib/chat-session.ts` | Already exists: draft/sessionStorage sync |
-| `app/chat/use-chat-turn.ts` | `runTurn`, abort, background poll, regen |
-| `app/chat/message-list.tsx` | Render user/assistant bubbles, variant nav |
-| `app/chat/composer-shell.tsx` | Composer + extras wiring |
+| `lib/chat-thread.js` + `lib/chat-thread-persist.js` | Done | Normalized load/save |
+| `lib/chat-message-ui.js` | Done | Source labels, highlight grouping |
+| `app/chat/types.ts` | Done | Shared `Message` type |
+| `app/chat/answer-body.tsx` | Done | Markdown answer rendering |
+| `app/chat/message-list.tsx` | Done | User/assistant bubbles, variant nav |
+| `app/chat/composer-shell.tsx` | Done | Composer + extras wiring |
+| `app/chat/use-chat-turn.ts` | Pending | `runTurn`, abort, background poll, regen |
 | `app/page.tsx` | Layout orchestration only (~800–1200 lines) |
 
 ## Rules
@@ -41,12 +43,13 @@ UI shells follow.
 
 ## Order
 
-1. `lib/chat-messages.js` — done (Phase 0); `check.mjs` coverage
-2. `lib/chat-thread.ts` — after Phase 1 single-writer decision
-3. `use-chat-turn.ts` — largest risk; do last before UI splits
+1. `lib/chat-messages.js` — done
+2. `lib/chat-thread` + persist — done (Phase 2–3)
+3. `message-list.tsx` + `composer-shell.tsx` — done
+4. `use-chat-turn.ts` — largest risk; next extraction
 
 ## Exit criteria
 
-- `page.tsx` under 3000 lines
+- `page.tsx` under 3000 lines (currently ~4300 after first UI split)
 - Chat bugs fixed in `lib/chat-*` without scrolling a monolith
 - No new circular imports (`page.tsx` → chat modules → `page.tsx`)

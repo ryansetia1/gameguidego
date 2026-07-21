@@ -4,23 +4,20 @@ import type { User } from "@supabase/supabase-js";
 import { FormEvent, type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { AuthPanel } from "./auth-panel";
+import { ComposerShell } from "./chat/composer-shell";
+import { MessageList } from "./chat/message-list";
+import { type Message, type Source, parseStoredMessages } from "./chat/types";
 import { ClearButton } from "./clear-button";
-import { ComposerExtras } from "./composer-extras";
 import { GameAutocomplete } from "./game-autocomplete";
 import {
   IconArrowLeft,
   IconArrowUpRight,
   IconChevronDown,
-  IconChevronLeft,
-  IconChevronRight,
-  IconDiamond,
   IconDotsVertical,
   IconGrid,
   IconIncognito,
-  IconPencil,
   IconPlus,
   IconRefresh,
-  IconStop,
   IconX,
   IconCheck,
   IconClock,
@@ -41,7 +38,6 @@ import { priorMessagesForRegen } from "@/lib/chat-thread.js";
 import {
   WRITING_ANSWER_PLACEHOLDER,
   coerceMessages,
-  messageShowsVariantNav,
   pollRecoveredMessages,
   snapshotAssistantVariants,
 } from "@/lib/chat-messages.js";
@@ -73,6 +69,7 @@ import {
   uploadedGuideFilename,
 } from "@/lib/guide-urls.js";
 import { compressImage } from "@/lib/image.js";
+import { uploadedSourceGuideLabel } from "@/lib/chat-message-ui.js";
 
 function buildBundlePrefsBody(
   urls: string[],
@@ -267,17 +264,11 @@ import { HltbRow } from "./hltb-row";
 import { PlatformSelect } from "./platform-select";
 import { SteamLibrary, type SteamGame } from "./steam-library";
 import { ProfileMenu } from "./profile-menu";
-import { VoiceVisualizer } from "./voice-visualizer";
 import { Lightbox } from "./lightbox";
 import {
-  KINDS,
-  KIND_LABELS,
   coerceHighlights,
   coerceSpoilers,
-  type Highlight,
-  type SpoilerReveal,
 } from "@/lib/highlights.js";
-import { parseBlocks } from "@/lib/markdown.js";
 import { tgdbPlatformToLabel } from "@/lib/platforms.js";
 import {
   GAME_SPOILER_HINT,
@@ -326,33 +317,6 @@ async function fetchSteamStatus(token?: string) {
   };
 }
 
-type Source = {
-  title: string;
-  url: string;
-};
-
-type Message = {
-  role: "user" | "assistant";
-  content: string;
-  sources?: Source[];
-  highlights?: Highlight[];
-  spoilers?: SpoilerReveal[];
-  images?: string[];
-  pipelineType?: string;
-  variants?: Omit<Message, "role" | "variants" | "activeVariantIndex">[];
-  activeVariantIndex?: number;
-};
-
-function parseStoredMessages(raw: unknown): Message[] {
-  return coerceMessages(raw) as Message[];
-}
-
-function assistantHasVariantNav(
-  message: Message,
-): message is Message & { variants: NonNullable<Message["variants"]> } {
-  return messageShowsVariantNav(message);
-}
-
 const EXAMPLES_DISMISSED_KEY = "gg:examples-dismissed";
 const MAX_MESSAGE_IMAGES = 10;
 
@@ -363,49 +327,6 @@ const examples = [
   { game: "Final Fantasy VII", platform: "PlayStation (PS1)", q: "How do I beat Emerald Weapon?" },
   { game: "Elden Ring", platform: "PC", q: "Best build for beginners" },
 ];
-
-function hostname(url: string) {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return "web";
-  }
-}
-
-function uploadedSourceGuideLabel(sources?: Source[]): string | null {
-  const uploadSrc = sources?.find((source) => isUploadedGuideUrl(source.url));
-  if (!uploadSrc) return null;
-  const fileType = uploadedGuideFileTypeLabel(uploadSrc.url);
-  if (fileType === "PDF" || fileType === "TXT" || fileType === "MD") {
-    return `Your ${fileType} guide`;
-  }
-  return "Your uploaded guide";
-}
-
-function pipelineSourceLabel(
-  pipelineType?: string,
-  sources?: Source[],
-): string {
-  const uploadLabel = uploadedSourceGuideLabel(sources);
-  const hasWebSources = sources?.some((source) => !isUploadedGuideUrl(source.url));
-  
-  if (uploadLabel) {
-    if (pipelineType === "fallback_web" || (hasWebSources && pipelineType !== "rag")) {
-      return `${uploadLabel} + Web search`;
-    }
-    return uploadLabel;
-  }
-  
-  if (pipelineType === "rag") return "Your guide";
-  if (pipelineType === "fallback_web" || pipelineType === "web") return "Web search";
-  return "AI knowledge";
-}
-
-function isUploadOnlySources(sources?: Source[]): boolean {
-  return Boolean(
-    sources?.length && sources.every((source) => isUploadedGuideUrl(source.url)),
-  );
-}
 
 function normGame(value: string) {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
@@ -440,47 +361,6 @@ async function deleteMessageImages(messages: Message[]) {
   } catch (caught) {
     console.error("Message image cleanup failed:", caught);
   }
-}
-
-function renderInline(segments: { text: string; bold: boolean; italic: boolean }[]) {
-  return segments.map((seg, i) => {
-    if (seg.bold) return <strong key={i}>{seg.text}</strong>;
-    if (seg.italic) return <em key={i}>{seg.text}</em>;
-    return <span key={i}>{seg.text}</span>;
-  });
-}
-
-// Render the model's light markdown (paragraphs, numbered/bulleted lists, bold)
-// as real elements so **bold** and "1." aren't shown literally and text wraps.
-function AnswerBody({ text }: { text: string }) {
-  return (
-    <div className="answer">
-      {parseBlocks(text).map((block, i) => {
-        if (block.type === "ol") {
-          return (
-            <ol key={i}>
-              {block.items.map((item, j) => (
-                <li key={j}>{renderInline(item)}</li>
-              ))}
-            </ol>
-          );
-        }
-        if (block.type === "ul") {
-          return (
-            <ul key={i}>
-              {block.items.map((item, j) => (
-                <li key={j}>{renderInline(item)}</li>
-              ))}
-            </ul>
-          );
-        }
-        if (block.type === "h") {
-          return <h4 key={i}>{renderInline(block.segments)}</h4>;
-        }
-        return <p key={i}>{renderInline(block.segments)}</p>;
-      })}
-    </div>
-  );
 }
 
 // Box art if we have a URL, otherwise a letter tile (matches the brand mark).
@@ -706,13 +586,6 @@ function SteamIcon() {
       <path d="M496 256c0 137-111.2 248-248.4 248-113.8 0-209.6-76.3-239-180.4l95.2 39.3c6.4 32.1 34.9 56.4 68.9 56.4 39.2 0 71.9-32.4 70.2-73.5l84.5-60.2c52.1 1.3 95.8-40.9 95.8-93.5 0-51.6-42-93.5-93.7-93.5s-93.7 42-93.7 93.5v1.2L176.6 279c-15.5-.9-30.7 3.4-43.5 12.1L0 236.1C10.2 108.4 117.1 8 247.6 8 384.8 8 496 119 496 256zM155.7 384.3l-30.5-12.6a52.79 52.79 0 0 0 27.2 25.8c26.9 11.2 57.8-1.6 69-28.5 5.4-13 5.5-27.3.1-40.3-5.4-13-15.5-23.2-28.5-28.6-12.9-5.4-26.7-5.2-38.9-.6l31.5 13c19.8 8.2 29.2 30.9 20.9 50.7-8.3 19.9-31 29.2-50.8 20.9v.2zm173.6-129.9c-34.4 0-62.4-28-62.4-62.3s28-62.3 62.4-62.3 62.4 28 62.4 62.3-27.9 62.3-62.4 62.3zm.1-15.6c25.9 0 46.9-21 46.9-46.8 0-25.9-21-46.8-46.9-46.8s-46.9 21-46.9 46.8c0 25.8 21 46.8 46.9 46.8z" />
     </svg>
   );
-}
-
-function groupHighlights(highlights: Highlight[]) {
-  return KINDS.flatMap((kind) => {
-    const items = highlights.filter((h) => h.kind === kind);
-    return items.length ? [{ kind, items }] : [];
-  });
 }
 
 function SpoilerToggle({
@@ -4246,231 +4119,28 @@ export default function Home() {
       ) : null}
 
       {started && (
-        <section className="feed" aria-live="polite">
-          {messages.map((message, index) =>
-            message.role === "user" ? (
-              <div
-                className={`turn user${editingIndex === index ? " editing" : ""}`}
-                key={index}
-                ref={index === lastUserIndex ? lastUserRef : undefined}
-              >
-                {editingIndex === index ? (
-                  <div style={{ opacity: 0.6, fontStyle: "italic", padding: "8px 0" }}>
-                    <p>Your message will start from here...</p>
-                  </div>
-                ) : (
-                  <>
-                    {message.images && message.images.length > 0 && (
-                      <div className="msg-images">
-                        {message.images.map((url, i) => (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <a key={i} href={url} target="_blank" rel="noreferrer">
-                            <img 
-                                className="msg-image" 
-                                src={url} 
-                                alt="Attached" 
-                                loading="lazy" 
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  setLightboxState({ images: message.images!, index: i });
-                                }}
-                                style={{ cursor: "zoom-in" }}
-                            />
-                          </a>
-                        ))}
-                      </div>
-                    )}
-                    <p>{message.content}</p>
-                    <button
-                      type="button"
-                      className="turn-action turn-action-icon"
-                      aria-label="Edit message"
-                      onClick={() => startEdit(index)}
-                      disabled={loading}
-                    >
-                      <IconPencil />
-                    </button>
-                  </>
-                )}
-              </div>
-            ) : (
-              <article
-                className="turn guide"
-                key={index}
-                ref={index === lastGuideIndex ? lastGuideRef : undefined}
-              >
-                <div className="guide-head">
-                  <div className="guide-tag icon-inline">
-                    <IconDiamond /> ANSWER
-                    
-                    {assistantHasVariantNav(message) && (
-                      <div className="variant-nav" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", marginLeft: "1rem", color: "var(--text-muted)", fontSize: "0.85em" }}>
-                        <button
-                          type="button"
-                          className="turn-action-icon"
-                          style={{ background: "transparent", border: "none", padding: "0.15rem", color: message.activeVariantIndex === 0 ? "var(--text-muted-heavy)" : "var(--text-muted)", cursor: message.activeVariantIndex === 0 ? "default" : "pointer" }}
-                          disabled={message.activeVariantIndex === 0}
-                          onClick={() => onNavigateVariant(index, (message.activeVariantIndex ?? 0) - 1)}
-                        >
-                          <IconChevronLeft size={14} />
-                        </button>
-                        <span>{(message.activeVariantIndex ?? 0) + 1} / {message.variants.length}</span>
-                        <button
-                          type="button"
-                          className="turn-action-icon"
-                          style={{ background: "transparent", border: "none", padding: "0.15rem", color: message.activeVariantIndex === message.variants.length - 1 ? "var(--text-muted-heavy)" : "var(--text-muted)", cursor: message.activeVariantIndex === message.variants.length - 1 ? "default" : "pointer" }}
-                          disabled={message.activeVariantIndex === message.variants.length - 1}
-                          onClick={() => onNavigateVariant(index, (message.activeVariantIndex ?? 0) + 1)}
-                        >
-                          <IconChevronRight size={14} />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    className="turn-action turn-action-icon"
-                    aria-label="Regenerate answer"
-                    onClick={() => void retry(index)}
-                    disabled={loading}
-                  >
-                    <IconRefresh />
-                  </button>
-                </div>
-                <AnswerBody text={message.content} />
-                {message.spoilers && spoilerPrefs.major && message.spoilers.length > 0 && (
-                  <div className="spoiler-reveals">
-                    {message.spoilers.map((item, i) => (
-                      <details key={`spoiler-${i}`} className="spoiler-reveal">
-                        <summary>
-                          <span className="spoiler-reveal-tag">Major spoiler</span>
-                          {item.title || "Tap to reveal"}
-                        </summary>
-                        <AnswerBody text={item.detail} />
-                      </details>
-                    ))}
-                  </div>
-                )}
-                {message.highlights && message.highlights.length > 0 && (
-                  <div className="highlights">
-                    {groupHighlights(message.highlights).map(({ kind, items }) => (
-                      <section key={kind} className="highlight-group">
-                        <h3 className="highlight-label">{KIND_LABELS[kind]}</h3>
-                        <ul className="highlight-list">
-                          {items.map((item, i) =>
-                            item.detail ? (
-                              <li key={`${kind}-${i}`}>
-                                <details className={`highlight highlight-${kind}`}>
-                                  <summary>{item.title}</summary>
-                                  <p>{item.detail}</p>
-                                </details>
-                              </li>
-                            ) : (
-                              <li key={`${kind}-${i}`}>
-                                <div className={`highlight highlight-${kind} highlight-note`}>
-                                  {item.title}
-                                </div>
-                              </li>
-                            ),
-                          )}
-                        </ul>
-                      </section>
-                    ))}
-                  </div>
-                )}
-                {isUploadOnlySources(message.sources) && (
-                  <div className="sources sources-static" aria-label="Sources">
-                    <p className="sources-static-label">
-                      Sources
-                      {(() => {
-                        const uploadLabel = uploadedSourceGuideLabel(message.sources);
-                        return uploadLabel ? <span> · {uploadLabel}</span> : null;
-                      })()}
-                    </p>
-                  </div>
-                )}
-                {message.sources &&
-                  message.sources.length > 0 &&
-                  !isUploadOnlySources(message.sources) && (
-                  <details className="sources">
-                    <summary>
-                      Sources ({message.sources.length})
-                      {message.pipelineType && (
-                        <span style={{ fontWeight: 'normal', color: 'var(--text-muted)' }}>
-                          {" · "}{pipelineSourceLabel(message.pipelineType, message.sources)}
-                        </span>
-                      )}
-                    </summary>
-                    <ol>
-                      {message.sources.map((source, i) => (
-                        <li key={`${source.url}-${i}`}>
-                          <a href={source.url} target="_blank" rel="noreferrer">
-                            <span className="source-number">
-                              {String(i + 1).padStart(2, "0")}
-                            </span>
-                            <span>
-                              <strong>{source.title}</strong>
-                              <small>{hostname(source.url)}</small>
-                            </span>
-                            <span className="source-arrow" aria-hidden="true">
-                              <IconArrowUpRight />
-                            </span>
-                          </a>
-                        </li>
-                      ))}
-                    </ol>
-                  </details>
-                )}
-                {message.pipelineType && (!message.sources || message.sources.length === 0) && (
-                  <div className="source-pipeline-label" style={{ marginTop: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>
-                    Source: {pipelineSourceLabel(message.pipelineType, message.sources)}
-                  </div>
-                )}
-              </article>
-            ),
-          )}
-
-          {loading && (
-            <div className="turn guide loading-card">
-              <span className="scan-line" aria-hidden="true" />
-              <p>
-                {indexingGuideCount
-                  ? indexingIsBundlePages || bundlePageTotal > 1
-                    ? indexingGuideCount > 0
-                      ? `Memorizing ${indexingGuideCount} pages for the first time. This might take a minute...`
-                      : "Wrapping up memorizing..."
-                    : indexingGuideCount > 1
-                      ? `Memorizing ${indexingGuideCount} guides for the first time...`
-                      : "Memorizing your guide for the first time..."
-                  : generationStatus ||
-                    (preferredUrls.length
-                      ? WRITING_ANSWER_PLACEHOLDER
-                      : "Looking for answers online...")}
-              </p>
-            </div>
-          )}
-
-          {error && (
-            <div className="error-card" role="alert" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span aria-hidden="true">!</span>
-                <p>{error}</p>
-              </div>
-              {retryAction && (
-                <button
-                  type="button"
-                  className="btn-icon"
-                  style={{ color: 'var(--text-muted)' }}
-                  onClick={() => retryAction()}
-                  aria-label="Retry"
-                >
-                  <IconRefresh />
-                </button>
-              )}
-            </div>
-          )}
-          <div ref={feedRef} />
-        </section>
+        <MessageList
+          messages={messages}
+          loading={loading}
+          error={error}
+          retryAction={retryAction}
+          editingIndex={editingIndex}
+          spoilerMajor={spoilerPrefs.major}
+          generationStatus={generationStatus}
+          indexingGuideCount={indexingGuideCount}
+          indexingIsBundlePages={indexingIsBundlePages}
+          bundlePageTotal={bundlePageTotal}
+          preferredUrlCount={preferredUrls.length}
+          lastUserIndex={lastUserIndex}
+          lastGuideIndex={lastGuideIndex}
+          lastUserRef={lastUserRef}
+          lastGuideRef={lastGuideRef}
+          feedRef={feedRef}
+          onStartEdit={startEdit}
+          onRetry={retry}
+          onNavigateVariant={onNavigateVariant}
+          onOpenLightbox={(images, index) => setLightboxState({ images, index })}
+        />
       )}
 
       {started && (
@@ -4495,196 +4165,38 @@ export default function Home() {
       {/* Composer is useless in the idle carousel state (no game field visible);
           it returns once "+ New game" reveals the setup form. */}
       {!quickIdle && (
-      <form
-        className={`composer${started || preferredUrls.length > 0 ? " docked" : ""}${temporary ? " temporary" : ""}${dragActive ? " drag-active" : ""}`}
-        onSubmit={handleSubmit}
-        // Desktop drag-and-drop: attach dropped image files (signed-in only).
-        // selectMessageImages already filters to image/* and enforces the cap.
-        onDragOver={
-          coverEnabled && !composerLocked
-            ? (event) => {
-                if (!event.dataTransfer.types.includes("Files")) return;
-                event.preventDefault();
-                if (!dragActive) setDragActive(true);
-              }
-            : undefined
-        }
-        onDragLeave={
-          coverEnabled && !composerLocked
-            ? (event) => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                  setDragActive(false);
-                }
-              }
-            : undefined
-        }
-        onDrop={
-          coverEnabled && !composerLocked
-            ? (event) => {
-                if (!event.dataTransfer.types.includes("Files")) return;
-                event.preventDefault();
-                setDragActive(false);
-                void selectMessageImages(event.dataTransfer.files);
-              }
-            : undefined
-        }
-      >
-        {dragActive && (
-          <div className="composer-dropzone" aria-hidden="true">
-            Drop images to attach
-          </div>
-        )}
-        {coverEnabled && pendingImages.length > 0 && (
-          <div className="composer-attachments">
-            {pendingImages.map((img, i) => (
-              <div key={i} className="attachment-thumb">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img 
-                  src={img.preview} 
-                  alt="Attachment preview" 
-                  onClick={() => setLightboxState({ images: pendingImages.map(p => p.preview), index: i })}
-                  style={{ cursor: "zoom-in" }}
-                />
-                <button
-                  type="button"
-                  aria-label="Remove image"
-                  onClick={() => removePendingImage(i)}
-                  disabled={loading}
-                >
-                  <IconX size={16} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className={`composer-inner ${isExpanded ? 'expanded' : ''}`}>
-          <div className="composer-input-row">
-            <div className="composer-field">
-            {!input && !voiceListening && hasGame && (
-              <div className="composer-placeholder-marquee" aria-hidden="true">
-                <div className="marquee-track">
-                  <span className="marquee-content">
-                    {started ? "Ask a follow-up... " : "Ask for hints, strategy, or next steps... "}
-                  </span>
-                  <span className="marquee-content">
-                    {started ? "Ask a follow-up... " : "Ask for hints, strategy, or next steps... "}
-                  </span>
-                </div>
-              </div>
-            )}
-            <textarea
-              ref={composerRef}
-              id="query"
-              name="query"
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  event.currentTarget.form?.requestSubmit();
-                }
-              }}
-              onPaste={(event) => {
-                // Desktop: paste image files straight into attachments (signed-in,
-                // unlocked). Text pastes fall through untouched.
-                if (!coverEnabled || composerLocked) return;
-                const files = event.clipboardData.files;
-                if (
-                  files.length > 0 &&
-                  Array.from(files).some((file) => file.type.startsWith("image/"))
-                ) {
-                  event.preventDefault();
-                  void selectMessageImages(files);
-                }
-              }}
-              placeholder={
-                voiceListening
-                  ? ""
-                  : !hasGame
-                    ? "Enter a game name first"
-                    : ""
-              }
-              rows={1}
-              maxLength={300}
-              required
-              disabled={composerLocked}
-            />
-            <VoiceVisualizer active={voiceListening} />
-          </div>
-          <ClearButton
-            show={input.length > 0 && !loading}
-            onClear={() => {
-              setInput("");
-              composerRef.current?.focus();
-            }}
-            disabled={composerLocked}
-            label="Clear message"
-            className="composer-clear"
-          />
-          </div>
-          <div className="composer-actions">
-          {temporary && (
-            <button
-              type="button"
-              className="composer-temp-flag"
-              title="Temporary chat on. Tap to turn off."
-              aria-label="Temporary chat on. Tap to turn off."
-              disabled={loading}
-              onClick={() => void toggleTemporary()}
-            >
-              <IconIncognito />
-            </button>
-          )}
-          <ComposerExtras
-            user={user}
-            disabled={composerLocked}
-            attachDisabled={pendingImages.length >= MAX_MESSAGE_IMAGES}
-            canAttach={coverEnabled}
-            voiceSupported={voiceSupported}
-            temporary={temporary}
-            onToggleTemporary={() => void toggleTemporary()}
-            onListeningChange={setVoiceListening}
-            onTranscript={(text) =>
-              setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
-            }
-            onSelectImages={(files) => void selectMessageImages(files)}
-          />
-          {loading ? (
-            <button
-              className="submit submit-stop"
-              type="button"
-              onClick={stopGeneration}
-              aria-label="Stop generating"
-            >
-              <IconStop />
-            </button>
-          ) : (
-            <>
-              {editingIndex !== null && (
-                <button
-                  className="composer-attach"
-                  type="button"
-                  onClick={cancelEdit}
-                  aria-label="Cancel edit"
-                  title="Cancel edit"
-                >
-                  <IconX />
-                </button>
-              )}
-              <button
-                className="submit"
-                type="submit"
-                disabled={(editingIndex === null && composerLocked) || input.trim().length < 2}
-                aria-label={editingIndex !== null ? "Save edit" : "Send question"}
-                title={editingIndex !== null ? "Save edit" : undefined}
-              >
-                <IconArrowUpRight />
-              </button>
-            </>
-          )}
-          </div>
-        </div>
-      </form>
+        <ComposerShell
+          started={started}
+          temporary={temporary}
+          dragActive={dragActive}
+          composerLocked={composerLocked}
+          coverEnabled={coverEnabled}
+          hasGame={hasGame}
+          preferredUrlCount={preferredUrls.length}
+          input={input}
+          editingIndex={editingIndex}
+          loading={loading}
+          isExpanded={isExpanded}
+          voiceListening={voiceListening}
+          voiceSupported={voiceSupported}
+          maxMessageImages={MAX_MESSAGE_IMAGES}
+          pendingImages={pendingImages}
+          user={user}
+          composerRef={composerRef}
+          onSubmit={handleSubmit}
+          onInputChange={setInput}
+          onDragActiveChange={setDragActive}
+          onSelectImages={selectMessageImages}
+          onRemovePendingImage={removePendingImage}
+          onOpenLightbox={(images, index) => setLightboxState({ images, index })}
+          onToggleTemporary={() => void toggleTemporary()}
+          onVoiceListeningChange={setVoiceListening}
+          onVoiceTranscript={(text) =>
+            setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
+          }
+          onStopGeneration={stopGeneration}
+          onCancelEdit={cancelEdit}
+        />
       )}
       {!hasRecent && homeMode && !examplesDismissed && (
         <div className="examples-block" aria-label="Examples">

@@ -105,6 +105,7 @@ import {
   variantRowsFromPersistedAssistant,
 } from "../lib/chat-thread.js";
 import { compareThreadSources } from "../lib/chat-thread-audit.js";
+import { pipelineSourceLabel, sourceHostname } from "../lib/chat-message-ui.js";
 import {
   CHAT_QUERY_PARAM,
   coerceSessionDraft,
@@ -1263,5 +1264,8 @@ assert.equal(auditOk.match, true);
 const auditBad = compareThreadSources(singleTurnRich, duplicatePoor);
 assert.equal(auditBad.match, false);
 assert.ok(auditBad.issues.some((issue) => issue.startsWith("turn_count")));
+
+assert.equal(sourceHostname("https://www.example.com/path"), "example.com");
+assert.equal(pipelineSourceLabel("rag", undefined), "Your guide");
 
 console.log("Self-check passed.");

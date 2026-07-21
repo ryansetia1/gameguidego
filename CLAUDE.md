@@ -771,8 +771,9 @@ large chat or persistence work:
   `trace_id` on each response). Phase 3: `scripts/backfill-chat-threads.mjs`
   backfills legacy JSONB; signed-in reads use `loadThreadMessages` (normalized only).
   Apply `db/chat-threads.sql` before using in prod.
-- [`docs/plan/page-decomposition.md`](docs/plan/page-decomposition.md): split
-  `app/page.tsx` after persistence helpers move to `lib/chat-*`.
+- [`docs/plan/page-decomposition.md`](docs/plan/page-decomposition.md): Phase 4 in
+  progress — `app/chat/message-list.tsx`, `composer-shell.tsx`, `answer-body.tsx`,
+  `types.ts`, `lib/chat-message-ui.js` extracted; `use-chat-turn.ts` next.
 
 ## Working conventions
 
