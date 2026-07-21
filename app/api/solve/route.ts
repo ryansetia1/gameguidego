@@ -290,7 +290,7 @@ export async function POST(request: Request) {
         });
 
         if (!spoilerPrefs.major && spoilerRisk) {
-          sendEvent("status", { text: "Checking for spoilers..." });
+          const censorStart = Date.now();
           const cleaned = await censorSpoilers({
             answer,
             highlights,
@@ -298,6 +298,9 @@ export async function POST(request: Request) {
             platform,
             userId,
           });
+          const censorLatencyMs = Date.now() - censorStart;
+          await logTraceEvent("censor_complete", `Spoilers censored in ${censorLatencyMs}ms`, censorLatencyMs, { spoilerRisk: true, wasCensored: !!cleaned });
+          
           if (cleaned) {
             answer = cleaned.answer;
             highlights = cleaned.highlights;
