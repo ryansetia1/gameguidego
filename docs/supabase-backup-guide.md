@@ -83,3 +83,25 @@ Selesai! Supabase secara otomatis akan membuat 1 file `.sql` baru yang khusus be
      ```
   2. *Copy-paste* rentetan perintah `supabase migration repair --status reverted <angka_panjang>` yang disarankan oleh teks merah di error terminal Anda. Jalankan perintah itu semua untuk me-reset catatan di awan kembali ke 0.
   3. Ulangi perintah `npx supabase db pull`.
+
+---
+
+## 💾 Catatan Penting: Backup Struktur vs Backup Isi (Data)
+
+**Perintah `db pull` di atas HANYA mem-backup Struktur/Kerangkanya saja!**
+*(Contoh: Nama tabel, nama kolom, tipe data, dan aturan RLS).*
+
+**Isi datanya (baris data pengguna, artikel, dll) TIDAK IKUT DI-BACKUP.**
+Hal ini adalah standar industri (Software Engineering) karena:
+1. Data terus bertambah. Jika data berukuran Gigabyte ikut di-backup ke file kode dan di-upload ke GitHub, sistem akan macet/error.
+2. Data bersifat privat dan rahasia, tidak boleh berceceran di file lokal programmer.
+
+### Cara Mem-Backup "Isi Data" (Jika Diperlukan):
+Jika Anda ingin menyelamatkan isi datanya secara utuh, gunakan 2 cara ini:
+
+- **Cara 1 (Paling Gampang):** Buka Dashboard Supabase -> menu Table Editor -> Buka tabelnya -> klik tombol **Export to CSV**. (Isi tabel akan di-download seperti file Excel).
+- **Cara 2 (Lewat Terminal):** Jika ingin men-download isinya dalam format SQL, jalankan perintah ini di terminal:
+  ```bash
+  npx supabase db dump --data-only > backup_isi_data_hari_ini.sql
+  ```
+  *(PERINGATAN: File ini ukurannya bisa sangat besar, jangan pernah di-upload/commit ke GitHub!)*
