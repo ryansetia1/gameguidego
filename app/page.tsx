@@ -3136,7 +3136,7 @@ export default function Home() {
     const count = dropped.reduce((n, m) => n + (m.images?.length ?? 0), 0);
     if (count === 0) return true;
     return askConfirm(
-      `This removes ${count} attached image${count > 1 ? "s" : ""}. Continue?`,
+      `This action will discard ${count} attached image${count > 1 ? "s" : ""} from the messages after this one. Continue?`,
     );
   }
 
