@@ -1296,6 +1296,8 @@ const serverRecovered = [
 ];
 assert.equal(pollRecoveredMessages(regenOptimistic, serverRecovered), true);
 assert.equal(shouldApplySyncedMessages(regenOptimistic, serverRecovered), false);
+// Network-drop poll must return false when no recovery (not attempts >= 150).
+assert.equal(pollRecoveredMessages(regenOptimistic, regenOptimistic) ? true : false, false);
 
 const serverAheadVariants = [
   { role: "user", content: "q" },

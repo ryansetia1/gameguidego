@@ -65,7 +65,7 @@ export async function pollNetworkDropRecovery(
     }
   }
 
-  return attempts >= 150;
+  return false;
 }
 
 export async function tryRecoverPersistedAnswer(
