@@ -328,6 +328,14 @@ export async function POST(request: Request) {
           if (cleaned) {
             answer = cleaned.answer;
             highlights = cleaned.highlights;
+          } else {
+            // Censor failed / returned nothing usable. Never fall back to the
+            // original — it holds the spoiler. Neutral redirect, no "spoiler" word.
+            // ponytail: one English line; per-language fallback would need another
+            // LLM call, and this only fires when the censor call itself failed.
+            answer =
+              "Let's keep that one a surprise. Ask what to do next and I'll help you get there.";
+            highlights = [];
           }
         }
 
