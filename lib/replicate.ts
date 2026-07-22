@@ -228,6 +228,8 @@ export type SummarizeInput = {
   sources: SearchResult[];
   history?: Turn[];
   images?: string[];
+  /** Rewrite/RAG query text; soft anchor in summarize when images are attached. */
+  imageResolvedSubject?: string;
   spoilerPrefs?: SpoilerPrefs;
   playerName?: string;
   userId?: string | null;
@@ -250,6 +252,7 @@ export async function summarize(input: SummarizeInput): Promise<SummaryResult> {
   const prompt = buildPrompt({
     ...input,
     imageCount: images.length,
+    imageResolvedSubject: images.length ? input.imageResolvedSubject : "",
     sources: input.sources.map(({ title, content, preferred }) => ({
       title,
       content,

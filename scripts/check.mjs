@@ -10,6 +10,7 @@ import {
   SYSTEM_INSTRUCTION,
   buildPrompt,
   buildRewritePrompt,
+  trimImageResolvedSubject,
 } from "../lib/prompt.js";
 import { selectSources } from "../lib/rank.js";
 import { parseBlocks, parseInline } from "../lib/markdown.js";
@@ -223,6 +224,25 @@ const imageRewrite = buildRewritePrompt({
 });
 assert.match(imageRewrite, /maybe/);
 assert.match(REWRITE_INSTRUCTION, /character/);
+
+const anchoredPrompt = buildPrompt({
+  game: "Final Fantasy VIII",
+  question: "apakah sulit dapetin ini?",
+  sources: [],
+  imageCount: 1,
+  imageResolvedSubject:
+    "To obtain the Guardian Force Brothers, Minotaur and Sacred, shown in the image, you must defeat them in a boss battle.",
+});
+assert.match(anchoredPrompt, /Visual context for this turn/);
+assert.match(anchoredPrompt, /Minotaur and Sacred/);
+assert.match(anchoredPrompt, /unrelated guide snippets/);
+assert.doesNotMatch(
+  buildPrompt({ question: "hi", sources: [], imageCount: 0, imageResolvedSubject: "Tonberry" }),
+  /Visual context for this turn/,
+);
+
+assert.equal(trimImageResolvedSubject("a".repeat(300)).endsWith("…"), true);
+assert.equal(trimImageResolvedSubject("  hello  "), "hello");
 
 assert.equal(coerceDisplayName("  Ryan  "), "Ryan");
 assert.equal(displayNameFromMetadata({ display_name: "Ayu" }), "Ayu");

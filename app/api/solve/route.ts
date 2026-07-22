@@ -304,6 +304,7 @@ export async function POST(request: Request) {
           sources,
           history,
           images,
+          imageResolvedSubject: images.length ? searchTopic : undefined,
           spoilerPrefs,
           playerName,
           userId,
