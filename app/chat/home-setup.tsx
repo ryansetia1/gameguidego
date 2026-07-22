@@ -263,7 +263,6 @@ export function HomeSetup({
                   value={game}
                   onChange={onGameChange}
                   onPick={onPickGame}
-                  showCover={coverEnabled}
                   disabled={loading}
                 />
               </div>

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { tgdbPlatformToLabel } from "@/lib/platforms.js";
 
 import { ClearButton } from "./clear-button";
+import { IconCheck } from "./icons";
 
 type Game = {
   id: number;
@@ -192,30 +193,53 @@ export function GameAutocomplete({
     setOpen(false);
   }
 
+  function commitTyped() {
+    setOpen(false);
+  }
+
   function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (!open || results.length === 0) return;
+    const query = value.trim();
+    const showCustom = query.length >= 2;
+    const resultOffset = showCustom ? 1 : 0;
+    const lastIndex = resultOffset + results.length - 1;
+
+    if (event.key === "Escape") {
+      if (open) {
+        event.preventDefault();
+        setOpen(false);
+      }
+      return;
+    }
+
+    if (!open || query.length < 2) return;
+
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setActive((i) => Math.min(i + 1, results.length - 1));
+      setActive((i) => (i < lastIndex ? i + 1 : i < 0 ? 0 : i));
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      setActive((i) => Math.max(i - 1, 0));
+      setActive((i) => (i > 0 ? i - 1 : -1));
     } else if (event.key === "Enter") {
-      if (active >= 0 && results[active]) {
-        event.preventDefault();
-        pick(results[active]);
-      }
-    } else if (event.key === "Escape") {
-      setOpen(false);
+      event.preventDefault();
+      if (active === 0 && showCustom) commitTyped();
+      else if (active >= resultOffset && results[active - resultOffset]) pick(results[active - resultOffset]);
+      else commitTyped();
     }
   }
 
-  const showPanel = open && value.trim().length >= 2;
+  const query = value.trim();
+  const showPanel = open && query.length >= 2;
+  const showCustom = query.length >= 2;
+  const resultOffset = showCustom ? 1 : 0;
+  const showCommit = query.length >= 3 && !loading && !disabled;
   const grouped = groupByPlatform(results);
   const showGroupHeaders = grouped.length > 1;
 
   return (
-    <div className="combo field-clear-wrap" ref={rootRef}>
+    <div
+      className={`combo field-clear-wrap${showCommit ? " has-commit" : ""}`}
+      ref={rootRef}
+    >
       <input
         ref={inputRef}
         id="game"
@@ -239,6 +263,20 @@ export function GameAutocomplete({
         disabled={disabled}
       />
       {loading && <span className="combo-spinner loader" aria-hidden="true" />}
+      {showCommit && (
+        <button
+          type="button"
+          className="field-commit"
+          aria-label="Use typed game name"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            commitTyped();
+            inputRef.current?.focus();
+          }}
+        >
+          <IconCheck size={16} />
+        </button>
+      )}
       <ClearButton
         show={value.length > 0 && !loading && !disabled}
         onClear={() => {
@@ -255,7 +293,24 @@ export function GameAutocomplete({
             {loading && results.length === 0 && (
               <li className="combo-empty">Searching games...</li>
             )}
-            {!loading && results.length === 0 && (
+            {showCustom && !loading && (
+              <li
+                role="option"
+                aria-selected={active === 0}
+                className={`combo-option combo-option-custom${active === 0 ? " active" : ""}`}
+                onMouseEnter={() => setActive(0)}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  commitTyped();
+                }}
+              >
+                <span className="combo-name">
+                  <span className="combo-title">Use &ldquo;{query}&rdquo;</span>
+                  <span className="combo-hint">Keep what you typed</span>
+                </span>
+              </li>
+            )}
+            {!loading && results.length === 0 && !showCustom && (
               <li className="combo-empty">No matching games</li>
             )}
             {grouped.flatMap((group) => {
@@ -270,9 +325,9 @@ export function GameAutocomplete({
                   <li
                     key={game.id}
                     role="option"
-                    aria-selected={index === active}
-                    className={`combo-option${index === active ? " active" : ""}`}
-                    onMouseEnter={() => setActive(index)}
+                    aria-selected={index + resultOffset === active}
+                    className={`combo-option${index + resultOffset === active ? " active" : ""}`}
+                    onMouseEnter={() => setActive(index + resultOffset)}
                     onMouseDown={(event) => {
                       event.preventDefault();
                       pick(game);

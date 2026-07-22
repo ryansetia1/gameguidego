@@ -23,10 +23,14 @@ export function PlatformSelect({ value, onChange, disabled }: Props) {
   const groups = useMemo(() => matchPlatforms(query), [query]);
 
   const flat = useMemo(() => groups.flatMap((section) => section.items), [groups]);
+  const trimmed = query.trim();
+  // Only offer custom when the matcher found nothing (aliases like ps1 → PS1 count as a hit).
+  const showCustom = trimmed.length > 0 && flat.length === 0;
+  const navCount = flat.length + (showCustom ? 1 : 0);
 
   useEffect(() => {
     setActive(0);
-  }, [query]);
+  }, [query, showCustom]);
 
   useEffect(() => {
     if (open) searchRef.current?.focus();
@@ -47,16 +51,21 @@ export function PlatformSelect({ value, onChange, disabled }: Props) {
     setQuery("");
   }
 
+  function pickAt(index: number) {
+    if (showCustom && index === 0) commit(trimmed);
+    else commit(flat[showCustom ? index - 1 : index]);
+  }
+
   function onSearchKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setActive((i) => Math.min(i + 1, flat.length - 1));
+      setActive((i) => Math.min(i + 1, navCount - 1));
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       setActive((i) => Math.max(i - 1, 0));
     } else if (event.key === "Enter") {
       event.preventDefault();
-      if (flat[active]) commit(flat[active]);
+      if (navCount > 0) pickAt(active);
     } else if (event.key === "Escape") {
       event.preventDefault();
       setOpen(false);
@@ -121,7 +130,18 @@ export function PlatformSelect({ value, onChange, disabled }: Props) {
             />
           </div>
           <ul className="combo-list" id={listId} role="listbox">
-            {flat.length === 0 && (
+            {showCustom && (
+              <li
+                role="option"
+                aria-selected={active === 0}
+                className={`combo-option combo-option-custom${active === 0 ? " active" : ""}`}
+                onMouseEnter={() => setActive(0)}
+                onClick={() => commit(trimmed)}
+              >
+                Use &ldquo;{trimmed}&rdquo;
+              </li>
+            )}
+            {flat.length === 0 && !showCustom && (
               <li className="combo-empty">No matching platforms</li>
             )}
             {groups.map((section) => (
@@ -129,7 +149,7 @@ export function PlatformSelect({ value, onChange, disabled }: Props) {
                 <p className="combo-group-label">{section.group}</p>
                 <ul role="presentation">
                   {section.items.map((item) => {
-                    const index = flat.indexOf(item);
+                    const index = flat.indexOf(item) + (showCustom ? 1 : 0);
                     return (
                       <li
                         key={item}
