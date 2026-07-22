@@ -5101,11 +5101,11 @@ details.sources small {
   padding-right: 38px;
 }
 
-/* Composer clear: a real flex sibling (not an overlay) so it never covers the
-   growing textarea. Sits just left of the "+" / Send controls. */
+/* Composer clear: flex sibling (not an overlay) so it never covers the growing
+   textarea. Top-aligned, just left of the "+" / Send controls. */
 .composer-clear {
   flex: 0 0 auto;
-  align-self: flex-end;
+  align-self: flex-start;
   display: grid;
   place-items: center;
   width: 34px;
