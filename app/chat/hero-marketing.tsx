@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FUN_ROLES, HERO_LINES } from "@/lib/hero-copy.js";
+import { FUN_ROLES, HERO_LINES, HOME_TIPS } from "@/lib/hero-copy.js";
 import { lerpTilt, mouseToTilt, orientationToTilt, tiltTransform } from "@/lib/hero-tilt.js";
 
 function HeadlineText({
@@ -183,6 +183,21 @@ export function RotatingWord() {
         {FUN_ROLES[i]}
       </span>
     </button>
+  );
+}
+
+/** Ambient one-line tip at the bottom of quick-home. Picks a fresh tip per open;
+ *  index 0 is the SSR-stable default so hydration matches. */
+export function HomeTip() {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    setI(Math.floor(Math.random() * HOME_TIPS.length));
+  }, []);
+  return (
+    <p className="home-tip">
+      <span className="home-tip-label">Tip</span>
+      {HOME_TIPS[i]}
+    </p>
   );
 }
 

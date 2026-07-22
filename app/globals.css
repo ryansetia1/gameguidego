@@ -427,7 +427,11 @@ h1 {
   max-width: 620px;
   margin: 0;
   font-family: var(--font-sans);
-  font-size: clamp(3.2rem, 15vw, 6.1rem);
+  /* Mobile scale tracks the quick-home hero (a hair bigger) so long two-part
+     lines like "Wrong item every time? / Grab the right one." never spill to
+     4 rows and shove the composer below the fold. Desktop max stays large so
+     the signed-out marketing hero still lands. */
+  font-size: clamp(2.4rem, 11.5vw, 6.1rem);
   font-weight: 400;
   letter-spacing: -0.072em;
   line-height: 0.84;
@@ -3119,6 +3123,32 @@ details.sources small {
   height: 18px;
 }
 
+/* Ambient one-liner filling the bottom of quick-home. Muted + dashed top rule so
+   it reads as a quiet hint, not a CTA. Square corners per the app theme. */
+.home-tip {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 2px 0;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.home-tip-label {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  background: var(--signal);
+  color: var(--on-signal);
+  font-family: var(--font-sans);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
 /* Read-only game card shown once a chat has started. */
 .game-card {
   position: relative;
@@ -5325,7 +5355,6 @@ details.sources small {
   max-width: 95vw;
   max-height: 95vh;
   object-fit: contain;
-  border-radius: 8px;
   user-select: none;
 }
 .lightbox-close {

@@ -7,7 +7,7 @@ import { IconGrid, IconPlus, IconX } from "../icons";
 import { guideUrlsSummary } from "@/lib/guide-urls.js";
 import type { Chat } from "@/lib/supabase";
 import { CoverThumb, displayPlatform } from "./cover-thumb";
-import { RotatingHeadline, RotatingWord, SteamIcon } from "./hero-marketing";
+import { HomeTip, RotatingHeadline, RotatingWord, SteamIcon } from "./hero-marketing";
 import { SpoilerToggle } from "./spoiler-toggle";
 
 type GuideIndexState = Record<
@@ -184,6 +184,7 @@ export function HomeSetup({
                   </button>
                 )}
               </div>
+              <HomeTip />
             </>
           ) : (
             !editingGame && (
