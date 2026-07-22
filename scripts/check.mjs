@@ -102,6 +102,7 @@ import {
   pickRicherThread,
   priorMessagesForRegen,
   threadReadyForAssistantMerge,
+  threadSyncModeForTurn,
   userTurnCount,
   variantRowsFromPersistedAssistant,
 } from "../lib/chat-thread.js";
@@ -1285,6 +1286,13 @@ for (let i = 0; i < 20; i++) {
 }
 twentyTurnMessages.push({ role: "user", content: "new question" });
 assert.equal(tailTurnIndexFromMessages(twentyTurnMessages), 20);
+
+const visibleThread = [
+  { role: "user", content: "q" },
+  { role: "assistant", content: "a" },
+];
+assert.equal(threadSyncModeForTurn([{ role: "user", content: "q" }], visibleThread), "full");
+assert.equal(threadSyncModeForTurn(visibleThread, visibleThread), "tail");
 
 const regenOptimistic = [
   { role: "user", content: "q" },

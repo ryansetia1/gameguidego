@@ -5,7 +5,7 @@ import {
   serverOwnsAssistantPersist,
   shouldApplySyncedMessages,
 } from "@/lib/chat-persist.js";
-import { priorMessagesForRegen } from "@/lib/chat-thread.js";
+import { priorMessagesForRegen, threadSyncModeForTurn } from "@/lib/chat-thread.js";
 import {
   WRITING_ANSWER_PLACEHOLDER,
   snapshotAssistantVariants,
@@ -47,6 +47,7 @@ type ExecuteChatTurnParams = {
     supabase: NonNullable<ReturnType<typeof getSupabase>>,
     chatId: string,
     messages: Message[],
+    mode?: ThreadSyncMode,
   ) => Promise<void>;
   fetchResolvedThread: (
     supabase: NonNullable<ReturnType<typeof getSupabase>>,
@@ -106,10 +107,12 @@ export async function executeChatTurn({
       ]
     : [...priorMessages, userMessage];
 
+  const syncMode = threadSyncModeForTurn(priorMessages, d.messages) as ThreadSyncMode;
+
   d.setMessages(optimistic);
   let activeId = targetChatId;
   if (!d.temporary) {
-    activeId = (await persistChat(optimistic, targetChatId)) || activeId;
+    activeId = (await persistChat(optimistic, targetChatId, { sync: syncMode })) || activeId;
   }
   if (activeId) d.activeChatIdRef.current = activeId;
 
@@ -186,7 +189,7 @@ export async function executeChatTurn({
     }
 
     if (supabase && activeId && !d.temporary && d.user) {
-      await awaitPreSolveThreadSync(supabase, activeId, optimistic);
+      await awaitPreSolveThreadSync(supabase, activeId, optimistic, syncMode);
     }
 
     const response = await fetch("/api/solve", {

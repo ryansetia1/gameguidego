@@ -351,7 +351,7 @@ improvements.
 - [x] Error revert does not clobber a server-completed answer.
 - [x] `npm run check` and `npm run build` pass.
 - [x] `use-chat-turn.tsx` under 400 lines (~213); turn loop in `execute-chat-turn.ts`.
-- [x] Tail sync (`syncTailTurnFromMessages`) for routine persist; full sync on truncate/variant nav.
+- [x] Tail sync for routine persist; full sync on edit/retry truncate, variant nav, and error revert.
 - [x] Phase 7 contract tests in `scripts/check.mjs`.
 - [x] `CLAUDE.md` and `chat-persistence-refactor.md` match shipped behaviour.
 

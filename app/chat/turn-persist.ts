@@ -46,10 +46,11 @@ export function createTurnPersist(depsRef: RefObject<ChatTurnDeps>) {
     supabase: NonNullable<ReturnType<typeof getSupabase>>,
     chatId: string,
     messages: Message[],
+    mode: ThreadSyncMode = "tail",
   ) {
     try {
       const result = await syncThreadFromMessages(supabase, chatId, messages, undefined, {
-        mode: "tail",
+        mode,
       });
       logThreadSyncFailure(chatId, "pre-solve sync failed", result);
     } catch (err) {
