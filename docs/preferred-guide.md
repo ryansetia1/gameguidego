@@ -304,9 +304,9 @@ Tune via `.env` if you still hit throttling on a cold account.
 
 Not blocking. Ledger so nothing rots into "later means never".
 
-1. **Calibrate `GUIDE_HIT`** (needs a live test; the only real open item). The
-   Qwen3 query instruction shifted the cosine distribution, so `0.35`
-   ([lib/guide-rag.ts](../lib/guide-rag.ts)) is a guess now. How:
+1. **Calibrate `GUIDE_HIT`** — see [plan/rag-tuning-roadmap.md](./plan/rag-tuning-roadmap.md)
+   for the full calibration procedure, research-backed knob recommendations, and
+   phased upgrade backlog (reranker > learned router). Quick version:
    - Set `RAG_DEBUG=1` in `.env.local`, `npm run dev`.
    - Ingest one guide you know well.
    - Ask ~5 **in-guide** questions (things the guide clearly covers) and ~5
@@ -316,6 +316,8 @@ Not blocking. Ledger so nothing rots into "later means never".
      them. With normalized Qwen3, relevant passages usually land ~0.5–0.7,
      irrelevant ~0.1–0.35.
    - Unset `RAG_DEBUG` when done (the log is gated, so leaving it is harmless).
+   Embed model is `text-embedding-3-large` ([lib/embed.ts](../lib/embed.ts)); recalibrate
+   after any `EMBED_MODEL` swap ([embedding-models.md](./embedding-models.md)).
 2. **True partial-streaming ingest** — answer as soon as the first relevant bundle
    pages land instead of waiting for all. Needs "pages remaining" bookkeeping so
    the tail still ingests. Only worth it if a 20-part bundle still feels slow after

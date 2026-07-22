@@ -796,6 +796,9 @@ large chat or persistence work:
   `hero-marketing.tsx`, `guide-status-chip.tsx`, `spoiler-toggle.tsx`,
   `use-guide-bundle.tsx`, `use-home-session.tsx` extracted;
   `app/page.tsx` ~1788 lines (orchestration + chat list + overlays).
+- [`docs/plan/rag-tuning-roadmap.md`](docs/plan/rag-tuning-roadmap.md): RAG quality
+  research (chunk size, `RETRIEVE_K`, `GUIDE_HIT` calibration, reranker vs learned
+  router). Phased backlog for the next preferred-guide upgrade; no runtime change yet.
 
 ## Working conventions
 

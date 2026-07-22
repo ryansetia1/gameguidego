@@ -155,7 +155,8 @@ const output = await replicate.run(
 
 8. **Kalibrasi `GUIDE_HIT`** — Threshold cosine similarity di `lib/guide-rag.ts`
    (default `0.35`) di-tune per model. Aktifkan `RAG_DEBUG=1` dan monitor output
-   `[rag-calibrate]` di console. Sesuaikan jika retrieval terlalu longgar/ketat.
+   `[rag-calibrate]` di console. Prosedur lengkap + rekomendasi chunk/K/reranker:
+   [plan/rag-tuning-roadmap.md](./plan/rag-tuning-roadmap.md).
 
 9. **Update `CLAUDE.md`** — Dokumentasi harus selalu selaras dengan kode aktif.
 
