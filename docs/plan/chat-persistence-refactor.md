@@ -238,16 +238,16 @@ tables gated through `thread_id` join or `security definer` RPCs.
 3. Rebuild `messages_cache` from turns + responses (server-side function).
 4. Client may still read `messages_cache` until UI reads normalized tables directly.
 
-#### Read path (migration bridge)
+#### Read path (signed-in)
 
 ```ts
-// lib/chat-thread.ts (new)
-export async function loadThreadMessages(threadId: string): Promise<Message[]>
-export async function appendResponse(turnId: string, variant: ResponsePayload): Promise<void>
+// lib/chat-thread-persist.js
+export async function resolveThreadMessages(supabase, chat)
+// → pickRicherThread(fetchNormalizedThread(chat.id), legacy JSONB cache)
 ```
 
-`openChat` calls `loadThreadMessages` if normalized rows exist, else falls back
-to legacy `chats.messages`.
+`openChat`, poll/recovery, and server merge all use `resolveThreadMessages`
+(normalized + legacy JSONB; richer source wins via `pickRicherThread`).
 
 #### Anon bridge
 
@@ -353,7 +353,7 @@ Phase 2  [x] SQL migration files in db/ (chat-threads.sql)
 
 Phase 3  [x] backfill script (scripts/backfill-chat-threads.mjs)
          [x] dual-read validation (lib/chat-thread-audit.js, verifyChatThread)
-         [x] canonical read from normalized (loadThreadMessages / resolveThreadMessages)
+         [x] canonical read via `resolveThreadMessages` + `pickRicherThread`
          [x] run backfill on all production chats (8/8, 0 mismatches)
          [x] retire chats.messages reads (signed-in: `resolveThreadMessages` + `pickRicherThread`; JSONB write-only cache; anon localStorage)
          [x] cutover fixes Phases 1–4 (see chat-persistence-cutover-fixes.md)

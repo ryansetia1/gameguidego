@@ -76,9 +76,8 @@ the page decomposition work.
 
 ### Problem
 
-`resolveThreadMessages` and `loadThreadMessages` return normalized rows or `[]`.
-Legacy `chats.messages` JSONB is ignored on read even when it is richer
-(e.g. variant nav the normalized rebuild has not caught up with).
+`resolveThreadMessages` fetches normalized rows and legacy JSONB; `pickRicherThread`
+picks the richer source (pre-backfill chats no longer open empty).
 
 ### Changes
 
