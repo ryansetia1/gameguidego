@@ -886,11 +886,20 @@ h1 {
 }
 
 .turn.user {
-  position: relative;
   align-self: flex-end;
   max-width: 85%;
   /* Cleared past the sticky mini-header when a new turn scrolls it to the top. */
   scroll-margin-top: 72px;
+  /* Column so attached images sit ABOVE the bubble, outside the green fill. */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* The green fill lives on the bubble, not the turn, so images stay outside it. */
+.user-bubble {
+  position: relative;
   border: 1.5px solid var(--ink);
   background: var(--signal);
   padding: 11px 15px 11px 15px;
@@ -960,9 +969,14 @@ h1 {
 
 .turn.user.editing {
   align-self: stretch;
+  align-items: stretch;
   max-width: 100%;
   width: 100%;
   padding: 12px;
+  /* Editing has no .user-bubble child, so keep the fill on the turn itself. */
+  border: 1.5px solid var(--ink);
+  background: var(--signal);
+  color: var(--on-signal);
 }
 
 .edit-box {
@@ -2457,8 +2471,8 @@ details.sources small {
 .msg-images {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
-  margin-bottom: 8px;
 }
 
 .msg-image {
@@ -4480,8 +4494,8 @@ details.sources small {
 /* ponytail: --signal is always a light lime; dark-mode --ink is light — never inherit it on signal fills. */
 .brand-mark,
 .combo-option.active,
-.turn.user,
-.turn.user p,
+.user-bubble,
+.user-bubble p,
 .turn-action:hover:not(:disabled),
 .submit,
 .nav-button:hover,

@@ -99,16 +99,18 @@ export function MessageList({
                     ))}
                   </div>
                 )}
-                <p>{message.content}</p>
-                <button
-                  type="button"
-                  className="turn-action turn-action-icon"
-                  aria-label="Edit message"
-                  onClick={() => onStartEdit(index)}
-                  disabled={loading}
-                >
-                  <IconPencil />
-                </button>
+                <div className="user-bubble">
+                  <p>{message.content}</p>
+                  <button
+                    type="button"
+                    className="turn-action turn-action-icon"
+                    aria-label="Edit message"
+                    onClick={() => onStartEdit(index)}
+                    disabled={loading}
+                  >
+                    <IconPencil />
+                  </button>
+                </div>
               </>
             )}
           </div>
