@@ -376,7 +376,8 @@ do not sync to the cloud or use Storage uploads.
   — see [`docs/plan/image-character-recognition.md`](docs/plan/image-character-recognition.md):
   patut dicoba, riskan; full revert steps there); when images are attached, rewrite
   output (`imageResolvedSubject` / `searchTopic`) is also injected as a soft visual
-  anchor so summarize does not drift from a correct rewrite (same doc, section B),
+  anchor so summarize does not drift from a correct rewrite (same doc, section B);
+  section C adds history-poisoning guards + image-trust hedging on the anchor,
   `playerName` only on the first turn — follow-ups get a no-greeting rule to stop
   repeated "hello again" salutations),
   plus `REWRITE_INSTRUCTION` + `buildRewritePrompt({ question, history })` for

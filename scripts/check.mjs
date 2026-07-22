@@ -236,6 +236,8 @@ const anchoredPrompt = buildPrompt({
 assert.match(anchoredPrompt, /Visual context for this turn/);
 assert.match(anchoredPrompt, /Minotaur and Sacred/);
 assert.match(anchoredPrompt, /unrelated guide snippets/);
+assert.match(anchoredPrompt, /trust the image/);
+assert.match(anchoredPrompt, /misidentified someone in an older screenshot/);
 assert.doesNotMatch(
   buildPrompt({ question: "hi", sources: [], imageCount: 0, imageResolvedSubject: "Tonberry" }),
   /Visual context for this turn/,

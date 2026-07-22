@@ -37,6 +37,23 @@ and followed an irrelevant preferred-guide RAG chunk.
 
 **Code path:** `resolveQuestion` → `searchTopic` → `summarize({ imageResolvedSubject: searchTopic })` → `buildImageSubjectAnchor()` in `lib/prompt.js`. Gated: only when `images.length > 0` on **this** turn.
 
+### C. History poisoning guard + anchor hedging (July 2026)
+
+**Motivation:** trace `192da351-9b26-4df1-a556-fd8e75b34498` — a prior turn misidentified the
+screenshot as Quezacotl/Shiva; rewrite inherited that from history, anchor locked it in,
+and summarize confidently answered about starter GFs (wrong if the image was Brothers).
+
+When `imageCount > 0`:
+
+| Guard | Where |
+|-------|--------|
+| `IMAGE_PRIOR_ID_WARNING` | `buildPrompt` + `buildRewritePrompt` image blocks |
+| Prior-ID rule in system rewrite | `REWRITE_INSTRUCTION`, `REWRITE_RAG_INSTRUCTION` |
+| `IMAGE_ANCHOR_TRUST_IMAGE` | `buildImageSubjectAnchor()` — anchor yields to fresh vision |
+
+**Not shipped (yet):** stripping assistant visual-ID lines from history on image turns
+(section D backlog). Prompt-only guard first; delete history rows if traces still poison.
+
 ## Why it is risky
 
 | Risk | Symptom in production |
@@ -47,7 +64,8 @@ and followed an irrelevant preferred-guide RAG chunk.
 | **Bad search/RAG queries** | Rewrite injects a wrong name → worse Tavily hits or guide retrieval |
 | **Over-naming** | Generic mobs or custom skins forced into a famous name |
 | **Mod / ROM hack art** | Vanilla-game knowledge mislabels modded sprites |
-| **Rewrite wrong → summarize locked in** (anchor B) | Summarize trusts rewrite vision; loses independent second opinion |
+| **History poisoning** (anchor B + prior wrong ID) | Follow-up "ini" inherits a wrong GF name from an earlier Guide reply |
+| **Anchor vs wrong rewrite** (mitigated by C, not eliminated) | Anchor still propagates bad rewrite if model ignores image-trust hedge |
 | **Over-anchor to image** (anchor B) | Player asks something else but answer stays on rewrite subject |
 | **Token bloat** (anchor B) | Long RAG rewrites add ~280 chars to every image turn summarize prompt |
 
@@ -58,8 +76,9 @@ Prompt-only guardrails help but **cannot guarantee** vision accuracy. Treat as t
 1. **`public.llm_calls`** (or `llm-log.json` in dev): `rewrite` + `summarize` rows on turns **with images** — compare query text and answer quality before/after.
 2. **Admin trace** (`/admin`, `X-Trace-Id`): image turns where search or RAG returns irrelevant sources after a bad rewrite.
 3. **User reports**: “it called the wrong character”, “spoilers”, “answer is for a different boss”.
-4. **Anchor-specific:** summarize `prompt` contains `Visual context for this turn` — check entity matches rewrite and image; wrong lock-in means revert B first.
-5. **A/B manually**: same screenshot + question with rules on vs reverted locally.
+4. **Anchor-specific:** summarize `prompt` contains `Visual context for this turn` — check entity matches rewrite **and** image; compare traces `1aed1dfa` (rewrite ok, summarize drift) vs `192da351` (rewrite wrong, anchor lock-in).
+5. **History guard (C):** prompt should contain `misidentified someone in an older screenshot` and `trust the image` on image turns.
+6. **A/B manually**: same screenshot + question with rules on vs reverted locally.
 
 If failures are rare and hedged (`maybe X`), consider **softening** the prompt before a full revert (see below).
 
@@ -119,6 +138,10 @@ Combine B and C steps, or restore `buildPrompt` image block to:
 - Shorten `IMAGE_RESOLVED_SUBJECT_CAP` (280 → 120) to reduce noise.
 - Soften wording: remove “Do not let unrelated guide snippets override…” if it fights preferred-guide too hard.
 - Inject only the **first sentence** of `searchTopic` instead of capped paragraph (needs small code change).
+
+**History guard (C):** revert `IMAGE_PRIOR_ID_WARNING`, `IMAGE_ANCHOR_TRUST_IMAGE`, and the extra sentence in `REWRITE_*_INSTRUCTION` (search `misidentified` in `lib/prompt.js`).
+
+**Backlog (D):** strip or summarize assistant screenshot-ID lines from `history` when `images.length > 0` (code change in `app/api/solve/route.ts` or `buildPrompt`); add when prompt guards are not enough.
 
 Keep rewrite rules in sync if you change naming policy (search quality depends on them).
 
