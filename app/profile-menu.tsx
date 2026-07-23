@@ -2,6 +2,7 @@
 
 import type { User } from "@supabase/supabase-js";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ComponentType } from "react";
 
 import {
@@ -48,6 +49,8 @@ type Props = {
   /** When set, menu open state is owned by the parent (for hardware-back sync). */
   navMenu?: NavMenu;
   onNavMenuChange?: (menu: NavMenu) => void;
+  /** Close menu before client navigation (parent pops overlay without blocking push). */
+  onNavMenuNavigate?: () => void;
 };
 
 async function persistThemeForUser(mode: ThemeMode) {
@@ -79,9 +82,12 @@ export function ProfileMenu({
   onSignOut,
   navMenu: navMenuProp,
   onNavMenuChange,
+  onNavMenuNavigate,
 }: Props) {
+  const router = useRouter();
   const [internalMenu, setInternalMenu] = useState<NavMenu>(null);
   const navHistoryPushed = useRef(false);
+  const navPopSuppressRef = useRef(false);
   const controlled = onNavMenuChange !== undefined;
   const navMenu = controlled ? (navMenuProp ?? null) : internalMenu;
   const profileOpen = navMenu === "profile";
@@ -155,12 +161,30 @@ export function ProfileMenu({
   useEffect(() => {
     if (controlled || !internalMenu) return;
     function onPopState() {
+      if (navPopSuppressRef.current) {
+        navPopSuppressRef.current = false;
+        return;
+      }
       navHistoryPushed.current = false;
       setInternalMenu(null);
     }
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, [controlled, internalMenu]);
+
+  function navigateFromMenu(href: string) {
+    if (controlled) {
+      onNavMenuNavigate?.();
+    } else {
+      setInternalMenu(null);
+      if (navHistoryPushed.current) {
+        navHistoryPushed.current = false;
+        navPopSuppressRef.current = true;
+        window.history.back();
+      }
+    }
+    router.push(href);
+  }
 
   useEffect(() => {
     if (!navMenu) return;
@@ -261,7 +285,10 @@ export function ProfileMenu({
                 href="/profile"
                 className="profile-menu-item"
                 role="menuitem"
-                onClick={() => setNavMenu(null)}
+                onClick={(event) => {
+                  event.preventDefault();
+                  navigateFromMenu("/profile");
+                }}
               >
                 Profile
               </Link>
@@ -271,7 +298,10 @@ export function ProfileMenu({
                   href="/admin"
                   className="profile-menu-item"
                   role="menuitem"
-                  onClick={() => setNavMenu(null)}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    navigateFromMenu("/admin");
+                  }}
                 >
                   Dashboard
                 </Link>

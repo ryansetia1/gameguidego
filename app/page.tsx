@@ -183,6 +183,8 @@ export default function Home() {
   const [authOpen, setAuthOpen] = useState(false);
   const [navMenu, setNavMenu] = useState<NavMenu>(null);
   const navMenuRef = useRef<NavMenu>(null);
+  const navMenuHistoryPushed = useRef(false);
+  const navMenuSuppressPopRef = useRef(false);
   navMenuRef.current = navMenu;
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -274,6 +276,20 @@ export default function Home() {
     if (!navMenuRef.current) return;
     // ponytail: popstate closes the menu (like sidebar/library). Clearing state
     // before history.back() lets the handler see navMenu=null and show exit toast.
+    if (!navMenuHistoryPushed.current) {
+      setNavMenu(null);
+      return;
+    }
+    navMenuHistoryPushed.current = false;
+    dismissOverlay();
+  }
+
+  /** Close menu before client navigation; pops overlay without blocking router.push. */
+  function closeNavMenuForNav() {
+    setNavMenu(null);
+    if (!navMenuHistoryPushed.current) return;
+    navMenuHistoryPushed.current = false;
+    navMenuSuppressPopRef.current = true;
     dismissOverlay();
   }
 
@@ -284,7 +300,10 @@ export default function Home() {
     }
     const hadMenu = navMenu !== null;
     setNavMenu(menu);
-    if (!hadMenu) pushOverlayHistory();
+    if (!hadMenu) {
+      pushOverlayHistory();
+      navMenuHistoryPushed.current = true;
+    }
   }
 
   function closeNewGameForm() {
@@ -374,6 +393,10 @@ export default function Home() {
 
   useEffect(() => {
     function onPopState() {
+      if (navMenuSuppressPopRef.current) {
+        navMenuSuppressPopRef.current = false;
+        return;
+      }
       if (confirmFallbackModal) {
         confirmFallbackModal.onCancel();
         return;
@@ -393,6 +416,7 @@ export default function Home() {
       }
       if (navMenuRef.current) {
         setNavMenu(null);
+        navMenuHistoryPushed.current = false;
         return;
       }
       if (authOpen) {
@@ -1558,6 +1582,7 @@ export default function Home() {
             onSpoilerChange={updateGlobalSpoiler}
             navMenu={navMenu}
             onNavMenuChange={handleNavMenuChange}
+            onNavMenuNavigate={closeNavMenuForNav}
             onSignIn={() => {
               if (navMenu) dismissNavMenu();
               setAuthOpen(true);
