@@ -222,6 +222,11 @@ export default function Home() {
   const jumpRef = useRef(false);
   const variantScrollTargetRef = useRef<number | null>(null);
   const chatHistoryPushed = useRef(false);
+  const newGameHistoryPushed = useRef(false);
+  const closingNewGameFormRef = useRef(false);
+  const homeRootPushed = useRef(false);
+  const homeExitPromptAt = useRef(0);
+  const HOME_EXIT_BACK_MS = 2000;
   const sessionHydratedRef = useRef(false);
   const onSignedOutRef = useRef<() => void>(() => {});
   const abortRefs = useRef<Record<string, AbortController>>({});
@@ -262,6 +267,14 @@ export default function Home() {
   function dismissOverlay() {
     if (typeof window === "undefined") return;
     window.history.back();
+  }
+
+  function closeNewGameForm() {
+    setNewGameOpen(false);
+    if (!newGameHistoryPushed.current) return;
+    newGameHistoryPushed.current = false;
+    closingNewGameFormRef.current = true;
+    dismissOverlay();
   }
 
   const {
@@ -343,6 +356,10 @@ export default function Home() {
 
   useEffect(() => {
     function onPopState() {
+      if (closingNewGameFormRef.current) {
+        closingNewGameFormRef.current = false;
+        return;
+      }
       if (confirmFallbackModal) {
         confirmFallbackModal.onCancel();
         return;
@@ -363,15 +380,52 @@ export default function Home() {
         setAuthOpen(false);
         return;
       }
+      if (newGameOpen) {
+        newGameHistoryPushed.current = false;
+        setNewGameOpen(false);
+        return;
+      }
       // No overlay open: a back press from a game thread returns to the home page.
       if (messages.length > 0) {
         chatHistoryPushed.current = false;
+        homeRootPushed.current = false;
+        homeExitPromptAt.current = 0;
         newGame();
+        return;
       }
+      // Quick-home idle: first back warns; second back within 2s leaves the app.
+      const onQuickHomeIdle =
+        chats.length > 0 && !game.trim() && !newGameOpen && !editingGame;
+      if (!onQuickHomeIdle) return;
+
+      if (
+        homeExitPromptAt.current > 0 &&
+        Date.now() - homeExitPromptAt.current < HOME_EXIT_BACK_MS
+      ) {
+        homeExitPromptAt.current = 0;
+        homeRootPushed.current = false;
+        return;
+      }
+
+      homeExitPromptAt.current = Date.now();
+      setToast("Press back again to leave");
+      homeRootPushed.current = true;
+      window.history.pushState({ gggHomeRoot: true }, "");
     }
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [authOpen, libraryOpen, sidebarOpen, steamLibraryOpen, messages.length, confirmFallbackModal]);
+  }, [
+    authOpen,
+    libraryOpen,
+    sidebarOpen,
+    steamLibraryOpen,
+    messages.length,
+    confirmFallbackModal,
+    newGameOpen,
+    chats.length,
+    game,
+    editingGame,
+  ]);
 
   // Give the browser a history entry to pop when a chat thread is showing, so the
   // hardware/gesture back returns home instead of leaving the app.
@@ -384,6 +438,40 @@ export default function Home() {
       chatHistoryPushed.current = false;
     }
   }, [messages.length]);
+
+  // Arm hardware back on quick-home idle so the first press shows a leave hint
+  // instead of exiting the PWA immediately.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const shouldGuard =
+      chats.length > 0 &&
+      messages.length === 0 &&
+      !game.trim() &&
+      !newGameOpen &&
+      !editingGame &&
+      !authOpen &&
+      !sidebarOpen &&
+      !libraryOpen &&
+      !steamLibraryOpen;
+    if (shouldGuard && !homeRootPushed.current) {
+      homeRootPushed.current = true;
+      window.history.pushState({ gggHomeRoot: true }, "");
+    }
+    if (!shouldGuard) {
+      homeRootPushed.current = false;
+      if (messages.length > 0 || newGameOpen) homeExitPromptAt.current = 0;
+    }
+  }, [
+    chats.length,
+    messages.length,
+    game,
+    newGameOpen,
+    editingGame,
+    authOpen,
+    sidebarOpen,
+    libraryOpen,
+    steamLibraryOpen,
+  ]);
 
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
@@ -785,6 +873,7 @@ export default function Home() {
     setSidebarOpen(false);
     setMenuOpenId(null);
     setTemporary(false);
+    newGameHistoryPushed.current = false;
     // Back to quick-access home; the setup form re-hides behind "+ New game".
     setNewGameOpen(false);
   }
@@ -866,6 +955,8 @@ export default function Home() {
   function startNewGame() {
     newGame();
     setNewGameOpen(true);
+    newGameHistoryPushed.current = true;
+    pushOverlayHistory();
     requestAnimationFrame(() => {
       document.getElementById("game")?.focus();
     });
@@ -1629,7 +1720,10 @@ export default function Home() {
         onOpenSavedLibrary={openSavedLibrary}
         onStartNewGame={startNewGame}
         onOpenSteamLibrary={openSteamLibrary}
-        onSetNewGameOpen={setNewGameOpen}
+        onSetNewGameOpen={(open) => {
+          if (open) setNewGameOpen(true);
+          else closeNewGameForm();
+        }}
         onSetOptPanel={setOptPanel}
         onGameChange={handleGameChange}
         onPickGame={pickGame}
