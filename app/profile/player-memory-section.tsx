@@ -236,15 +236,7 @@ export function PlayerMemorySection({ session, onToast }: Props) {
 
   return (
     <div className="field player-memory-section">
-      <div className="profile-menu-toggle player-memory-toggle">
-        <span className="field-label">{MEMORY_TOGGLE_LABEL}</span>
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(event) => void setMemoryEnabled(event.target.checked)}
-          aria-label={MEMORY_TOGGLE_LABEL}
-        />
-      </div>
+      <span className="field-label">{MEMORY_TOGGLE_LABEL}</span>
       <p className="field-hint">
         {enabled
           ? count < MEMORY_FULL_THRESHOLD
@@ -252,6 +244,17 @@ export function PlayerMemorySection({ session, onToast }: Props) {
             : "Style memory active. Updates daily."
           : MEMORY_TOGGLE_HINT}
       </p>
+      <div className="opt-memory-row">
+        <label className="memory-toggle">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(event) => void setMemoryEnabled(event.target.checked)}
+            aria-label={MEMORY_TOGGLE_LABEL}
+          />
+          <span>{enabled ? "On" : "Off"}</span>
+        </label>
+      </div>
 
       {enabled && count < MEMORY_FULL_THRESHOLD && (
         <div className="player-memory-progress" aria-hidden="true">
@@ -337,7 +340,7 @@ export function PlayerMemorySection({ session, onToast }: Props) {
           <button
             type="button"
             className="nav-button"
-            disabled={!canRefresh || refreshing}
+            disabled={count < MEMORY_DRAFT_THRESHOLD || !canRefresh || refreshing}
             onClick={() => void refreshNow()}
           >
             {refreshing ? "Updating…" : "Update now"}
