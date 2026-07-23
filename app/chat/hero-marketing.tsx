@@ -197,8 +197,7 @@ export function HomeTip({ anchored = false }: { anchored?: boolean }) {
   }, []);
   return (
     <p className={`home-tip${anchored ? " home-tip--anchored" : ""}`}>
-      <span className="home-tip-label">Tip</span>
-      {HOME_TIPS[i]}
+      Tip: {HOME_TIPS[i]}
     </p>
   );
 }

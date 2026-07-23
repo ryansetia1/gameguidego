@@ -52,6 +52,11 @@ type Props = {
   onPendingChange?: (pending: boolean) => void;
   guideIndexState?: Record<string, "unknown" | "checking" | "indexed" | "failed" | "unavailable" | "pending">;
   onDone?: () => void;
+  onRequestConfirm?: (opts: {
+    message: string;
+    confirmLabel?: string;
+    danger?: boolean;
+  }) => Promise<boolean>;
 };
 
 function hostLabel(url: string) {
@@ -114,6 +119,7 @@ export function GuideLinkField({
   onPendingChange,
   guideIndexState = {},
   onDone,
+  onRequestConfirm,
 }: Props) {
   const [mode, setMode] = useState<"link" | "search" | "upload">("link");
   const [showInfo, setShowInfo] = useState(false);
@@ -292,7 +298,7 @@ export function GuideLinkField({
         delete next[url];
         onBundleMetaChange(next);
       }
-      
+
       if (url.startsWith("upload://") && userId) {
         fetch("/api/guide-upload", {
           method: "DELETE",
@@ -300,10 +306,35 @@ export function GuideLinkField({
           body: JSON.stringify({ guideUrl: url, userId }),
         }).catch(console.error);
       }
-      
+
       setAddError("");
     },
     [bundleMeta, onBundleMetaChange, onChange, value, userId],
+  );
+
+  const confirmRemoveUrl = useCallback(
+    async (url: string) => {
+      const meta = bundleMeta[url];
+      const uploaded = isUploadedGuideUrl(url);
+      const bundle = isActiveGamefaqsBundle(url, meta);
+      const label = uploaded
+        ? uploadedGuideFilename(url)
+        : bundle && meta?.title
+          ? meta.title
+          : hostLabel(url);
+
+      if (onRequestConfirm) {
+        const ok = await onRequestConfirm({
+          message: `Remove "${label}"? Answers won't use it until you add it back.`,
+          confirmLabel: "Remove",
+          danger: true,
+        });
+        if (!ok) return;
+      }
+
+      removeUrl(url);
+    },
+    [bundleMeta, onRequestConfirm, removeUrl],
   );
 
   const runSearch = useCallback(async () => {
@@ -563,7 +594,7 @@ export function GuideLinkField({
                   className="guide-url-remove"
                   disabled={disabled}
                   aria-label={`Remove ${uploaded ? uploadedGuideFilename(url) : bundle ? "bundle" : hostLabel(url)}`}
-                  onClick={() => removeUrl(url)}
+                  onClick={() => void confirmRemoveUrl(url)}
                 >
                   <IconX size={14} />
                 </button>

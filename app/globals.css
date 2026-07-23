@@ -3422,17 +3422,12 @@ details.sources small {
 .home-tip {
   /* Sticky to the screen bottom so it balances on any mobile height (stays
      visible instead of being pushed below the fold on short screens). quick-home
-     grows above it (flex:1) to fill the gap. Centered so it reads as an ambient
-     footer note, not a left-aligned list item. */
+     grows above it (flex:1) to fill the gap. */
   position: sticky;
   bottom: max(10px, env(safe-area-inset-bottom));
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: center;
-  gap: 8px;
+  max-width: 36rem;
   margin: auto 2px 0;
-  padding: 16px 0 10px;
+  padding: 16px 10px 10px;
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.5;
@@ -3446,30 +3441,40 @@ details.sources small {
   margin-top: 8px;
 }
 
-.home-tip-label {
-  flex-shrink: 0;
-  padding: 2px 7px;
-  background: var(--signal);
-  color: var(--on-signal);
-  font-family: var(--font-sans);
-  font-size: 0.58rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
 /* Read-only game card shown once a chat has started. */
 .game-card {
   position: relative;
   display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: flex-start;
+  flex-direction: column;
+  gap: 10px;
   margin-top: 30px;
-  padding: 16px;
+  padding: 12px;
   border: 1.5px solid var(--ink);
   background: var(--paper-strong);
   animation: rise 480ms 60ms ease-out backwards;
+}
+
+.game-card-header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
+}
+
+.game-card-cover {
+  flex-shrink: 0;
+}
+
+@media (max-width: 699px) {
+  .game-card-cover.cover-lg {
+    width: 64px;
+    height: 85px;
+  }
+
+  .game-card-cover.cover-lg.cover-placeholder {
+    font-size: 1.9rem;
+  }
 }
 
 .game-card-edit {
@@ -3499,6 +3504,7 @@ details.sources small {
 
 .game-card-meta {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
@@ -3512,13 +3518,22 @@ details.sources small {
   overflow-wrap: anywhere;
 }
 
-.game-card-meta p {
+.game-card-meta-line {
   margin: 0;
   color: var(--muted);
   font-family: var(--font-sans);
   font-size: 0.72rem;
   letter-spacing: 0.04em;
+  line-height: 1.3;
+}
+
+.game-card-meta-line .meta-chunk {
   text-transform: uppercase;
+}
+
+.game-card-meta-line .hltb-chunk {
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .game-card-hltb {
@@ -3905,12 +3920,10 @@ details.sources small {
 }
 
 .game-card-guides {
-  flex: 0 0 100%;
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 2px;
+  gap: 6px;
 }
 
 .game-card-guide-stack {
@@ -3919,10 +3932,107 @@ details.sources small {
   gap: 4px;
 }
 
-.game-card-spoiler {
-  flex: 0 0 100%;
+.game-card-guide-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  margin-top: 2px;
+  min-width: 0;
+}
+
+.game-card-guide-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.game-card-guides-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.game-card-guides-summary-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.game-card-spoiler {
+  width: 100%;
+}
+
+.game-card-quick-add {
+  min-width: 0;
+}
+
+.game-card-quick-add-btn {
+  width: 100%;
+  justify-content: center;
+  opacity: 0.85;
+}
+
+.game-card-quick-add-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--text-subtle);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.game-card-quick-add-link:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.game-card-quick-add-link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.game-card-quick-add-inline,
+.game-card-quick-add-summary {
+  flex-shrink: 0;
+  min-height: auto;
+  padding: 0;
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+
+.game-card-quick-add-summary {
+  padding: 2px 0;
+}
+
+.game-card-quick-add-panel {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 12px;
+  min-width: 0;
+}
+
+.game-card-quick-add-done {
+  margin-top: 12px;
+  display: flex;
+  justify-content: center;
+}
+
+.game-card-quick-add-done-btn {
+  width: 100%;
+  justify-content: center;
+  background: var(--action);
+  color: #fff;
+  border-color: var(--action);
+}
+
+.game-card-quick-add-done-btn[data-has-guides] {
+  background: var(--signal);
+  color: var(--on-signal);
+  border-color: var(--signal);
 }
 
 .bundle-index-panel {

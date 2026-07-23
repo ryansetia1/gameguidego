@@ -314,6 +314,7 @@ export function HomeSetup({
                   disabled={loading}
                   userId={user?.id}
                   onDone={() => onSetOptPanel(null)}
+                  onRequestConfirm={onRequestConfirm}
                 />
               </div>
             ) : preferredUrls.length > 0 ? (

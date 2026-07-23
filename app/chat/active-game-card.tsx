@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import type { MouseEvent, RefObject } from "react";
 import type { User } from "@supabase/supabase-js";
 import { BundleIndexPanel } from "../bundle-index-panel";
 import { GuideLinkField, type GuideBundleMeta } from "../guide-link-field";
@@ -117,28 +117,49 @@ export function ActiveGameCard({
   onReindexAllPending,
   onGameSpoilerChange,
 }: ActiveGameCardProps) {
-  const renderQuickAdd = () => (
-    <div style={{ marginTop: "12px", flex: "0 0 100%", width: "100%", minWidth: 0 }}>
-      {!showQuickAdd ? (
-        <button
-          type="button"
-          className="nav-button"
-          onClick={() => onSetShowQuickAdd(true)}
-          style={{ width: "100%", justifyContent: "center", opacity: 0.8 }}
-        >
-          <IconPlus size={14} style={{ marginRight: "6px" }} /> Quick Add Guide
-        </button>
-      ) : (
-        <div
-          className="opt-panel"
-          style={{
-            background: "var(--paper)",
-            border: "1px solid var(--line)",
-            borderRadius: "6px",
-            padding: "12px",
-            minWidth: 0,
-          }}
-        >
+  const hasBlocked = preferredUrls.some((url) => guideBundleMeta[url]?.isBlocked);
+  const hasFailed = preferredUrls.some((url) => guideIndexState[url] === "failed");
+  const isCollapsible = preferredUrls.length > 2;
+
+  const openQuickAdd = (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onSetShowQuickAdd(true);
+  };
+
+  const renderAddGuideLink = (className = "") => (
+    <button
+      type="button"
+      className={`game-card-quick-add-link${className ? ` ${className}` : ""}`}
+      onClick={openQuickAdd}
+      disabled={loading}
+    >
+      <IconPlus size={14} aria-hidden />
+      Add guide
+    </button>
+  );
+
+  const renderQuickAdd = () => {
+    if (!showQuickAdd) {
+      if (preferredUrls.length > 0) return null;
+      return (
+        <div className="game-card-quick-add">
+          <button
+            type="button"
+            className="nav-button game-card-quick-add-btn"
+            onClick={() => onSetShowQuickAdd(true)}
+            disabled={loading}
+          >
+            <IconPlus size={14} style={{ marginRight: "6px" }} aria-hidden />
+            Quick Add Guide
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="game-card-quick-add">
+        <div className="game-card-quick-add-panel opt-panel">
           <GuideLinkField
             value={preferredUrls}
             onChange={onPreferredUrlsChange}
@@ -151,11 +172,12 @@ export function ActiveGameCard({
             platform={platform}
             disabled={loading}
             userId={user?.id}
+            onRequestConfirm={onRequestConfirm}
           />
-          <div style={{ marginTop: "12px", display: "flex", justifyContent: "center" }}>
+          <div className="game-card-quick-add-done">
             <button
               type="button"
-              className="nav-button"
+              className="nav-button game-card-quick-add-done-btn"
               onClick={async () => {
                 if (guidePending) {
                   const ok = await onRequestConfirm({
@@ -168,23 +190,20 @@ export function ActiveGameCard({
                 onSetShowQuickAdd(false);
                 onSaveGameMeta();
               }}
-              style={{
-                background: preferredUrls.length > 0 ? "var(--signal)" : "var(--action)",
-                color: preferredUrls.length > 0 ? "var(--on-signal)" : "white",
-                borderColor: preferredUrls.length > 0 ? "var(--signal)" : "var(--action)",
-                width: "100%",
-                justifyContent: "center",
-              }}
+              disabled={loading}
+              data-has-guides={preferredUrls.length > 0 ? true : undefined}
             >
               Done
             </button>
           </div>
         </div>
-      )}
-    </div>
-  );
+      </div>
+    );
+  };
 
-  const renderGuideStack = (url: string) => {
+  const renderGuideStack = (url: string, index: number) => {
+    const isLastGuide = index === preferredUrls.length - 1;
+    const showInlineAdd = !showQuickAdd && !isCollapsible && preferredUrls.length > 0 && isLastGuide;
     const row = gameCardGuideRow(
       url,
       guideBundleMeta[url],
@@ -194,6 +213,8 @@ export function ActiveGameCard({
     );
     return (
       <div key={guideUrlDedupeKey(url)} className="game-card-guide-stack">
+        <div className="game-card-guide-row">
+          <div className="game-card-guide-row-main">
         {row.uploaded ? (
           <div className={`game-card-link is-${row.state}`}>
             <span
@@ -324,6 +345,9 @@ export function ActiveGameCard({
             </span>
           </a>
         )}
+          </div>
+          {showInlineAdd ? renderAddGuideLink("game-card-quick-add-inline") : null}
+        </div>
         {row.bundle && !row.panelLoading && row.showPanel ? (
           <BundleIndexPanel
             discoveredPages={row.discoveredPages}
@@ -347,10 +371,6 @@ export function ActiveGameCard({
       </div>
     );
   };
-
-  const hasBlocked = preferredUrls.some((url) => guideBundleMeta[url]?.isBlocked);
-  const hasFailed = preferredUrls.some((url) => guideIndexState[url] === "failed");
-  const isCollapsible = preferredUrls.length > 2;
 
   return (
     <section className="game-card" aria-label="Game" ref={topRef}>
@@ -392,13 +412,32 @@ export function ActiveGameCard({
           </div>
         )}
       </div>
-      {coverEnabled && <CoverThumb cover={cover} name={game} className="cover-lg" />}
-      <div className={`game-card-meta${activeChatId && !temporary ? " has-quick" : ""}`}>
-        <h2>{game || "Untitled game"}</h2>
-        {(platform || releaseYear) && (
-          <p>{[displayPlatform(platform, cover), releaseYear].filter(Boolean).join(" · ")}</p>
+      <div className="game-card-header">
+        {coverEnabled && (
+          <CoverThumb cover={cover} name={game} className="cover-lg game-card-cover" />
         )}
-        <HltbRow title={game} appId={steamAppIdFromCoverUrl(cover)?.toString()} />
+        <div className={`game-card-meta${activeChatId && !temporary ? " has-quick" : ""}`}>
+          <h2>{game || "Untitled game"}</h2>
+          {(platform || releaseYear || game) && (
+            <p className="meta-subline game-card-meta-line">
+              {displayPlatform(platform, cover) && (
+                <span className="meta-chunk">{displayPlatform(platform, cover)}</span>
+              )}
+              {displayPlatform(platform, cover) && releaseYear && (
+                <span className="meta-dot" aria-hidden>
+                  ·
+                </span>
+              )}
+              {releaseYear && <span className="meta-chunk">{releaseYear}</span>}
+              <HltbRow
+                title={game}
+                appId={steamAppIdFromCoverUrl(cover)?.toString()}
+                variant="inline"
+                sep={Boolean(displayPlatform(platform, cover) || releaseYear)}
+              />
+            </p>
+          )}
+        </div>
       </div>
       <div className="game-card-guides">
         <details
@@ -407,14 +446,10 @@ export function ActiveGameCard({
           style={!isCollapsible ? { display: "contents" } : undefined}
         >
           <summary
-            style={{
-              display: isCollapsible ? "flex" : "none",
-              alignItems: "center",
-              gap: "8px",
-              fontWeight: 600,
-            }}
+            className={isCollapsible ? "game-card-guides-summary" : undefined}
+            style={!isCollapsible ? { display: "none" } : undefined}
           >
-            <span style={{ flex: 1 }}>Guides ({preferredUrls.length})</span>
+            <span className="game-card-guides-summary-label">Guides ({preferredUrls.length})</span>
             {preferredUrls.some((url) => {
               const st = guideIndexState[url];
               return !st || st === "pending" || st === "failed" || st === "unknown";
@@ -456,6 +491,9 @@ export function ActiveGameCard({
                 <IconX size={10} /> Failed
               </span>
             )}
+            {isCollapsible && !showQuickAdd
+              ? renderAddGuideLink("game-card-quick-add-summary")
+              : null}
             {isCollapsible ? (
               <span className="chevron-toggle" aria-hidden>
                 <IconChevronDown size={14} />
@@ -467,7 +505,9 @@ export function ActiveGameCard({
             className={isCollapsible ? "game-card-guides" : ""}
             style={isCollapsible ? { marginTop: "8px" } : undefined}
           >
-            {preferredUrls.map(renderGuideStack)}
+            {!showQuickAdd
+              ? preferredUrls.map((url, index) => renderGuideStack(url, index))
+              : null}
             {renderQuickAdd()}
           </div>
         </details>
