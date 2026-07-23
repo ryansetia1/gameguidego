@@ -119,7 +119,7 @@ export function useChatTurn(deps: ChatTurnDeps) {
     d.clearPendingImages();
   }
 
-  async function confirmDropFollowups(dropped: Message[]) {
+  async function confirmDropFollowups(dropped: Message[], intent: "retry" | "edit") {
     const d = depsRef.current;
     if (dropped.length === 0) return true;
     const imageCount = dropped.reduce((n, m) => n + (m.images?.length ?? 0), 0);
@@ -127,7 +127,12 @@ export function useChatTurn(deps: ChatTurnDeps) {
     if (imageCount > 0) {
       parts.push(`${imageCount} attached image${imageCount > 1 ? "s" : ""}`);
     }
-    return d.askConfirm(`This will remove ${parts.join(" and ")}. Continue?`);
+    const confirmLabel = intent === "retry" ? "Remove & retry" : "Remove & save edit";
+    return d.askConfirm(
+      `This will remove ${parts.join(" and ")}. Continue?`,
+      confirmLabel,
+      false,
+    );
   }
 
   async function saveEdit(index: number) {
@@ -138,7 +143,7 @@ export function useChatTurn(deps: ChatTurnDeps) {
     if (!(await confirmGuidePending())) return;
 
     const dropped = d.messages.slice(index + 2);
-    if (!(await confirmDropFollowups(dropped))) return;
+    if (!(await confirmDropFollowups(dropped, "edit"))) return;
 
     d.setLoading(true);
     const newImages = await d.uploadMessageImages();
@@ -174,7 +179,7 @@ export function useChatTurn(deps: ChatTurnDeps) {
     const question = d.messages[index - 1].content;
     const existingImages = d.messages[index - 1].images || [];
     const dropped = d.messages.slice(index + 1);
-    if (!(await confirmDropFollowups(dropped))) return;
+    if (!(await confirmDropFollowups(dropped, "retry"))) return;
     await d.deleteMessageImages(dropped);
     await runTurnRef.current(
       question,

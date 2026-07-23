@@ -11,6 +11,7 @@ import {
   snapshotAssistantVariants,
 } from "@/lib/chat-messages.js";
 import { uploadedSourceGuideLabel } from "@/lib/chat-message-ui.js";
+import { guideSearchFallbackHint } from "@/lib/guide-hints.js";
 import { buildBundlePrefsBody } from "@/lib/guide-card-ui.js";
 import { coerceHighlights, coerceSpoilers } from "@/lib/highlights.js";
 import { displayNameFromMetadata } from "@/lib/profile.js";
@@ -250,14 +251,13 @@ export async function executeChatTurn({
     const sources = Array.isArray(data.sources) ? (data.sources as Source[]) : [];
     const pipelineType = typeof data.pipelineType === "string" ? data.pipelineType : undefined;
     let finalToast: string | undefined;
-    if (data.guideHint && data.guideHint !== ingestResult?.hint) {
-      finalToast = data.guideHint;
-    }
     if (pipelineType === "fallback_web") {
       const uploadLabel = uploadedSourceGuideLabel(sources);
-      if (uploadLabel) {
-        finalToast = `Answered from ${uploadLabel.toLowerCase()} + web search`;
-      }
+      finalToast = uploadLabel
+        ? `Answered from ${uploadLabel.toLowerCase()} + web search`
+        : data.guideHint || guideSearchFallbackHint();
+    } else if (data.guideHint && data.guideHint !== ingestResult?.hint) {
+      finalToast = data.guideHint;
     }
 
     const variantBody = buildAssistantVariantBody({

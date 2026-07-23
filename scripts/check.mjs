@@ -47,7 +47,7 @@ import {
 import { formatAdminMoney, formatIdr, usdToIdrAmount } from "../lib/admin-fx.ts";
 import { dateRangeForPreset } from "../lib/admin-date-range.ts";
 import { chunkGuide } from "../lib/chunk-guide.js";
-import { guideIngestHint, guideIngestHintFromResponse } from "../lib/guide-hints.js";
+import { guideIngestHint, guideIngestHintFromResponse, guideSearchFallbackHint } from "../lib/guide-hints.js";
 import {
   bundleHasPendingPages,
   bundlePrefsAllFromUserMetadata,
@@ -420,6 +420,8 @@ assert.match(
   guideIngestHint({ available: true, indexedCount: 1, total: 3 }) ?? "",
   /2 of 3/,
 );
+assert.match(guideSearchFallbackHint(), /in your guide/i);
+assert.match(guideSearchFallbackHint(), /web search/i);
 assert.match(
   guideIngestHintFromResponse({
     available: true,

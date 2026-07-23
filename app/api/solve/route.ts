@@ -9,7 +9,7 @@ import {
 import { persistAssistantResponse, loadMessagesForServerMerge } from "@/lib/chat-thread-persist.js";
 import { getCachedSearch, setCachedSearch } from "@/lib/search-cache";
 import { censorSpoilers, resolveQuestion, summarize, type Turn } from "@/lib/replicate";
-import { guideIngestHint } from "@/lib/guide-hints.js";
+import { guideIngestHint, guideSearchFallbackHint } from "@/lib/guide-hints.js";
 import { coerceGuideUrlsFromBody } from "@/lib/guide-urls.js";
 import { coerceBundlePrefsFromBody } from "@/lib/bundle-prefs.js";
 import { retrieveFromPreferredGuides } from "@/lib/guide-rag";
@@ -256,13 +256,14 @@ export async function POST(request: Request) {
           .join(" ");
 
         const retrievalStart = Date.now();
+        let rag: Awaited<ReturnType<typeof retrieveFromPreferredGuides>> = null;
         if (retryContext?.sources) {
           sources = retryContext.sources;
           pipelineType = retryContext.pipelineType as SolveJourneyEntry["pipelineType"] || "knowledge_only";
           guideHint = retryContext.guideHint;
         } else if (preferredUrls.length) {
           sendEvent("status", { text: "Searching your guide..." });
-          const rag = await retrieveFromPreferredGuides({
+          rag = await retrieveFromPreferredGuides({
             guideUrls: preferredUrls,
             query: searchTopic,
             game,
@@ -280,9 +281,6 @@ export async function POST(request: Request) {
                 indexedCount: rag.indexedCount,
                 total: rag.totalGuides,
               }) ?? undefined;
-          } else if (rag && !rag.skipWebSearch && !rag.sources.length) {
-            guideHint =
-              guideIngestHint({ available: true, indexed: false }) ?? undefined;
           }
 
           if (rag?.skipWebSearch) {
@@ -297,6 +295,9 @@ export async function POST(request: Request) {
               : [];
             sources = web;
             pipelineType = web.length > 0 ? "fallback_web" : "knowledge_only";
+            if (pipelineType === "fallback_web" && rag.indexedCount > 0) {
+              guideHint = guideSearchFallbackHint();
+            }
           } else if (hasSearchProvider) {
             sendEvent("status", { text: "Searching the web..." });
             pipelineType = "fallback_web";
@@ -316,7 +317,12 @@ export async function POST(request: Request) {
         }
         
         if (pipelineType === "knowledge_only") {
-          guideHint = "Couldn't find on the web, answering from knowledge";
+          if (!preferredUrls.length) {
+            guideHint = "Couldn't find on the web, answering from knowledge";
+          } else if (rag && rag.indexedCount > 0) {
+            guideHint =
+              "Couldn't find that in your guide or on the web. Answering from knowledge.";
+          }
         }
 
         retrievalLatencyMs = Date.now() - retrievalStart;
