@@ -15,6 +15,12 @@ import { coerceBundlePrefsFromBody } from "@/lib/bundle-prefs.js";
 import { retrieveFromPreferredGuides } from "@/lib/guide-rag";
 import { coerceSpoilerPrefs } from "@/lib/spoiler-prefs";
 import { coerceDisplayName } from "@/lib/profile.js";
+import {
+  bumpPlayerMemoryCount,
+  createAuthedSupabase,
+  loadMemoryForSolve,
+  refreshPlayerMemory,
+} from "@/lib/player-memory-server";
 import { searchGuides, type SearchResult } from "@/lib/tavily";
 import { logSolveJourneyToDb, sourcesForSolveLog, type SolveJourneyEntry } from "@/lib/solve-log";
 import { runWithTrace, logTraceEvent } from "@/lib/trace";
@@ -175,6 +181,21 @@ export async function POST(request: Request) {
 
       const backgroundTask = runWithTrace(traceId, async () => {
         const startedAt = Date.now();
+        const isRetry = Boolean(retryContext);
+        let playerMemory = null;
+        let authedSupabase = null;
+
+        if (authHeader && userId) {
+          authedSupabase = createAuthedSupabase(authHeader.replace(/^Bearer\s+/i, ""));
+          if (authedSupabase) {
+            try {
+              playerMemory = await loadMemoryForSolve(authedSupabase, userId, game, platform);
+            } catch (memoryError) {
+              console.error("Player memory load failed (continuing):", memoryError);
+            }
+          }
+        }
+
         await logTraceEvent("solve_start", "Started solve generation", undefined, {
           question,
           game,
@@ -341,6 +362,7 @@ export async function POST(request: Request) {
           imageResolvedSubject: images.length ? searchTopic : undefined,
           spoilerPrefs,
           playerName,
+          playerMemory,
           userId,
           onProgress: (msg: string, id?: string) => {
             if (id) sendEvent("prediction_id", { id });
@@ -470,6 +492,20 @@ export async function POST(request: Request) {
           answer: finalAnswer,
           sources: adminLogSources,
         }).catch(console.error);
+
+        if (authedSupabase && userId && !isRetry) {
+          after(async () => {
+            try {
+              const bump = await bumpPlayerMemoryCount(authedSupabase!, userId);
+              if (!bump) return;
+              if (bump.hitDraft || bump.hitFull) {
+                await refreshPlayerMemory(authedSupabase!, userId, { manual: false, force: true });
+              }
+            } catch (memoryBumpError) {
+              console.error("Player memory bump failed:", memoryBumpError);
+            }
+          });
+        }
       } catch (error) {
         console.error("Guide generation failed:", error);
         const timedOut =

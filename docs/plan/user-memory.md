@@ -1,6 +1,6 @@
 # Player style memory (structured profile)
 
-**Status:** Design — **experimental, not shipped** (July 2026)  
+**Status:** Experimental — **shipped** (July 2026)  
 **Runtime (planned):** Opt-in for signed-in users only. Daily incremental summarize +
 manual **Update now**. Structured JSON injected into `buildPrompt()` — **not** full chat RAG.
 

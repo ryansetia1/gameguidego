@@ -13,7 +13,7 @@ const LOG_PATH =
 const MAX_ENTRIES = 10;
 
 export type LlmLogEntry = {
-  kind: "rewrite" | "summarize" | "censor" | "embed_index" | "embed_query";
+  kind: "rewrite" | "summarize" | "censor" | "embed_index" | "embed_query" | "memory_summarize";
   model: string;
   system: string;
   prompt: string;

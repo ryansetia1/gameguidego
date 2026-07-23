@@ -10,6 +10,6 @@ they describe where the codebase is going, not necessarily what is shipped yet.
 | [page-decomposition.md](./page-decomposition.md) | **Done** | Split `app/page.tsx` into focused modules without behaviour change |
 | [rag-tuning-roadmap.md](./rag-tuning-roadmap.md) | **Research** | RAG chunk/K/threshold tuning and reranker upgrade backlog (July 2026) |
 | [image-character-recognition.md](./image-character-recognition.md) | **Experimental** | Prompt-only vision character naming — try in prod, revert if quality drops |
-| [user-memory.md](./user-memory.md) | **Design** | Opt-in player style memory — daily structured summarize, 5/10 message tiers, profile UI |
+| [user-memory.md](./user-memory.md) | **Experimental** | Opt-in player style memory — daily summarize, 5/10 tiers, profile UI |
 
 When a plan phase ships, update its status here and cross-link from `CLAUDE.md`.

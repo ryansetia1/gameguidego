@@ -232,6 +232,7 @@ export type SummarizeInput = {
   imageResolvedSubject?: string;
   spoilerPrefs?: SpoilerPrefs;
   playerName?: string;
+  playerMemory?: import("@/lib/player-memory.js").PlayerMemoryPromptInput | null;
   userId?: string | null;
   signal?: AbortSignal;
   onProgress?: (msg: string, id?: string) => void;
@@ -253,6 +254,7 @@ export async function summarize(input: SummarizeInput): Promise<SummaryResult> {
     ...input,
     imageCount: images.length,
     imageResolvedSubject: images.length ? input.imageResolvedSubject : "",
+    playerMemory: input.playerMemory ?? null,
     sources: input.sources.map(({ title, content, preferred }) => ({
       title,
       content,

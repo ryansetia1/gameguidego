@@ -5,7 +5,7 @@ import { getTraceId } from "@/lib/trace";
 const ENABLED = process.env.LLM_DB_LOG !== "0";
 
 export type LlmDbLogEntry = {
-  kind: "rewrite" | "summarize" | "censor" | "embed_index" | "embed_query";
+  kind: "rewrite" | "summarize" | "censor" | "embed_index" | "embed_query" | "memory_summarize";
   model: string;
   system: string;
   prompt: string;

@@ -5635,6 +5635,106 @@ details.sources small {
   font-size: 0.88rem;
 }
 
+.player-memory-section {
+  margin-top: 8px;
+  padding-top: 20px;
+  border-top: 1.5px solid var(--ink);
+}
+
+.player-memory-toggle {
+  margin-top: 4px;
+}
+
+.player-memory-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.player-memory-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--paper-muted);
+  border: 1px solid var(--ink);
+}
+
+.player-memory-progress-fill {
+  height: 100%;
+  background: var(--accent);
+}
+
+.player-memory-progress-label {
+  font-size: 0.82rem;
+  color: var(--text-subtle);
+  min-width: 3.5rem;
+  text-align: right;
+}
+
+.player-memory-card {
+  margin-top: 16px;
+}
+
+.player-memory-card-title {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.player-memory-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.player-memory-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+
+.player-memory-game + .player-memory-game {
+  margin-top: 12px;
+}
+
+.player-memory-game-title {
+  margin: 0 0 4px;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.player-memory-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.player-memory-remove,
+.player-memory-clear {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--text-subtle);
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.player-memory-clear {
+  color: var(--danger);
+}
+
+.player-memory-remove:hover,
+.player-memory-clear:hover {
+  color: var(--ink);
+}
+
 /* --- Confirmation dialog (all destructive actions) --- */
 .confirm-overlay {
   position: fixed;

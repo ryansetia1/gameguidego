@@ -153,6 +153,13 @@ import {
   pickBestMatch,
 } from "../lib/hltb.js";
 import { lerpTilt, mouseToTilt, orientationToTilt, tiltTransform } from "../lib/hero-tilt.js";
+import {
+  buildPlayerMemoryPromptBlock,
+  coercePlayerStyle,
+  memoryRefreshCooldownRemainingMs,
+  normGameKey,
+  tierFromMessageCount,
+} from "../lib/player-memory.js";
 
 // System instruction carries the persona + safety rules.
 assert.match(SYSTEM_INSTRUCTION, /untrusted data/);
@@ -1559,5 +1566,19 @@ assert.equal(formatUsd(1.2), "$1.200");
 assert.equal(usdToIdrAmount(0.004, 16000), 64);
 assert.equal(formatAdminMoney(0.004, 16000), formatIdr(64));
 assert.equal(formatAdminMoney(0.004, null), "$0.004");
+
+assert.equal(normGameKey("  Resident Evil 0 "), "resident evil 0");
+assert.equal(tierFromMessageCount(0), "collecting");
+assert.equal(tierFromMessageCount(5), "draft");
+assert.equal(tierFromMessageCount(10), "full");
+assert.match(
+  buildPlayerMemoryPromptBlock({
+    tier: "full",
+    style: coercePlayerStyle({ answerLength: "short", language: "id", notes: ["No filler"] }),
+    gameMemory: { progress: "Chapter 2", notes: ["Stuck on puzzles"] },
+  }),
+  /Player style \(learned from past chats\)/,
+);
+assert.equal(memoryRefreshCooldownRemainingMs("2026-01-01T00:00:00.000Z", Date.parse("2026-01-01T00:30:00.000Z")), 0);
 
 console.log("Self-check passed.");

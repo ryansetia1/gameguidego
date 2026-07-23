@@ -8,6 +8,7 @@ import { AuthPanel } from "@/app/auth-panel";
 import { ClearButton } from "@/app/clear-button";
 import { IconArrowLeft } from "@/app/icons";
 import { ProfileMenu } from "@/app/profile-menu";
+import { PlayerMemorySection } from "@/app/profile/player-memory-section";
 import { compressImage } from "@/lib/image.js";
 import {
   avatarInitialFromUser,
@@ -41,6 +42,7 @@ export default function ProfilePage() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
+  const [session, setSession] = useState<import("@supabase/supabase-js").Session | null>(null);
 
   const supabaseReady = Boolean(getSupabase());
 
@@ -51,6 +53,7 @@ export default function ProfilePage() {
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
       const nextUser = data.session?.user ?? null;
+      setSession(data.session ?? null);
       setUser(nextUser);
       if (nextUser) {
         setDisplayName(displayNameFromMetadata(nextUser.user_metadata));
@@ -59,8 +62,9 @@ export default function ProfilePage() {
         setVoiceLang(voiceLangFromUserMetadata(nextUser.user_metadata) || loadVoiceLang());
       }
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      const nextUser = session?.user ?? null;
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      const nextUser = nextSession?.user ?? null;
+      setSession(nextSession);
       setUser(nextUser);
       if (nextUser) {
         setDisplayName(displayNameFromMetadata(nextUser.user_metadata));
@@ -301,6 +305,14 @@ export default function ProfilePage() {
                 ))}
               </select>
             </label>
+
+            <PlayerMemorySection
+              session={session}
+              onToast={(message) => {
+                setNotice(message);
+                setError("");
+              }}
+            />
           </div>
         )}
       </section>

@@ -849,10 +849,12 @@ large chat or persistence work:
   **Experimental (shipped, prompt-only):** vision character naming on image attachments.
   Worth trying in production; revert via `git revert` or manual `lib/prompt.js` rollback
   if wrong IDs, spoiler leaks, or worse search/RAG queries.
-- [`docs/plan/user-memory.md`](docs/plan/user-memory.md): **Design (not shipped):**
-  opt-in signed-in **Learn my style** — daily incremental summarize into a structured
-  profile (5 user messages = draft soft inject, 10 = full), per-game notes, transparent
-  `/profile` UI + **Update now**; disable wipes memory. Not full chat RAG in v1.
+- [`docs/plan/user-memory.md`](docs/plan/user-memory.md): **Experimental (shipped):**
+  opt-in signed-in **Learn my style** — incremental daily summarize into structured
+  profile (`player_memory_state` + `player_game_memory`; apply `db/player-memory.sql`),
+  5 user messages = draft soft inject, 10 = full, `/profile` UI + **Update now**,
+  disable wipes memory; cron `GET /api/cron/player-memory` (needs `CRON_SECRET` +
+  `SUPABASE_SERVICE_ROLE_KEY`).
 
 ## Working conventions
 
