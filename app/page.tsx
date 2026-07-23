@@ -129,7 +129,7 @@ export default function Home() {
   const [dragActive, setDragActive] = useState(false);
   const [lightboxState, setLightboxState] = useState<{ images: string[]; index: number } | null>(null);
   const [input, setInput] = useState("");
-  const [composerHeight, setComposerHeight] = useState(0);
+  const [composerExpanded, setComposerExpanded] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState("");
   const [retryAction, setRetryAction] = useState<(() => void) | null>(null);
@@ -321,26 +321,25 @@ export default function Home() {
 
   // Grow the composer to fit its text (down to one line when empty), capped by
   // the CSS max-height which then scrolls. Runs on every input + after clearing.
-  // Gate on having input: an empty composer is always one line, so a stale
-  // composerHeight (kept across chat open/switch) can't wrongly render it
-  // expanded until the next keystroke re-measures it.
-  const isExpanded = input.trim().length > 0 && composerHeight > 50;
-  
+  // Layout expands once scrollHeight passes one line; stays expanded until empty
+  // so column vs row width can't re-measure and oscillate (flicker).
+  const isExpanded = input.trim().length > 0 && composerExpanded;
+
   useEffect(() => {
     const el = composerRef.current;
     if (!el) return;
     el.style.height = "auto";
     const height = el.scrollHeight;
     el.style.height = `${height}px`;
-    
-    setComposerHeight((prev) => {
-      if (height > 50) return height;
-      if (prev > 50 && (input.length >= 20 || input.includes('\n'))) return prev;
-      return height;
+
+    setComposerExpanded((prev) => {
+      if (!input.trim()) return false;
+      if (height > 50) return true;
+      return prev;
     });
     // editSlotEl: the edit portal mounts a fresh textarea after `input` is set,
     // so re-run to size it to the message being edited (otherwise it stays 1 line).
-  }, [input, isExpanded, editSlotEl]);
+  }, [input, editSlotEl, composerExpanded]);
 
   useEffect(() => {
     function onPopState() {
