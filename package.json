@@ -17,6 +17,7 @@
   "dependencies": {
     "@napi-rs/canvas": "0.1.80",
     "@supabase/supabase-js": "^2.110.7",
+    "@vercel/analytics": "^2.0.1",
     "next": "^16.2.10",
     "openai": "^6.48.0",
     "pdf-parse": "^2.4.5",

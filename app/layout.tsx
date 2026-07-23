@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Rubik } from "next/font/google";
 import type { ReactNode } from "react";
+import { Analytics } from "@vercel/analytics/next";
 
 import "./globals.css";
 import { ServiceWorkerRegister } from "./sw-register";
@@ -71,6 +72,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body className={rubik.className} suppressHydrationWarning>
         {children}
         <ServiceWorkerRegister />
+        <Analytics />
       </body>
     </html>
   );
