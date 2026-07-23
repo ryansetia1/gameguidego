@@ -90,8 +90,15 @@ export function ProfileMenu({
   const wrapRef = useRef<HTMLDivElement>(null);
 
   function setNavMenu(menu: NavMenu) {
-    if (controlled) onNavMenuChange!(menu);
-    else setInternalMenu(menu);
+    if (controlled) {
+      onNavMenuChange!(menu);
+      return;
+    }
+    if (menu === null && navHistoryPushed.current) {
+      window.history.back();
+      return;
+    }
+    setInternalMenu(menu);
   }
 
   useEffect(() => {
@@ -159,15 +166,11 @@ export function ProfileMenu({
     if (!navMenu) return;
     function onPointerDown(event: PointerEvent) {
       if (wrapRef.current?.contains(event.target as Node)) return;
-      if (!controlled && navHistoryPushed.current) {
-        window.history.back();
-        return;
-      }
       setNavMenu(null);
     }
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [controlled, navMenu, onNavMenuChange]);
+  }, [navMenu]);
 
   function pickTheme(next: ThemeMode) {
     setThemeMode(next);

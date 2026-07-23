@@ -182,6 +182,8 @@ export default function Home() {
   const [temporary, setTemporary] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [navMenu, setNavMenu] = useState<NavMenu>(null);
+  const navMenuRef = useRef<NavMenu>(null);
+  navMenuRef.current = navMenu;
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [steamLibraryOpen, setSteamLibraryOpen] = useState(false);
@@ -269,8 +271,9 @@ export default function Home() {
   }
 
   function dismissNavMenu() {
-    if (!navMenu) return;
-    setNavMenu(null);
+    if (!navMenuRef.current) return;
+    // ponytail: popstate closes the menu (like sidebar/library). Clearing state
+    // before history.back() lets the handler see navMenu=null and show exit toast.
     dismissOverlay();
   }
 
@@ -388,7 +391,7 @@ export default function Home() {
         setMenuOpenId(null);
         return;
       }
-      if (navMenu) {
+      if (navMenuRef.current) {
         setNavMenu(null);
         return;
       }
