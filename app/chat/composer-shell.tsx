@@ -196,7 +196,7 @@ export function ComposerShell({
             <VoiceVisualizer active={voiceListening} />
           </div>
           <ClearButton
-            show={input.length > 0 && !loading}
+            show={input.length > 0 && !loading && editingIndex === null}
             onClear={() => {
               onInputChange("");
               composerRef.current?.focus();
@@ -246,13 +246,11 @@ export function ComposerShell({
             <>
               {editingIndex !== null && (
                 <button
-                  className="composer-attach"
+                  className="composer-cancel-edit"
                   type="button"
                   onClick={onCancelEdit}
-                  aria-label="Cancel edit"
-                  title="Cancel edit"
                 >
-                  <IconX />
+                  Cancel
                 </button>
               )}
               <button

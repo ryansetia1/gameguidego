@@ -2862,6 +2862,28 @@ details.sources small {
   cursor: not-allowed;
 }
 
+.composer-cancel-edit {
+  flex: none;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1.5px solid var(--ink);
+  background: var(--paper-strong);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.composer-cancel-edit:hover:not(:disabled) {
+  background: var(--signal);
+  color: var(--on-signal);
+}
+
+.composer-cancel-edit:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
 /* Temporary chat: the docked composer's border goes dashed so "incognito" reads
    at a glance, always visible (unlike a header badge that scrolls away). */
 .composer.temporary .composer-inner {
