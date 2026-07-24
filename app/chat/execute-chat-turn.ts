@@ -214,6 +214,7 @@ export async function executeChatTurn({
         preferredUrls: guideUrls,
         images,
         spoilerPrefs: d.spoilerPrefs,
+        visualSearchEnabled: d.topicVisualSearchEnabled,
         playerName: d.user
           ? displayNameFromMetadata(d.user.user_metadata) || d.user.email?.split("@")[0] || ""
           : "",

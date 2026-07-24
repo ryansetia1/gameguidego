@@ -13,6 +13,7 @@ import {
 } from "@/lib/game-room.js";
 import { saveTopicTitleById, topicTitleForPersist } from "@/lib/topic-title.js";
 import { topicSpoilerPayload } from "@/lib/spoiler-prefs.js";
+import { topicVisualSearchPayload } from "@/lib/visual-search-prefs.js";
 import type { Chat } from "@/lib/supabase";
 import { getSupabase } from "@/lib/supabase";
 import { loadLocalGames, setLocalGames } from "@/lib/local-games.js";
@@ -121,6 +122,7 @@ export function createTurnPersist(depsRef: RefObject<ChatTurnDeps>) {
         ...sharedMeta,
         title: resolvedTitle,
         ...topicSpoilerPayload(d.topicSpoilerMajor),
+        ...topicVisualSearchPayload(d.topicVisualSearchEnabled),
         messages: nextMessages,
         updated_at: new Date().toISOString(),
       };
@@ -143,6 +145,7 @@ export function createTurnPersist(depsRef: RefObject<ChatTurnDeps>) {
       platform: d.platform,
       ...sharedMeta,
       ...topicSpoilerPayload(d.topicSpoilerMajor),
+      ...topicVisualSearchPayload(d.topicVisualSearchEnabled),
       messages: nextMessages,
       updated_at: new Date().toISOString(),
     };

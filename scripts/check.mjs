@@ -225,7 +225,13 @@ import {
   extractVisualSubject,
   isVisualLookupQuestion,
   pickBestSerperImage,
+  sanitizeVisualSearchQuery,
 } from "../lib/visual-search.js";
+import {
+  coerceVisualSearchEnabled,
+  loadTopicVisualSearchPrefs,
+  saveTopicVisualSearchById,
+} from "../lib/visual-search-prefs.js";
 import { proxifyIllustration, visualImageProxyUrl } from "../lib/visual-image-proxy.js";
 import { coerceIllustration } from "../lib/chat-messages.js";
 
@@ -2120,7 +2126,29 @@ assert.equal(loadTopicSpoilerPrefs({ title: "x" }, "ZZZ-no-prefs").major, false)
   assert.equal(loadTopicSpoilerPrefs({ id: "chat-1", title: "x" }, "FF8").major, true);
 }
 
+assert.equal(coerceVisualSearchEnabled(false), false);
+assert.equal(coerceVisualSearchEnabled("1"), true);
+assert.equal(loadTopicVisualSearchPrefs({ visual_search: true }), true);
+assert.equal(loadTopicVisualSearchPrefs({ id: "chat-vs", title: "x" }), false);
+{
+  const store = new Map();
+  const g = globalThis;
+  const prev = g.window;
+  g.window = {
+    localStorage: {
+      getItem: (k) => store.get(k) ?? null,
+      setItem: (k, v) => store.set(k, v),
+      removeItem: (k) => store.delete(k),
+    },
+  };
+  saveTopicVisualSearchById("chat-vs", true);
+  assert.equal(loadTopicVisualSearchPrefs({ id: "chat-vs", title: "x" }), true);
+  g.window = prev;
+}
+
 assert.equal(isVisualLookupQuestion("magic powder itu kaya gimana sih?"), true);
+assert.equal(isVisualLookupQuestion("ifrit itu wujudnya gimana sih?"), true);
+assert.equal(isVisualLookupQuestion("gimana wujudnya bentuknya?"), true);
 assert.equal(isVisualLookupQuestion("where do I get magic powder?"), false);
 assert.equal(
   extractVisualSubject(
@@ -2138,7 +2166,11 @@ assert.equal(
 );
 assert.equal(
   buildVisualSearchQuery("Suikoden", "PS1", "magic powder"),
-  "magic powder Suikoden PS1 sprite",
+  "magic powder Suikoden PS1",
+);
+assert.equal(
+  sanitizeVisualSearchQuery("Funky Kong Mario Kart Wii sprite icon"),
+  "Funky Kong Mario Kart Wii",
 );
 {
   const picked = pickBestSerperImage(

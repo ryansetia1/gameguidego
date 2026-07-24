@@ -8,11 +8,17 @@ import {
   REWRITE_RAG_INSTRUCTION,
   SYSTEM_INSTRUCTION,
   TOPIC_TITLE_INSTRUCTION,
+  VISUAL_SEARCH_QUERY_INSTRUCTION,
   buildPrompt,
   buildRewritePrompt,
   buildTopicTitlePrompt,
+  buildVisualSearchQueryPrompt,
 } from "@/lib/prompt";
 import { parseGeneratedTopicTitle } from "@/lib/topic-title.js";
+import {
+  buildVisualSearchQuery,
+  sanitizeVisualSearchQuery,
+} from "@/lib/visual-search.js";
 import {
   SPOILER_CENSOR_INSTRUCTION,
   buildSpoilerCensorPrompt,
@@ -221,6 +227,79 @@ export async function resolveQuestion(input: {
   } catch (error) {
     console.error("Query rewrite failed, using raw question:", error);
     return input.question;
+  }
+}
+
+/**
+ * English image-search query for Serper. Fail-open to buildVisualSearchQuery.
+ */
+export async function resolveVisualSearchQuery(input: {
+  game?: string;
+  platform?: string;
+  question: string;
+  searchTopic?: string;
+  subject?: string;
+  userId?: string | null;
+  signal?: AbortSignal;
+}): Promise<string> {
+  const fallback = buildVisualSearchQuery(
+    input.game ?? "",
+    input.platform ?? "",
+    input.subject ?? "",
+  );
+  const replicate = getReplicate();
+  const model = resolveModel();
+  if (!replicate || !model || !fallback) return fallback;
+
+  try {
+    const prompt = buildVisualSearchQueryPrompt({
+      game: input.game,
+      platform: input.platform,
+      question: input.question,
+      searchTopic: input.searchTopic,
+      subject: input.subject,
+    });
+    const { output: rawOutput, durationMs, predictTimeMs, inputTokens, outputTokens } =
+      await runModel(
+        replicate,
+        model,
+        {
+          prompt,
+          system_instruction: VISUAL_SEARCH_QUERY_INSTRUCTION,
+          temperature: 0.1,
+          max_output_tokens: 256,
+          thinking_budget: 0,
+        },
+        10_000,
+        input.signal,
+      );
+
+    logLlmCall({
+      kind: "visual_query",
+      model,
+      system: VISUAL_SEARCH_QUERY_INSTRUCTION,
+      prompt,
+      response: rawOutput,
+      durationMs,
+      predictTimeMs,
+      inputTokens,
+      outputTokens,
+      game: input.game,
+      platform: input.platform,
+      userId: input.userId,
+    });
+
+    const rewritten = sanitizeVisualSearchQuery(
+      rawOutput
+        .replace(/\s+/g, " ")
+        .replace(/^["']|["']$/g, "")
+        .trim()
+        .slice(0, 120),
+    );
+    return rewritten || fallback;
+  } catch (error) {
+    console.error("Visual search query rewrite failed, using heuristic query:", error);
+    return fallback;
   }
 }
 

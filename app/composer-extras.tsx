@@ -4,6 +4,7 @@ import type { User } from "@supabase/supabase-js";
 import { useEffect, useRef, useState } from "react";
 
 import { SPOILER_TOGGLE_LABEL } from "@/lib/spoiler-prefs.js";
+import { VISUAL_SEARCH_TOGGLE_HINT, VISUAL_SEARCH_TOGGLE_LABEL } from "@/lib/visual-search-prefs.js";
 import { VOICE_LANGUAGES } from "@/lib/voice.js";
 import { IconArrowLeft, IconPlus, IconStop } from "./icons";
 import { useVoiceInput } from "./voice-input";
@@ -25,6 +26,9 @@ type Props = {
   guideRetrievalMode?: "default" | "skip" | "supplement";
   onToggleSkipGuide?: () => void;
   onToggleSupplementGuide?: () => void;
+  showVisualSearchToggle?: boolean;
+  visualSearchEnabled?: boolean;
+  onToggleVisualSearch?: () => void;
   onTranscript: (text: string) => void;
   onListeningChange?: (listening: boolean) => void;
   onSelectImages: (files: FileList | null) => void;
@@ -49,6 +53,9 @@ export function ComposerExtras({
   guideRetrievalMode = "default",
   onToggleSkipGuide,
   onToggleSupplementGuide,
+  showVisualSearchToggle,
+  visualSearchEnabled = false,
+  onToggleVisualSearch,
   onTranscript,
   onListeningChange,
   onSelectImages,
@@ -193,6 +200,27 @@ export function ComposerExtras({
                     </span>
                   </button>
                 </>
+              )}
+              {showVisualSearchToggle && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="composer-extras-toggle"
+                  aria-pressed={visualSearchEnabled}
+                  title={VISUAL_SEARCH_TOGGLE_HINT}
+                  onClick={() => {
+                    onToggleVisualSearch?.();
+                    setMenuOpen(false);
+                    setMenuView("main");
+                  }}
+                >
+                  {VISUAL_SEARCH_TOGGLE_LABEL}
+                  <span
+                    className={`composer-extras-state${visualSearchEnabled ? " on" : ""}`}
+                  >
+                    {visualSearchEnabled ? "On" : "Off"}
+                  </span>
+                </button>
               )}
               <button
                 type="button"

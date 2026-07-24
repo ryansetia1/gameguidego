@@ -32,6 +32,8 @@ export type Chat = {
   title?: string;
   /** Per-topic major-spoiler toggle (global profile toggle still ORs in). */
   spoiler_major?: boolean;
+  /** Per-topic reference-image lookup (Serper); default off. */
+  visual_search?: boolean;
   /** Signed-in: read from normalized tables. Anon/local: stored inline. */
   messages?: unknown;
   updated_at: string;

@@ -8,7 +8,7 @@ import {
 } from "@/lib/chat-persist.js";
 import { persistAssistantResponse, loadMessagesForServerMerge } from "@/lib/chat-thread-persist.js";
 import { getCachedSearch, setCachedSearch } from "@/lib/search-cache";
-import { censorSpoilers, generateTopicTitle, resolveQuestion, summarize, type Turn } from "@/lib/replicate";
+import { censorSpoilers, generateTopicTitle, resolveQuestion, resolveVisualSearchQuery, summarize, type Turn } from "@/lib/replicate";
 import {
   guideIngestHint,
   guideSearchFallbackHint,
@@ -31,11 +31,11 @@ import {
 } from "@/lib/player-memory-server";
 import { searchGuides, searchSerperImages, type SearchResult } from "@/lib/tavily";
 import {
-  buildVisualSearchQuery,
   extractVisualSubject,
   isVisualLookupQuestion,
   pickBestSerperImage,
 } from "@/lib/visual-search.js";
+import { coerceVisualSearchEnabled } from "@/lib/visual-search-prefs.js";
 import { logSolveJourneyToDb, sourcesForSolveLog, type SolveJourneyEntry } from "@/lib/solve-log";
 import { isAutoDerivedTopicTitle, topicTitleForPersist } from "@/lib/topic-title.js";
 import { proxifyIllustration } from "@/lib/visual-image-proxy.js";
@@ -159,6 +159,7 @@ export async function POST(request: Request) {
   const bundlePrefs = coerceBundlePrefsFromBody(record.bundlePrefs);
   const chatId = cleanUuid(record.chatId);
   const { skipPreferredGuide, alsoSearchWeb } = coerceGuideRetrievalFlags(record);
+  const visualSearchEnabled = coerceVisualSearchEnabled(record.visualSearchEnabled);
   const authHeader = request.headers.get("Authorization");
   const retryContext = record.retryContext as {
     searchTopic?: string;
@@ -277,13 +278,21 @@ export async function POST(request: Request) {
         await logTraceEvent("rewrite_complete", "Resolved question into search topic", rewriteLatencyMs, { searchTopic });
 
         const wantsVisualIllustration =
+          visualSearchEnabled &&
           !images.length &&
           Boolean(process.env.SERPER_API_KEY) &&
           isVisualLookupQuestion(question);
         const visualIllustrationPromise = wantsVisualIllustration
           ? (async () => {
               const visualSubject = extractVisualSubject(question, searchTopic);
-              const visualQuery = buildVisualSearchQuery(game, platform, visualSubject);
+              const visualQuery = await resolveVisualSearchQuery({
+                game,
+                platform,
+                question,
+                searchTopic,
+                subject: visualSubject,
+                userId,
+              });
               void logTraceEvent("visual_search_start", "Starting Serper image search", undefined, {
                 visualQuery,
                 visualSubject,

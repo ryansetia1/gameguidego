@@ -48,6 +48,9 @@ export type ComposerShellProps = {
   guideRetrievalMode?: "default" | "skip" | "supplement";
   onToggleSkipGuide?: () => void;
   onToggleSupplementGuide?: () => void;
+  showVisualSearchToggle?: boolean;
+  visualSearchEnabled?: boolean;
+  onToggleVisualSearch?: () => void;
   onVoiceListeningChange: (listening: boolean) => void;
   onVoiceTranscript: (text: string) => void;
   onStopGeneration: () => void;
@@ -86,6 +89,9 @@ export function ComposerShell({
   guideRetrievalMode,
   onToggleSkipGuide,
   onToggleSupplementGuide,
+  showVisualSearchToggle,
+  visualSearchEnabled,
+  onToggleVisualSearch,
   onVoiceListeningChange,
   onVoiceTranscript,
   onStopGeneration,
@@ -241,6 +247,9 @@ export function ComposerShell({
             guideRetrievalMode={guideRetrievalMode}
             onToggleSkipGuide={onToggleSkipGuide}
             onToggleSupplementGuide={onToggleSupplementGuide}
+            showVisualSearchToggle={showVisualSearchToggle}
+            visualSearchEnabled={visualSearchEnabled}
+            onToggleVisualSearch={onToggleVisualSearch}
             onListeningChange={onVoiceListeningChange}
             onTranscript={onVoiceTranscript}
             onSelectImages={(files) => void onSelectImages(files)}

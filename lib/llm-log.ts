@@ -20,7 +20,8 @@ export type LlmLogEntry = {
     | "embed_index"
     | "embed_query"
     | "memory_summarize"
-    | "topic_title";
+    | "topic_title"
+    | "visual_query";
   model: string;
   system: string;
   prompt: string;
@@ -63,8 +64,8 @@ export function logLlmCall(entry: LlmLogEntry): void {
     })();
   }
 
-  // ponytail: topic_title is file-log only until llm_calls kind check is extended.
-  if (entry.kind !== "topic_title") {
+  // ponytail: topic_title/visual_query are file-log only until llm_calls kind check is extended.
+  if (entry.kind !== "topic_title" && entry.kind !== "visual_query") {
     const dbEntry: LlmDbLogEntry = {
       kind: entry.kind,
       model: entry.model,
