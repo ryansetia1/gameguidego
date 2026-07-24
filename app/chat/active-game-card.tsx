@@ -51,6 +51,8 @@ export type ActiveGameCardProps = {
   onToggleTemporary: () => void;
   onToggleRowMenu: (id: string, event: React.MouseEvent<HTMLButtonElement>) => void;
   onEditGame: () => void;
+  onClearActiveChat: () => void;
+  chatHasMessages: boolean;
   onDeleteActiveChat: () => void;
   onSetShowQuickAdd: (value: boolean) => void;
   onPreferredUrlsChange: (urls: string[]) => void;
@@ -98,6 +100,8 @@ export function ActiveGameCard({
   onToggleTemporary,
   onToggleRowMenu,
   onEditGame,
+  onClearActiveChat,
+  chatHasMessages,
   onDeleteActiveChat,
   onSetShowQuickAdd,
   onPreferredUrlsChange,
@@ -384,6 +388,14 @@ export function ActiveGameCard({
           <div className="row-menu-pop" role="menu">
             <button type="button" className="row-menu-item" onClick={onEditGame}>
               Edit
+            </button>
+            <button
+              type="button"
+              className="row-menu-item"
+              disabled={!chatHasMessages || loading}
+              onClick={() => void onClearActiveChat()}
+            >
+              Clear chat
             </button>
             <button
               type="button"

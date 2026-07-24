@@ -22,6 +22,7 @@ import {
   IconX,
 } from "./icons";
 import {
+  clearNormalizedThread,
   resolveThreadMessages,
 } from "@/lib/chat-thread-persist.js";
 import {
@@ -1464,6 +1465,7 @@ export default function Home() {
   }
 
   const {
+    persistChat,
     runTurn,
     stopGeneration,
     handleSubmit,
@@ -1530,7 +1532,51 @@ export default function Home() {
     normGame,
   });
 
-  const started = messages.length > 0;
+  const clearActiveChat = useCallback(async () => {
+    setMenuOpenId(null);
+    if (!messages.length) return;
+    if (
+      !(await askConfirm(
+        "Clear this chat history? Your game, guides, and cover stay saved.",
+        "Clear chat",
+      ))
+    ) {
+      return;
+    }
+    if (loading) return;
+
+    await deleteMessageImages(messages);
+    clearPendingImages();
+    setEditingIndex(null);
+    setInput("");
+    setError("");
+    setMessages([]);
+
+    if (temporary) return;
+
+    const chatId = activeChatIdRef.current;
+    if (!chatId) {
+      clearSessionDraft();
+      return;
+    }
+
+    const supabase = getSupabase();
+    if (supabase && user) {
+      await clearNormalizedThread(supabase, chatId);
+    }
+    await persistChat([], chatId, { sync: "full" });
+  }, [
+    messages,
+    loading,
+    temporary,
+    user,
+    askConfirm,
+    persistChat,
+    clearPendingImages,
+    deleteMessageImages,
+  ]);
+
+  const started = messages.length > 0 || Boolean(activeChatId && game.trim());
   const hasGame = Boolean(game.trim());
   const composerLocked = loading || !hasGame || guideChecking;
   // Home layout states:
@@ -1822,6 +1868,8 @@ export default function Home() {
             setEditingGame(true);
             scrollToTop();
           }}
+          chatHasMessages={messages.length > 0}
+          onClearActiveChat={() => void clearActiveChat()}
           onDeleteActiveChat={() => void deleteActiveChat()}
           onSetShowQuickAdd={setShowQuickAdd}
           onPreferredUrlsChange={setPreferredUrls}
