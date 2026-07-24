@@ -1299,6 +1299,12 @@ export default function Home() {
     setError("");
     setEditingIndex(null);
     conversationGame.current = game.name;
+    setNewGameOpen(true);
+    newGameHistoryPushed.current = true;
+    pushOverlayHistory();
+    requestAnimationFrame(() => {
+      document.getElementById("game")?.focus();
+    });
 
     // Fallback only when the shelf had no year (game missing from GetItems).
     if (game.releaseYear) return;
