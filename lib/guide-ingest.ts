@@ -18,7 +18,7 @@ import {
 } from "@/lib/gamefaqs-bundle.js";
 import { discoverGamefaqsBundleResolved } from "@/lib/gamefaqs-discover";
 import { isGamefaqsBundleUrl } from "@/lib/guide-urls.js";
-import { getCachedBundleDiscovery, setCachedBundleDiscovery } from "@/lib/guide-bundle-cache.js";
+import { getCachedBundleDiscovery, setCachedBundleDiscovery, fetchBundleChunkCountsByUrl } from "@/lib/guide-bundle-cache.js";
 import { parsePositiveInt, sleep } from "@/lib/replicate-retry.js";
 import {
   extractGuidePage,
@@ -179,16 +179,18 @@ export async function getBundleIndexStatus(
   try {
     const cached = await getCachedBundleDiscovery(parsed.bundleKey, { allowStale: true });
 
-    const { data, error } = await supabase
-      .from("guide_chunks")
-      .select("guide_url")
-      .eq("guide_bundle", parsed.bundleKey);
-    if (error) return null;
-
-    const byUrl = new Map<string, number>();
-    for (const row of data ?? []) {
-      if (!row?.guide_url) continue;
-      byUrl.set(row.guide_url, (byUrl.get(row.guide_url) ?? 0) + 1);
+    const byUrl = await fetchBundleChunkCountsByUrl(parsed.bundleKey);
+    if (!byUrl.size) {
+      return {
+        bundleKey: parsed.bundleKey,
+        canonicalUrl: parsed.canonicalUrl,
+        title: cached?.title ?? "GameFAQs guide",
+        pageCount: cached?.pages?.length ?? 0,
+        discoveryPages: cached?.pages ?? [],
+        pagesIndexed: 0,
+        chunkCount: 0,
+        pages: [],
+      };
     }
 
     const pages: BundleIndexPageStatus[] = [...byUrl.entries()]
@@ -784,6 +786,7 @@ async function ingestGamefaqsBundle(
 
   const pagesMissing = targetPages
     .filter((page) => !indexedSlugs.has(page.slug))
+    .filter((page) => !missingPagesToProcess.slice(EXTRACT_BATCH_SIZE).some((queued) => queued.slug === page.slug))
     .map((page) => ({ slug: page.slug, title: page.title, url: page.url }));
 
   // 3. Process remaining batches in the background
