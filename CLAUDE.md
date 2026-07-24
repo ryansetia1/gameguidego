@@ -565,7 +565,13 @@ verify actual indexed state before clearing the progress indicator.
 - **Blocked discovery fallback**: when `guide_bundle_cache` has `isBlocked: true`
   (Cloudflare on a TOC extract), ingest still tries single-page `?print=1` extract
   before giving up; success clears the blocked flag. Blocked cache expires after
-  12h (`BUNDLE_BLOCKED_TTL_MS`) even with `allowStale` reads.
+  12h (`BUNDLE_BLOCKED_TTL_MS`) even with `allowStale` reads. **Stale blocked flag
+  never wins over a non-empty page list** (`coerceCachedBundleDiscovery`); preview
+  writes `isBlocked: false` and `await`s cache upserts. When blocked but cached
+  pages or `selectedSlugs` exist, ingest runs **bundle** ingest instead of
+  single-page root fallback. Root `?print=1` ingest is mapped to discovery slugs in
+  `getBundleIndexStatus` via `expandRootPrintBundleIndexPages` so the panel shows
+  6/6 instead of 0/6.
 - **Resume**: per-page idempotent — failed/missing pages retried on next turn.
 - **Skip ingest when done**: client skips `POST /api/guide-ingest` when
   `bundleHasPendingPages` is false (all target slugs indexed or skipped) or when local `guideIndexState` confirms a single-page guide is already indexed. Server `isGuideIndexed` includes a canonical URL fallback to gracefully handle GameFAQs single-page URLs submitted with arbitrary query parameters (e.g. `?page=1`).

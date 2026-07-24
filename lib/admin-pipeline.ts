@@ -1,6 +1,9 @@
 import type { TraceEventRow } from "./admin-traces";
-import { buildApiSpend, type ApiSpendSummary } from "./admin-api-spend";
-import { buildApiCost, type ApiCostSummary } from "./admin-api-cost";
+import { buildApiSpend, type ApiSpendSummary } from "./admin-api-spend.js";
+import { buildApiCost, type ApiCostSummary } from "./admin-api-cost.js";
+import { extractSnippetsFromSummarizePrompt } from "./admin-pipeline-snippets.js";
+
+export { extractSnippetsFromSummarizePrompt };
 
 export type PipelineSourceRow = {
   title: string;
@@ -117,41 +120,6 @@ function sliceWebResearchBlock(prompt: string): string | null {
     if (idx >= 0) body = body.slice(0, idx);
   }
   return body.trim();
-}
-
-/** Recover crawled snippets from the summarize prompt when logs only stored title+url. */
-export function extractSnippetsFromSummarizePrompt(prompt: string): {
-  web: PipelineSourceRow[];
-  preferred: PipelineSourceRow[];
-} {
-  const body = sliceWebResearchBlock(prompt);
-  if (!body || body.startsWith("No web results were found.")) {
-    return { web: [], preferred: [] };
-  }
-
-  const web: PipelineSourceRow[] = [];
-  const preferred: PipelineSourceRow[] = [];
-  const parts = body.split(/\n(?=\[(?:Source \d+|PREFERRED GUIDE))/);
-
-  for (const part of parts) {
-    const sourceMatch = part.match(/^\[Source \d+: ([^\]]+)\]\n([\s\S]*)$/);
-    if (sourceMatch) {
-      const preview = sourceMatch[2].trim();
-      if (preview) {
-        web.push({ title: sourceMatch[1].trim(), url: "", preview });
-      }
-      continue;
-    }
-    const prefMatch = part.match(/^\[PREFERRED GUIDE[^\]]*\]\n([\s\S]*)$/);
-    if (prefMatch) {
-      const preview = prefMatch[1].trim();
-      if (preview) {
-        preferred.push({ title: "Preferred guide", url: "", preview });
-      }
-    }
-  }
-
-  return { web, preferred };
 }
 
 function enrichSourcePreviews(

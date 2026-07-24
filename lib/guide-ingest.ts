@@ -14,6 +14,7 @@ import {
   parseGamefaqsGuideTitle,
   isGenericGamefaqsBundleTitle,
   pickGamefaqsBundleTitle,
+  expandRootPrintBundleIndexPages,
 } from "@/lib/gamefaqs-bundle.js";
 import { discoverGamefaqsBundleResolved } from "@/lib/gamefaqs-discover";
 import { isGamefaqsBundleUrl } from "@/lib/guide-urls.js";
@@ -109,6 +110,40 @@ export type BundleIndexStatus = {
   pages: BundleIndexPageStatus[];
 };
 
+type BundlePageRef = { slug: string; title: string; url: string };
+
+function buildBundleDiscoveryResult(
+  parsed: NonNullable<ReturnType<typeof parseGamefaqsFaqUrl>>,
+  pages: BundlePageRef[],
+  title = "GameFAQs guide",
+) {
+  return {
+    bundle: true,
+    provider: "gamefaqs" as const,
+    bundleKey: parsed.bundleKey,
+    canonicalUrl: parsed.canonicalUrl,
+    title,
+    pageCount: pages.length,
+    pages,
+  };
+}
+
+function pagesFromIncludeSlugs(
+  parsed: NonNullable<ReturnType<typeof parseGamefaqsFaqUrl>>,
+  includeSlugs: string[],
+): BundlePageRef[] {
+  return mergeGamefaqsBundlePages(
+    includeSlugs.map((slug) => {
+      const normalized = slug.toLowerCase();
+      return {
+        slug: normalized,
+        title: titleFromGamefaqsSlug(normalized),
+        url: `${parsed.canonicalUrl}/${normalized}`,
+      };
+    }),
+  );
+}
+
 /** Bundle panel state from Supabase only (guide_bundle_cache + guide_chunks). */
 export async function getBundleIndexStatus(
   rawUrl: string,
@@ -178,16 +213,26 @@ export async function getBundleIndexStatus(
       })),
     ]);
 
-    const chunkCount = pages.reduce((sum, page) => sum + page.chunks, 0);
+    const printPages = expandRootPrintBundleIndexPages(
+      discoveryPages,
+      byUrl,
+      parsed.canonicalUrl,
+      parsed.faqId,
+    );
+    const finalPages = printPages ?? pages;
+    const chunkCount = printPages
+      ? byUrl.get(normalizeGuideUrl(parsed.canonicalUrl)) ?? pages.reduce((sum, page) => sum + page.chunks, 0)
+      : pages.reduce((sum, page) => sum + page.chunks, 0);
+
     return {
       bundleKey: parsed.bundleKey,
       canonicalUrl: parsed.canonicalUrl,
       title: cached?.title ?? "GameFAQs guide",
       pageCount: discoveryPages.length,
       discoveryPages,
-      pagesIndexed: pages.length,
+      pagesIndexed: finalPages.length,
       chunkCount,
-      pages,
+      pages: finalPages,
     };
   } catch {
     return null;
@@ -554,32 +599,56 @@ async function ingestGamefaqsBundle(
   });
   // ponytail: never full refresh on ingest — manual "Refresh page list" only.
   // Cache-first + light search is enough; full part-query discovery burns 100+ Tavily calls.
-  const discovery = discoveryCached;
+  let discovery = discoveryCached;
   if (discovery.isBlocked) {
-    void logTraceEvent(
-      "ingest_discovery_blocked_fallback",
-      `Discovery blocked for ${parsed.bundleKey} — trying single-page extract`,
-      undefined,
-      { bundleKey: parsed.bundleKey, url: rawUrl },
-    );
-    const fallback = await ingestSingleGuidePage(rawUrl, signal, ctx, parsed.bundleKey);
-    if (fallback.indexed) {
-      await setCachedBundleDiscovery(parsed.bundleKey, {
-        canonicalUrl: parsed.canonicalUrl,
-        title: "GameFAQs guide",
-        pages: [],
-        singlePage: true,
-        isBlocked: false,
-      });
-      return fallback;
+    const cached = await getCachedBundleDiscovery(parsed.bundleKey, { allowStale: true });
+    const recoveredPages = cached?.pages ?? [];
+    const includeSlugs = ctx?.includeSlugs ?? [];
+    const bundlePages =
+      recoveredPages.length > 1
+        ? recoveredPages
+        : includeSlugs.length
+          ? pagesFromIncludeSlugs(parsed, includeSlugs)
+          : [];
+
+    if (bundlePages.length > 0) {
+      void logTraceEvent(
+        "ingest_discovery_blocked_bundle",
+        `Blocked flag ignored — ingesting ${bundlePages.length} cached/selected bundle pages for ${parsed.bundleKey}`,
+        undefined,
+        { bundleKey: parsed.bundleKey, pageCount: bundlePages.length },
+      );
+      discovery = buildBundleDiscoveryResult(
+        parsed,
+        bundlePages,
+        cached?.title ?? "GameFAQs guide",
+      );
+    } else {
+      void logTraceEvent(
+        "ingest_discovery_blocked_fallback",
+        `Discovery blocked for ${parsed.bundleKey} — trying single-page extract`,
+        undefined,
+        { bundleKey: parsed.bundleKey, url: rawUrl },
+      );
+      const fallback = await ingestSingleGuidePage(rawUrl, signal, ctx, parsed.bundleKey);
+      if (fallback.indexed) {
+        await setCachedBundleDiscovery(parsed.bundleKey, {
+          canonicalUrl: parsed.canonicalUrl,
+          title: "GameFAQs guide",
+          pages: [],
+          singlePage: true,
+          isBlocked: false,
+        });
+        return fallback;
+      }
+      void logTraceEvent(
+        "ingest_bundle_blocked",
+        `GameFAQs anti-bot blocked bundle discovery for ${rawUrl}`,
+        undefined,
+        { bundleKey: parsed.bundleKey },
+      );
+      return { ...fallback, isBlocked: true };
     }
-    void logTraceEvent(
-      "ingest_bundle_blocked",
-      `GameFAQs anti-bot blocked bundle discovery for ${rawUrl}`,
-      undefined,
-      { bundleKey: parsed.bundleKey },
-    );
-    return { ...fallback, isBlocked: true };
   }
   if (!discovery.bundle || !discovery.pages?.length) {
     return ingestSingleGuidePage(rawUrl, signal, ctx, parsed.bundleKey);
@@ -706,10 +775,11 @@ async function ingestGamefaqsBundle(
   }
 
   // 2. Bookkeeping: Save the TOC so UI knows what's still missing.
-  void setCachedBundleDiscovery(bundleKey, {
+  await setCachedBundleDiscovery(bundleKey, {
     canonicalUrl: parsed.canonicalUrl,
     title: pickGamefaqsBundleTitle(resolvedTitle, discovery.title),
     pages: discovery.pages,
+    isBlocked: false,
   });
 
   const pagesMissing = targetPages

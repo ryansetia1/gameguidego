@@ -35,13 +35,13 @@ import {
   filterGuideDiscoveryResults,
   guideDiscoveryMatchesGame,
 } from "../lib/guide-search.js";
-import { extractSnippetsFromSummarizePrompt } from "../lib/admin-pipeline.ts";
+import { extractSnippetsFromSummarizePrompt } from "../lib/admin-pipeline-snippets.js";
 import {
   buildApiSpend,
   countApiSpendFromLlm,
   countApiSpendFromTrace,
-} from "../lib/admin-api-spend.ts";
-import { buildApiCost, buildTraceApiCost, formatUsd } from "../lib/admin-api-cost.ts";
+} from "../lib/admin-api-spend.js";
+import { buildApiCost, buildTraceApiCost, formatUsd } from "../lib/admin-api-cost.js";
 import { compactTraceEvents, isReplicateInProgress } from "../lib/admin-traces.ts";
 import {
   buildTraceEventCostMap,
@@ -76,6 +76,7 @@ import {
   isLikelySinglePageGamefaqsGuide,
   pickGamefaqsBundleTitle,
   titleFromGamefaqsSlug,
+  expandRootPrintBundleIndexPages,
 } from "../lib/gamefaqs-bundle.js";
 import { coerceCachedBundleDiscovery } from "../lib/guide-bundle-cache.js";
 import {
@@ -735,6 +736,45 @@ assert.equal(
     title: "Binding of Isaac FAQ",
   })?.pages.length,
   0,
+);
+assert.equal(
+  coerceCachedBundleDiscovery({
+    isBlocked: true,
+    pages: [{ slug: "disc-1", title: "Disc 1", url: `${suikodenBundle}/disc-1` }],
+  })?.pages[0]?.slug,
+  "disc-1",
+  "cached pages win over stale isBlocked",
+);
+assert.equal(
+  coerceCachedBundleDiscovery({ isBlocked: true, pages: [] })?.isBlocked,
+  true,
+);
+const ff8Root = "https://gamefaqs.gamespot.com/ps4/266152-final-fantasy-viii-remastered/faqs/78107";
+const ff8Discovery = [
+  { slug: "introduction", title: "Introduction", url: `${ff8Root}/introduction` },
+  { slug: "disc-1", title: "Disc 1", url: `${ff8Root}/disc-1` },
+];
+const printExpanded = expandRootPrintBundleIndexPages(
+  ff8Discovery,
+  new Map([[ff8Root, 370]]),
+  ff8Root,
+  "78107",
+);
+assert.equal(printExpanded?.length, 2);
+assert.equal(printExpanded?.[0]?.slug, "introduction");
+assert.equal(printExpanded?.[0]?.indexed, true);
+assert.equal(
+  expandRootPrintBundleIndexPages(
+    ff8Discovery,
+    new Map([
+      [`${ff8Root}/disc-1`, 40],
+      [`${ff8Root}/introduction`, 30],
+    ]),
+    ff8Root,
+    "78107",
+  ),
+  null,
+  "per-slug chunks are not expanded from root print view",
 );
 assert.equal(
   isLikelySinglePageGamefaqsGuide("x".repeat(500), parsed80674),
@@ -1654,7 +1694,7 @@ assert.match(
   }),
   /Player style \(learned from past chats\)/,
 );
-assert.equal(memoryRefreshCooldownRemainingMs("2026-01-01T00:00:00.000Z", Date.parse("2026-01-01T00:30:00.000Z")), 0);
+assert.equal(memoryRefreshCooldownRemainingMs("2026-01-01T00:00:00.000Z", Date.parse("2026-01-01T01:00:00.000Z")), 0);
 assert.equal(demoPlayerMemoryPins(), true);
 const pinFixture = readStyleRecord({
   answerLength: "short",

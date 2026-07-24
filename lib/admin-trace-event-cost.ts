@@ -2,7 +2,7 @@ import {
   API_COST_RATES,
   embedTokensFromLlmPrompt,
   type LlmCallCostInput,
-} from "./admin-api-cost";
+} from "./admin-api-cost.js";
 import type { TraceEventRow } from "./admin-traces";
 
 function roundUsd(value: number): number {
