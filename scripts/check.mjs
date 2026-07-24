@@ -75,7 +75,15 @@ import {
 import { formatAdminMoney, formatIdr, usdToIdrAmount } from "../lib/admin-fx.ts";
 import { dateRangeForPreset } from "../lib/admin-date-range.ts";
 import { chunkGuide } from "../lib/chunk-guide.js";
-import { guideIngestHint, guideIngestHintFromResponse, guideSearchFallbackHint } from "../lib/guide-hints.js";
+import {
+  guideIngestHint,
+  guideIngestHintFromResponse,
+  guideSearchFallbackHint,
+  GUIDE_WEB_KNOWLEDGE_FALLBACK_HINT,
+  isPreferredGuideHint,
+  solveTurnToast,
+  WEB_KNOWLEDGE_FALLBACK_HINT,
+} from "../lib/guide-hints.js";
 import {
   bundleHasPendingPages,
   bundlePrefsAllFromUserMetadata,
@@ -474,6 +482,60 @@ assert.match(
 );
 assert.match(guideSearchFallbackHint(), /in your guide/i);
 assert.match(guideSearchFallbackHint(), /web search/i);
+assert.equal(isPreferredGuideHint(guideSearchFallbackHint()), true);
+assert.equal(isPreferredGuideHint(WEB_KNOWLEDGE_FALLBACK_HINT), false);
+assert.equal(isPreferredGuideHint("Couldn't read that guide. Try a different link or source."), true);
+assert.equal(solveTurnToast({ pipelineType: "web" }), undefined);
+assert.equal(solveTurnToast({ pipelineType: "web", guideHint: guideSearchFallbackHint() }), undefined);
+assert.equal(
+  solveTurnToast({
+    pipelineType: "fallback_web",
+    preferredUrls: [],
+    guideHint: guideSearchFallbackHint(),
+  }),
+  undefined,
+);
+assert.equal(
+  solveTurnToast({
+    pipelineType: "knowledge_only",
+    preferredUrls: [],
+    guideHint: WEB_KNOWLEDGE_FALLBACK_HINT,
+  }),
+  WEB_KNOWLEDGE_FALLBACK_HINT,
+);
+assert.equal(
+  solveTurnToast({
+    pipelineType: "fallback_web",
+    preferredUrls: ["https://www.ign.com/walkthroughs/foo"],
+    guideHint: guideSearchFallbackHint(),
+  }),
+  guideSearchFallbackHint(),
+);
+assert.equal(
+  solveTurnToast({
+    pipelineType: "knowledge_only",
+    preferredUrls: ["https://www.ign.com/walkthroughs/foo"],
+    guideHint: GUIDE_WEB_KNOWLEDGE_FALLBACK_HINT,
+  }),
+  GUIDE_WEB_KNOWLEDGE_FALLBACK_HINT,
+);
+assert.equal(
+  solveTurnToast({
+    pipelineType: "knowledge_only",
+    preferredUrls: [],
+    guideHint: guideSearchFallbackHint(),
+  }),
+  undefined,
+);
+assert.equal(
+  solveTurnToast({
+    pipelineType: "rag",
+    preferredUrls: ["https://www.ign.com/walkthroughs/foo"],
+    guideHint: "Couldn't read that guide. Try a different link or source.",
+    ingestHint: "Couldn't read that guide. Try a different link or source.",
+  }),
+  undefined,
+);
 assert.match(
   guideIngestHintFromResponse({
     available: true,

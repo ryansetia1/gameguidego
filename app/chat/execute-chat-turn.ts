@@ -10,9 +10,7 @@ import {
   WRITING_ANSWER_PLACEHOLDER,
   snapshotAssistantVariants,
 } from "@/lib/chat-messages.js";
-import { pipelineSourceLabel } from "@/lib/chat-message-ui.js";
-import { guideSearchFallbackHint } from "@/lib/guide-hints.js";
-import { guideUrlsSummary } from "@/lib/guide-urls.js";
+import { solveTurnToast } from "@/lib/guide-hints.js";
 import { buildBundlePrefsBody } from "@/lib/guide-card-ui.js";
 import { coerceHighlights, coerceSpoilers } from "@/lib/highlights.js";
 import { displayNameFromMetadata } from "@/lib/profile.js";
@@ -251,21 +249,12 @@ export async function executeChatTurn({
 
     const sources = Array.isArray(data.sources) ? (data.sources as Source[]) : [];
     const pipelineType = typeof data.pipelineType === "string" ? data.pipelineType : undefined;
-    let finalToast: string | undefined;
-    if (pipelineType === "fallback_web") {
-      const preferredSummary = guideUrlsSummary(guideUrls);
-      if (preferredSummary) {
-        finalToast = `Answered from ${preferredSummary.toLowerCase()} + web search`;
-      } else {
-        const label = pipelineSourceLabel(pipelineType, sources);
-        finalToast =
-          label === "Web search"
-            ? data.guideHint || guideSearchFallbackHint()
-            : `Answered from ${label.toLowerCase()}`;
-      }
-    } else if (data.guideHint && data.guideHint !== ingestResult?.hint) {
-      finalToast = data.guideHint;
-    }
+    const finalToast = solveTurnToast({
+      pipelineType,
+      preferredUrls: guideUrls,
+      guideHint: data.guideHint,
+      ingestHint: ingestResult?.hint,
+    });
 
     const variantBody = buildAssistantVariantBody({
       content: data.answer,

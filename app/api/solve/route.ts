@@ -9,7 +9,12 @@ import {
 import { persistAssistantResponse, loadMessagesForServerMerge } from "@/lib/chat-thread-persist.js";
 import { getCachedSearch, setCachedSearch } from "@/lib/search-cache";
 import { censorSpoilers, resolveQuestion, summarize, type Turn } from "@/lib/replicate";
-import { guideIngestHint, guideSearchFallbackHint } from "@/lib/guide-hints.js";
+import {
+  guideIngestHint,
+  guideSearchFallbackHint,
+  GUIDE_WEB_KNOWLEDGE_FALLBACK_HINT,
+  WEB_KNOWLEDGE_FALLBACK_HINT,
+} from "@/lib/guide-hints.js";
 import { coerceGuideUrlsFromBody } from "@/lib/guide-urls.js";
 import { coerceBundlePrefsFromBody } from "@/lib/bundle-prefs.js";
 import { retrieveFromPreferredGuides } from "@/lib/guide-rag";
@@ -318,10 +323,9 @@ export async function POST(request: Request) {
         
         if (pipelineType === "knowledge_only") {
           if (!preferredUrls.length) {
-            guideHint = "Couldn't find on the web, answering from knowledge";
+            guideHint = WEB_KNOWLEDGE_FALLBACK_HINT;
           } else if (rag && rag.indexedCount > 0) {
-            guideHint =
-              "Couldn't find that in your guide or on the web. Answering from knowledge.";
+            guideHint = GUIDE_WEB_KNOWLEDGE_FALLBACK_HINT;
           }
         }
 
