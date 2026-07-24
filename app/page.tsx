@@ -504,12 +504,6 @@ export default function Home() {
         goHome();
         return;
       }
-      // Thread with messages: back goes to the topic list first.
-      if (messages.length > 0 && view !== "topics") {
-        chatHistoryPushed.current = false;
-        backToTopicList();
-        return;
-      }
       // Home idle: first back warns; second back within 2s leaves the app.
       if (editingGame) return;
 
@@ -532,26 +526,25 @@ export default function Home() {
     libraryOpen,
     sidebarOpen,
     steamLibraryOpen,
-    messages.length,
     confirmFallbackModal,
     navMenu,
     newGameOpen,
     editingGame,
   ]);
 
-  // Give the browser a history entry to pop when a chat thread is showing, so the
-  // hardware/gesture back returns home instead of leaving the app.
+  // Give the browser a history entry to pop when a chat thread is showing (including
+  // an empty new-topic composer), so hardware back returns to the topic list without
+  // consuming the gggTopics layer underneath.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const inThread =
-      gameView === "thread" && (messages.length > 0 || Boolean(activeChatId));
+    const inThread = gameView === "thread";
     if (inThread && !chatHistoryPushed.current) {
       chatHistoryPushed.current = true;
       window.history.pushState({ gggChat: true }, "");
-    } else if (!inThread && gameView !== "topics") {
+    } else if (gameView !== "thread") {
       chatHistoryPushed.current = false;
     }
-  }, [messages.length, gameView, activeChatId]);
+  }, [gameView]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1235,6 +1228,10 @@ export default function Home() {
 
   function backToTopicList() {
     setMenuOpenId(null);
+    if (typeof window !== "undefined" && chatHistoryPushed.current) {
+      window.history.back();
+      return;
+    }
     setActiveChatId(null);
     setMessages([]);
     setEditingIndex(null);
@@ -2186,8 +2183,7 @@ export default function Home() {
         onBackToGame={() => {
           setSidebarOpen(false);
           setMenuOpenId(null);
-          if (chatHistoryPushed.current) window.history.back();
-          else backToTopicList();
+          backToTopicList();
         }}
         onOpenSavedLibrary={openSavedLibrary}
         onConnectSteam={connectSteam}

@@ -109,6 +109,7 @@ import {
   guideUrlsFromChat,
   guideUrlsPayload,
   guideUrlsSummary,
+  guideSourceLinkLabel,
   isActiveGamefaqsBundle,
   isGamefaqsBundleUrl,
   MAX_GUIDE_URLS,
@@ -158,7 +159,7 @@ import {
   tailTurnIndexFromMessages,
 } from "../lib/chat-thread-persist.js";
 import { compareThreadSources } from "../lib/chat-thread-audit.js";
-import { answerModeInfo, pipelineSourceLabel, sourceHostname } from "../lib/chat-message-ui.js";
+import { answerModeInfo, mixedPreferredGuideLabel, pipelineSourceLabel, sourceHostname } from "../lib/chat-message-ui.js";
 import {
   CHAT_QUERY_PARAM,
   coerceSessionDraft,
@@ -596,6 +597,11 @@ assert.deepEqual(
   ["https://example.com/new"],
 );
 assert.equal(guideUrlsSummary(["https://www.ign.com/walkthroughs/foo"]), "ign.com");
+assert.equal(
+  guideSourceLinkLabel("https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674"),
+  "GameFAQs bundle",
+);
+assert.equal(guideSourceLinkLabel("https://www.ign.com/walkthroughs/foo"), "ign.com");
 const uploadKey =
   "upload://user-1/Mario%20Kart%20Wii%20-%20Guide%20and%20Walkthrough%20-%20Wii%20-%20By%20Crazyreyn%20-%20GameFAQs.pdf";
 assert.equal(cleanGuideUrl(uploadKey), uploadKey);
@@ -1586,6 +1592,31 @@ assert.equal(pipelineSourceLabel("web", [{ title: "Wiki", url: "https://example.
 assert.equal(
   pipelineSourceLabel("rag", [{ title: "steamcommunity.com", url: "https://steamcommunity.com/x" }]),
   "Your guide",
+);
+assert.equal(
+  pipelineSourceLabel("rag", [
+    { title: "guide.pdf", url: "upload://u/guide.pdf" },
+    { title: "IGN walkthrough", url: "https://www.ign.com/walkthroughs/foo" },
+  ]),
+  "PDF guide + ign.com",
+);
+assert.equal(
+  pipelineSourceLabel("rag", [
+    { title: "guide.pdf", url: "upload://u/guide.pdf" },
+    { title: "FAQ", url: "https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674" },
+  ]),
+  "PDF guide + GameFAQs bundle",
+);
+assert.equal(
+  mixedPreferredGuideLabel("PDF guide", ["ign.com", "gamefaqs.gamespot.com"]),
+  "PDF guide + 2 links",
+);
+assert.equal(
+  guideUrlsSummary([
+    "upload://u/myguide.pdf",
+    "https://www.ign.com/walkthroughs/foo",
+  ]),
+  "PDF · myguide.pdf + ign.com",
 );
 assert.equal(
   pipelineSourceLabel("fallback_web", [{ title: "Risk of Rain wiki", url: "https://wiki.gg/risk-of-rain" }]),
