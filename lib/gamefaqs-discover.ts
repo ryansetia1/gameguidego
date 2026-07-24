@@ -223,6 +223,7 @@ async function cacheSinglePageDiscovery(parsed: ParsedFaq, title: string): Promi
     title,
     pages: [],
     singlePage: true,
+    isBlocked: false,
   });
 }
 

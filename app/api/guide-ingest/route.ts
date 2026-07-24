@@ -117,19 +117,49 @@ export async function POST(request: Request) {
         results.push({ ...result, url });
         if (result.hubWarning) anyHubWarning = true;
 
-        void logIngestJourneyToDb({
-          userId: ingestCtx.userId,
-          playerName: ingestCtx.playerName,
-          traceId,
-          game: ingestCtx.game,
-          platform: ingestCtx.platform,
-          url,
-          latencyMs: Date.now() - start,
-          status: "success",
-          pagesIndexed: result.pagesIndexed ?? (result.chunkCount > 0 ? 1 : 0),
-          hubWarning: result.hubWarning,
-        });
-        await logTraceEvent("ingest_url_complete", `Ingested URL: ${url}`, Date.now() - start, { result });
+        const latencyMs = Date.now() - start;
+        if (result.indexed) {
+          void logIngestJourneyToDb({
+            userId: ingestCtx.userId,
+            playerName: ingestCtx.playerName,
+            traceId,
+            game: ingestCtx.game,
+            platform: ingestCtx.platform,
+            url,
+            latencyMs,
+            status: "success",
+            pagesIndexed: result.pagesIndexed ?? (result.chunkCount > 0 ? 1 : 0),
+            hubWarning: result.hubWarning,
+          });
+          await logTraceEvent("ingest_url_complete", `Ingested URL: ${url}`, latencyMs, { result });
+        } else {
+          const errorMessage = result.isBlocked
+            ? "GameFAQs blocked: could not extract guide content"
+            : result.hubWarning
+              ? "Guide looks like a hub or extract was too short"
+              : "Guide was not indexed";
+          void logIngestJourneyToDb({
+            userId: ingestCtx.userId,
+            playerName: ingestCtx.playerName,
+            traceId,
+            game: ingestCtx.game,
+            platform: ingestCtx.platform,
+            url,
+            latencyMs,
+            status: "error",
+            pagesIndexed: 0,
+            hubWarning: result.hubWarning,
+            errorMessage,
+          });
+          await logTraceEvent(
+            result.isBlocked ? "ingest_url_blocked" : "ingest_url_failed",
+            result.isBlocked
+              ? `Blocked guide ingest for ${url}`
+              : `Guide ingest did not index ${url}`,
+            latencyMs,
+            { result, error: errorMessage },
+          );
+        }
       } catch (err: unknown) {
         anyError = true;
         const msg = err instanceof Error ? err.message : String(err);
@@ -156,7 +186,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const indexedCount = results.filter((row) => row.indexed !== false).length;
+    const indexedCount = results.filter((row) => row.indexed === true).length;
 
     return NextResponse.json({
       available: true,

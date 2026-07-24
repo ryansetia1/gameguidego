@@ -556,8 +556,30 @@ async function ingestGamefaqsBundle(
   // Cache-first + light search is enough; full part-query discovery burns 100+ Tavily calls.
   const discovery = discoveryCached;
   if (discovery.isBlocked) {
-    void logTraceEvent("ingest_bundle_blocked", `GameFAQs anti-bot blocked bundle discovery for ${rawUrl}`, undefined, { bundleKey: parsed.bundleKey });
-    return { indexed: false, chunkCount: 0, hubWarning: false, isBlocked: true };
+    void logTraceEvent(
+      "ingest_discovery_blocked_fallback",
+      `Discovery blocked for ${parsed.bundleKey} — trying single-page extract`,
+      undefined,
+      { bundleKey: parsed.bundleKey, url: rawUrl },
+    );
+    const fallback = await ingestSingleGuidePage(rawUrl, signal, ctx, parsed.bundleKey);
+    if (fallback.indexed) {
+      await setCachedBundleDiscovery(parsed.bundleKey, {
+        canonicalUrl: parsed.canonicalUrl,
+        title: "GameFAQs guide",
+        pages: [],
+        singlePage: true,
+        isBlocked: false,
+      });
+      return fallback;
+    }
+    void logTraceEvent(
+      "ingest_bundle_blocked",
+      `GameFAQs anti-bot blocked bundle discovery for ${rawUrl}`,
+      undefined,
+      { bundleKey: parsed.bundleKey },
+    );
+    return { ...fallback, isBlocked: true };
   }
   if (!discovery.bundle || !discovery.pages?.length) {
     return ingestSingleGuidePage(rawUrl, signal, ctx, parsed.bundleKey);
