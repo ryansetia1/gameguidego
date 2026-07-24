@@ -6,6 +6,8 @@ export function usePromptDialog() {
   const [promptState, setPromptState] = useState<{
     label: string;
     confirmLabel?: string;
+    placeholder?: string;
+    maxLength?: number;
   } | null>(null);
   const [promptDraft, setPromptDraft] = useState("");
   const promptResolveRef = useRef<((value: string | null) => void) | null>(null);
@@ -13,12 +15,18 @@ export function usePromptDialog() {
   const promptInputRef = useRef<HTMLInputElement>(null);
 
   const askPrompt = useCallback(
-    (label: string, defaultValue = "", confirmLabel = "Save") =>
+    (
+      label: string,
+      defaultValue = "",
+      confirmLabel = "Save",
+      placeholder?: string,
+      maxLength = 120,
+    ) =>
       new Promise<string | null>((resolve) => {
         promptResolveRef.current = resolve;
         promptDraftRef.current = defaultValue;
         setPromptDraft(defaultValue);
-        setPromptState({ label, confirmLabel });
+        setPromptState({ label, confirmLabel, placeholder, maxLength });
       }),
     [],
   );
@@ -67,6 +75,8 @@ export function usePromptDialog() {
 export type PromptDialogProps = {
   label: string;
   confirmLabel?: string;
+  placeholder?: string;
+  maxLength?: number;
   draft: string;
   inputRef: React.RefObject<HTMLInputElement | null>;
   onDraftChange: (value: string) => void;
@@ -77,6 +87,8 @@ export type PromptDialogProps = {
 export function PromptDialog({
   label,
   confirmLabel,
+  placeholder = "Untitled topic",
+  maxLength = 120,
   draft,
   inputRef,
   onDraftChange,
@@ -103,9 +115,9 @@ export function PromptDialog({
           className="prompt-input"
           type="text"
           value={draft}
-          maxLength={120}
+          maxLength={maxLength}
           autoComplete="off"
-          placeholder="Untitled topic"
+          placeholder={placeholder}
           onChange={(event) => onDraftChange(event.target.value)}
         />
         <div className="confirm-actions">

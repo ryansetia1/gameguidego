@@ -1,8 +1,15 @@
 "use client";
 
 import type { Session } from "@supabase/supabase-js";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { PromptDialog, usePromptDialog } from "@/app/chat/use-prompt-dialog";
+import {
+  PlayerMemoryGamesPanel,
+  type GameMemoryRow,
+} from "@/app/profile/player-memory-games-panel";
+import { EditableNoteRow, EditedBadge } from "@/app/profile/player-memory-note-row";
+import { ConfirmDialog, useConfirmDialog } from "@/app/use-confirm-dialog";
 import {
   coercePlayerStyle,
   disablePlayerMemory,
@@ -12,13 +19,10 @@ import {
   MEMORY_GAME_NOTE_CAP,
   MEMORY_STYLE_NOTE_CAP,
   MEMORY_TOGGLE_HINT,
-  MEMORY_TOGGLE_LABEL,
   memoryRefreshCooldownRemainingMs,
 } from "@/lib/player-memory.js";
 import {
   gameMemoryPinKey,
-  isGameNotePinned,
-  isGameProgressPinned,
   isStyleFieldPinned,
   isStyleNotePinned,
   readStyleRecord,
@@ -31,6 +35,7 @@ import { getSupabase } from "@/lib/supabase";
 
 type PlayerStyleShape = ReturnType<typeof coercePlayerStyle>;
 type StyleFieldKey = "answerLength" | "tone" | "language" | "detailLevel";
+type MemoryTab = "style" | "games";
 
 type MemoryState = {
   message_count: number;
@@ -38,13 +43,6 @@ type MemoryState = {
   style: Record<string, unknown>;
   last_summarized_at: string | null;
   last_manual_refresh_at: string | null;
-};
-
-type GameMemoryRow = {
-  game_key: string;
-  platform: string;
-  progress: string | null;
-  notes: string[];
 };
 
 type Props = {
@@ -57,6 +55,13 @@ const STYLE_FIELD_LABELS: Record<StyleFieldKey, string> = {
   tone: "Tone",
   language: "Language",
   detailLevel: "Detail",
+};
+
+const STYLE_CHIP_LABELS: Record<StyleFieldKey, Record<string, string>> = {
+  answerLength: { short: "Short", medium: "Medium", detailed: "Detailed" },
+  tone: { casual: "Casual", direct: "Direct" },
+  language: { id: "Indonesian", en: "English", mixed: "Mixed" },
+  detailLevel: { steps: "Steps", context: "Context", minimal: "Essentials" },
 };
 
 async function apiFetch(session: Session, path: string, init?: RequestInit) {
@@ -91,73 +96,27 @@ function memoryUpdateMeta(lastSummarized: string | null, cooldownMs: number) {
   return parts.join(" · ");
 }
 
-function EditedBadge() {
-  return <span className="player-memory-edited-badge">Edited by you</span>;
+function styleChipLabel(field: StyleFieldKey, value: string) {
+  return STYLE_CHIP_LABELS[field][value] ?? value;
+}
+
+function styleSummary(style: PlayerStyleShape) {
+  const parts = (STYLE_FIELD_KEYS as readonly StyleFieldKey[])
+    .map((field) => {
+      const value = style[field];
+      return value ? styleChipLabel(field, value) : null;
+    })
+    .filter(Boolean);
+  return parts.length ? parts.join(" · ") : "Not set yet";
 }
 
 function PlayerMemorySkeleton() {
   return (
-    <div
-      className="field player-memory-section"
-      aria-busy="true"
-      aria-label="Loading style memory"
-    >
-      <span className="player-memory-skeleton player-memory-skeleton-label" aria-hidden />
-      <div className="player-memory-skeleton player-memory-skeleton-toggle" aria-hidden />
-      <div className="player-memory-skeleton player-memory-skeleton-hint" aria-hidden />
-      <div className="player-memory-scroll player-memory-skeleton-scroll" aria-hidden>
-        <div className="player-memory-skeleton player-memory-skeleton-line" />
-        <div className="player-memory-skeleton player-memory-skeleton-line player-memory-skeleton-line--b" />
-        <div className="player-memory-skeleton player-memory-skeleton-line player-memory-skeleton-line--c" />
-        <div className="player-memory-skeleton player-memory-skeleton-line player-memory-skeleton-line--d" />
-      </div>
-      <div className="player-memory-action-row player-memory-skeleton-actions" aria-hidden>
-        <div className="player-memory-skeleton player-memory-skeleton-btn" />
-        <div className="player-memory-skeleton player-memory-skeleton-btn" />
-      </div>
+    <div className="player-memory-section" aria-busy="true" aria-label="Loading style memory">
+      <div className="player-memory-skeleton player-memory-skeleton-header" aria-hidden />
+      <div className="player-memory-skeleton player-memory-skeleton-tabs" aria-hidden />
+      <div className="player-memory-skeleton player-memory-skeleton-panel" aria-hidden />
     </div>
-  );
-}
-
-function formatGameKey(key: string) {
-  return key.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function EditableNoteRow({
-  value,
-  pinned,
-  onSave,
-  onRemove,
-}: {
-  value: string;
-  pinned: boolean;
-  onSave: (next: string) => void;
-  onRemove: () => void;
-}) {
-  const [draft, setDraft] = useState(value);
-  useEffect(() => {
-    setDraft(value);
-  }, [value]);
-
-  return (
-    <li className="player-memory-note">
-      <input
-        type="text"
-        className="player-memory-note-input"
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => {
-          const trimmed = draft.replace(/\s+/g, " ").trim();
-          if (trimmed && trimmed !== value) onSave(trimmed);
-          else if (!trimmed) onRemove();
-          else setDraft(value);
-        }}
-      />
-      {pinned ? <EditedBadge /> : null}
-      <button type="button" className="player-memory-remove" onClick={onRemove} aria-label="Remove note">
-        ×
-      </button>
-    </li>
   );
 }
 
@@ -168,6 +127,17 @@ export function PlayerMemorySection({ session, onToast }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [activeTab, setActiveTab] = useState<MemoryTab>("style");
+  const [gameFilter, setGameFilter] = useState("");
+  const { confirmState, askConfirm, closeConfirm } = useConfirmDialog();
+  const {
+    promptState,
+    promptDraft,
+    setPromptDraft,
+    promptInputRef,
+    askPrompt,
+    closePrompt,
+  } = usePromptDialog();
 
   const load = useCallback(async () => {
     const supabase = getSupabase();
@@ -238,7 +208,7 @@ export function PlayerMemorySection({ session, onToast }: Props) {
     const supabase = getSupabase();
     if (!session || !supabase) return;
     if (!next) {
-      const ok = window.confirm("Turn off and clear what we've learned?");
+      const ok = await askConfirm("Turn off and clear what we've learned?", "Turn off");
       if (!ok) return;
     }
     setError("");
@@ -249,6 +219,8 @@ export function PlayerMemorySection({ session, onToast }: Props) {
       } else {
         await disablePlayerMemory(supabase, session.user.id);
         setGames([]);
+        setActiveTab("style");
+        setGameFilter("");
       }
       setEnabled(next);
       await load();
@@ -326,7 +298,13 @@ export function PlayerMemorySection({ session, onToast }: Props) {
   async function addStyleNote(style: PlayerStyleShape, userPins: PlayerStyleUserPins) {
     const notes = style.notes ?? [];
     if (notes.length >= MEMORY_STYLE_NOTE_CAP) return;
-    const text = window.prompt("Add a note about how you like answers")?.replace(/\s+/g, " ").trim();
+    const text = await askPrompt(
+      "Add a note about how you like answers",
+      "",
+      "Add note",
+      "e.g. Prefer numbered steps",
+      200,
+    );
     if (!text) return;
     const nextNotes = [...notes, text].slice(0, MEMORY_STYLE_NOTE_CAP);
     const notePins = [...(userPins.notes ?? []), true].slice(0, MEMORY_STYLE_NOTE_CAP);
@@ -451,7 +429,13 @@ export function PlayerMemorySection({ session, onToast }: Props) {
   ) {
     const row = games.find((g) => g.game_key === gameKey && g.platform === platform);
     if (!row || (row.notes?.length ?? 0) >= MEMORY_GAME_NOTE_CAP) return;
-    const text = window.prompt("Add a note for this game")?.replace(/\s+/g, " ").trim();
+    const text = await askPrompt(
+      "Add a note for this game",
+      "",
+      "Add note",
+      "e.g. Stuck on the fire boss",
+      200,
+    );
     if (!text) return;
     const notes = [...(row.notes ?? []), text].slice(0, MEMORY_GAME_NOTE_CAP);
     if (!session) return;
@@ -479,7 +463,10 @@ export function PlayerMemorySection({ session, onToast }: Props) {
 
   async function clearCards() {
     if (!session) return;
-    const ok = window.confirm("Clear your style memory? Your question count will stay.");
+    const ok = await askConfirm(
+      "Clear your style memory? Your question count will stay.",
+      "Clear",
+    );
     if (!ok) return;
     const supabase = getSupabase();
     if (!supabase) return;
@@ -496,6 +483,21 @@ export function PlayerMemorySection({ session, onToast }: Props) {
     onToast?.("Style memory cleared.");
   }
 
+  const activeGames = useMemo(
+    () =>
+      games.filter((row) => (row.notes?.length ?? 0) > 0 || Boolean(row.progress?.trim())),
+    [games],
+  );
+
+  const filteredGames = useMemo(() => {
+    const query = gameFilter.replace(/\s+/g, " ").trim().toLowerCase();
+    if (!query) return activeGames;
+    return activeGames.filter((row) => {
+      const title = `${row.game_key.replace(/-/g, " ")} ${row.platform}`.toLowerCase();
+      return title.includes(query);
+    });
+  }, [activeGames, gameFilter]);
+
   if (!session) return null;
   if (loading) return <PlayerMemorySkeleton />;
 
@@ -508,248 +510,235 @@ export function PlayerMemorySection({ session, onToast }: Props) {
   const progressPct = Math.min(100, Math.round((count / MEMORY_FULL_THRESHOLD) * 100));
   const draftLabel = tier === "draft" ? " (draft)" : "";
   const showMemoryEditor = enabled && count >= MEMORY_DRAFT_THRESHOLD;
-  const hasGames = games.some(
-    (row) => (row.notes?.length ?? 0) > 0 || Boolean(row.progress?.trim()),
-  );
   const updateMeta = memoryUpdateMeta(state?.last_summarized_at ?? null, cooldownMs);
   const canAddStyleNote = customNotes.length < MEMORY_STYLE_NOTE_CAP;
+  const statusLine = enabled
+    ? count >= MEMORY_FULL_THRESHOLD
+      ? "Active · updates daily"
+      : `${count} of ${MEMORY_FULL_THRESHOLD} questions logged`
+    : MEMORY_TOGGLE_HINT;
 
   return (
-    <div className="field player-memory-section">
-      <span className="field-label">{MEMORY_TOGGLE_LABEL}</span>
-      <div className="opt-memory-row">
-        <label className="memory-toggle">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(event) => void setMemoryEnabled(event.target.checked)}
-            aria-label={MEMORY_TOGGLE_LABEL}
-          />
-          <span>{enabled ? "On" : "Off"}</span>
-        </label>
-      </div>
-      <p className="field-hint player-memory-hint">
-        {enabled
-          ? count < MEMORY_FULL_THRESHOLD
-            ? `${count} of ${MEMORY_FULL_THRESHOLD} questions logged.`
-            : "Style memory active. Updates daily."
-          : MEMORY_TOGGLE_HINT}
-      </p>
-
-      {enabled && count < MEMORY_FULL_THRESHOLD && (
-        <div className="player-memory-progress" aria-hidden="true">
-          <div className="player-memory-progress-bar">
-            <div className="player-memory-progress-fill" style={{ width: `${progressPct}%` }} />
+    <div className="player-memory-section">
+      <div className="player-memory-header">
+        <div className="player-memory-header-row">
+          <div className="player-memory-header-copy">
+            <p className="player-memory-status">{statusLine}</p>
+            {enabled && count < MEMORY_FULL_THRESHOLD ? (
+              <div className="player-memory-progress" aria-hidden="true">
+                <div className="player-memory-progress-bar">
+                  <div className="player-memory-progress-fill" style={{ width: `${progressPct}%` }} />
+                </div>
+                <span className="player-memory-progress-label">
+                  {count} / {MEMORY_FULL_THRESHOLD}
+                </span>
+              </div>
+            ) : null}
           </div>
-          <span className="player-memory-progress-label">
-            {count} / {MEMORY_FULL_THRESHOLD}
-          </span>
+          <label className="memory-switch">
+            <span className="memory-switch-label">{enabled ? "On" : "Off"}</span>
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(event) => void setMemoryEnabled(event.target.checked)}
+              aria-label="Learn my style"
+            />
+          </label>
         </div>
-      )}
 
-      {enabled && count < MEMORY_DRAFT_THRESHOLD && (
-        <p className="profile-hint player-memory-hint">
-          Still learning. This kicks in after {MEMORY_FULL_THRESHOLD} questions across your chats.
+        {enabled && count >= MEMORY_DRAFT_THRESHOLD ? (
+          <div className="player-memory-header-actions">
+            <button
+              type="button"
+              className="nav-button player-memory-update-btn"
+              disabled={!canRefresh || refreshing}
+              onClick={() => void refreshNow()}
+            >
+              {refreshing ? "Updating…" : "Update now"}
+            </button>
+            {updateMeta ? <p className="player-memory-meta">{updateMeta}</p> : null}
+          </div>
+        ) : null}
+      </div>
+
+      {enabled && count < MEMORY_DRAFT_THRESHOLD ? (
+        <p className="profile-hint player-memory-collecting-hint">
+          Still learning. Memory kicks in after {MEMORY_DRAFT_THRESHOLD} questions ({count}/
+          {MEMORY_DRAFT_THRESHOLD}).
         </p>
-      )}
+      ) : null}
 
-      {showMemoryEditor && (
-        <div className="player-memory-scroll" aria-label="Learned style and game notes">
-          <section className="player-memory-block">
-            <h2 className="player-memory-block-title">Play style{draftLabel}</h2>
+      {showMemoryEditor ? (
+        <>
+          <div className="player-memory-tabs" role="tablist" aria-label="Memory sections">
+            <button
+              type="button"
+              role="tab"
+              id="player-memory-tab-style"
+              aria-selected={activeTab === "style"}
+              aria-controls="player-memory-panel-style"
+              className={`player-memory-tab${activeTab === "style" ? " is-active" : ""}`}
+              onClick={() => setActiveTab("style")}
+            >
+              Style
+            </button>
+            <button
+              type="button"
+              role="tab"
+              id="player-memory-tab-games"
+              aria-selected={activeTab === "games"}
+              aria-controls="player-memory-panel-games"
+              className={`player-memory-tab${activeTab === "games" ? " is-active" : ""}`}
+              onClick={() => setActiveTab("games")}
+            >
+              Games ({activeGames.length})
+            </button>
+          </div>
 
-            <div className="player-memory-subblock">
-              <h3 className="player-memory-subblock-title">Answer preferences</h3>
-              <p className="player-memory-block-hint">
-                Set these yourself or let Update now refresh from chats. Your edits stay put.
-              </p>
-              <div className="player-memory-prefs-grid">
-                {(STYLE_FIELD_KEYS as readonly StyleFieldKey[]).map((field) => (
-                  <label key={field} className="player-memory-pref-field">
-                    <span className="player-memory-pref-label">
-                      {STYLE_FIELD_LABELS[field]}
-                      {isStyleFieldPinned(userPins, field) ? <EditedBadge /> : null}
-                    </span>
-                    <select
-                      className="player-memory-pref-select"
-                      value={style[field] ?? ""}
-                      onChange={(event) =>
-                        void saveStyleField(field, event.target.value, style, userPins)
-                      }
-                    >
-                      {STYLE_FIELD_OPTIONS[field].map((option) => (
-                        <option key={option.value || "unset"} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="player-memory-subblock player-memory-subblock--separated">
-              <div className="player-memory-subblock-head">
-                <h3 className="player-memory-subblock-title">Learned notes</h3>
-                {canAddStyleNote ? (
-                  <button
-                    type="button"
-                    className="player-memory-text-btn"
-                    onClick={() => void addStyleNote(style, userPins)}
-                  >
-                    Add note
-                  </button>
-                ) : null}
-              </div>
-              <p className="player-memory-block-hint">
-                Edit inline or remove with ×. Your edits stay put on Update now.
-              </p>
-              {customNotes.length > 0 ? (
-                <ul className="player-memory-list">
-                  {customNotes.map((line, index) => (
-                    <EditableNoteRow
-                      key={`${line}-${index}`}
-                      value={line}
-                      pinned={isStyleNotePinned(userPins, index)}
-                      onSave={(next) => void saveStyleNote(index, next, style, userPins)}
-                      onRemove={() => void removeStyleNote(index, style, userPins)}
-                    />
-                  ))}
-                </ul>
-              ) : (
-                <p className="player-memory-empty">No notes yet.</p>
-              )}
-            </div>
-          </section>
-
-          {hasGames && (
-            <section className="player-memory-block">
-              <h2 className="player-memory-block-title">Game notes{draftLabel}</h2>
-              {games.map((row) => {
-                const notes = row.notes ?? [];
-                const title = `${formatGameKey(row.game_key)}${row.platform ? ` · ${row.platform}` : ""}`;
-                const progressPinned = isGameProgressPinned(userPins, row.game_key, row.platform);
-                if (!notes.length && !row.progress?.trim()) return null;
-                return (
-                  <details key={`${row.game_key}:${row.platform}`} className="player-memory-game">
-                    <summary className="player-memory-game-summary" aria-label={`${title}, tap to view notes`}>
-                      <span className="player-memory-game-summary-leading" aria-hidden="true" />
-                      <span className="player-memory-game-summary-body">
-                        <span className="player-memory-game-title">{title}</span>
-                        <span className="player-memory-game-expand-hint player-memory-game-expand-hint--closed">
-                          Tap to view notes
+          {activeTab === "style" ? (
+            <div
+              id="player-memory-panel-style"
+              role="tabpanel"
+              aria-labelledby="player-memory-tab-style"
+              className="player-memory-body"
+            >
+              <details className="player-memory-panel">
+                <summary className="player-memory-panel-summary">
+                  <span className="player-memory-panel-title">Answer style{draftLabel}</span>
+                  <span className="player-memory-summary-text">{styleSummary(style)}</span>
+                </summary>
+                <div className="player-memory-panel-body">
+                  <p className="player-memory-panel-hint">
+                    Pick your defaults or run Update now to refresh from chats. Your edits stay put.
+                  </p>
+                  <div className="player-memory-chips" aria-label="Current style summary">
+                    {(STYLE_FIELD_KEYS as readonly StyleFieldKey[]).map((field) => {
+                      const value = style[field];
+                      if (!value) return null;
+                      return (
+                        <span key={field} className="player-memory-chip">
+                          {styleChipLabel(field, value)}
                         </span>
-                        <span className="player-memory-game-expand-hint player-memory-game-expand-hint--open">
-                          Tap to hide notes
+                      );
+                    })}
+                  </div>
+                  <div className="player-memory-prefs-grid">
+                    {(STYLE_FIELD_KEYS as readonly StyleFieldKey[]).map((field) => (
+                      <label key={field} className="player-memory-pref-field">
+                        <span className="player-memory-pref-label">
+                          {STYLE_FIELD_LABELS[field]}
+                          {isStyleFieldPinned(userPins, field) ? <EditedBadge /> : null}
                         </span>
-                      </span>
-                      <span className="player-memory-game-count" aria-label={`${notes.length} notes`}>
-                        {notes.length}
-                      </span>
-                    </summary>
-                    <label className="player-memory-progress-field">
-                      <span className="player-memory-pref-label">
-                        Progress
-                        {progressPinned ? <EditedBadge /> : null}
-                      </span>
-                      <input
-                        type="text"
-                        className="player-memory-note-input"
-                        defaultValue={row.progress ?? ""}
-                        placeholder="e.g. Chapter 2"
-                        onBlur={(event) => {
-                          const next = event.target.value.replace(/\s+/g, " ").trim();
-                          if (next !== (row.progress ?? "").trim()) {
-                            void saveGameProgress(
-                              row.game_key,
-                              row.platform,
-                              next,
-                              userPins,
-                              style,
-                            );
+                        <select
+                          className="player-memory-pref-select"
+                          value={style[field] ?? ""}
+                          onChange={(event) =>
+                            void saveStyleField(field, event.target.value, style, userPins)
                           }
-                        }}
-                      />
-                    </label>
-                    <div className="player-memory-subblock-head player-memory-subblock-head--tight">
-                      <span className="player-memory-pref-label">Notes</span>
-                      {notes.length < MEMORY_GAME_NOTE_CAP ? (
-                        <button
-                          type="button"
-                          className="player-memory-text-btn"
-                          onClick={() => void addGameNote(row.game_key, row.platform, userPins, style)}
                         >
-                          Add note
-                        </button>
-                      ) : null}
-                    </div>
-                    {notes.length > 0 ? (
-                      <ul className="player-memory-list">
-                        {notes.map((note, index) => (
-                          <EditableNoteRow
-                            key={`${note}-${index}`}
-                            value={note}
-                            pinned={isGameNotePinned(userPins, row.game_key, row.platform, index)}
-                            onSave={(next) =>
-                              void saveGameNote(
-                                row.game_key,
-                                row.platform,
-                                index,
-                                next,
-                                userPins,
-                                style,
-                              )
-                            }
-                            onRemove={() =>
-                              void removeGameNote(
-                                row.game_key,
-                                row.platform,
-                                index,
-                                userPins,
-                                style,
-                              )
-                            }
-                          />
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="player-memory-empty">No notes for this game yet.</p>
-                    )}
-                  </details>
-                );
-              })}
-            </section>
-          )}
-        </div>
-      )}
+                          {STYLE_FIELD_OPTIONS[field].map((option) => (
+                            <option key={option.value || "unset"} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </details>
 
-      {enabled && (
-        <div className="player-memory-actions">
-          {count >= MEMORY_DRAFT_THRESHOLD && (
-            <div className="player-memory-action-row">
-              <button type="button" className="player-memory-clear-btn" onClick={() => void clearCards()}>
-                Clear style memory
-              </button>
-              <button
-                type="button"
-                className="nav-button"
-                disabled={!canRefresh || refreshing}
-                onClick={() => void refreshNow()}
-              >
-                {refreshing ? "Updating…" : "Update now"}
-              </button>
+              <section className="player-memory-panel player-memory-panel--static">
+                <div className="player-memory-panel-head">
+                  <h2 className="player-memory-panel-title">
+                    Learned notes ({customNotes.length}/{MEMORY_STYLE_NOTE_CAP})
+                  </h2>
+                  {canAddStyleNote ? (
+                    <button
+                      type="button"
+                      className="player-memory-text-btn"
+                      onClick={() => void addStyleNote(style, userPins)}
+                    >
+                      Add note
+                    </button>
+                  ) : null}
+                </div>
+                <p className="player-memory-panel-hint">
+                  Edit inline or remove with ×. Your edits stay put on Update now.
+                </p>
+                {customNotes.length > 0 ? (
+                  <ul className="player-memory-list">
+                    {customNotes.map((line, index) => (
+                      <EditableNoteRow
+                        key={`${line}-${index}`}
+                        value={line}
+                        pinned={isStyleNotePinned(userPins, index)}
+                        onSave={(next) => void saveStyleNote(index, next, style, userPins)}
+                        onRemove={() => void removeStyleNote(index, style, userPins)}
+                      />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="player-memory-empty">
+                    No notes yet. Ask a few questions or run Update now.
+                  </p>
+                )}
+              </section>
             </div>
+          ) : (
+            <PlayerMemoryGamesPanel
+              activeGames={activeGames}
+              filteredGames={filteredGames}
+              gameFilter={gameFilter}
+              onGameFilterChange={setGameFilter}
+              userPins={userPins}
+              onSaveProgress={(gameKey, platform, progress) =>
+                void saveGameProgress(gameKey, platform, progress, userPins, style)
+              }
+              onAddNote={(gameKey, platform) =>
+                void addGameNote(gameKey, platform, userPins, style)
+              }
+              onSaveNote={(gameKey, platform, index, text) =>
+                void saveGameNote(gameKey, platform, index, text, userPins, style)
+              }
+              onRemoveNote={(gameKey, platform, index) =>
+                void removeGameNote(gameKey, platform, index, userPins, style)
+              }
+            />
           )}
-          {updateMeta ? <p className="player-memory-meta">{updateMeta}</p> : null}
-          {count < MEMORY_DRAFT_THRESHOLD && (
-            <p className="profile-hint player-memory-hint">
-              Needs {MEMORY_DRAFT_THRESHOLD} questions first ({count}/{MEMORY_DRAFT_THRESHOLD})
-            </p>
-          )}
-        </div>
-      )}
 
-      {error && <p className="profile-error">{error}</p>}
+          <div className="player-memory-danger-zone">
+            <button type="button" className="player-memory-clear-btn" onClick={() => void clearCards()}>
+              Clear style memory
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      {error ? <p className="profile-error">{error}</p> : null}
+
+      <ConfirmDialog
+        state={confirmState}
+        onCancel={() => closeConfirm(false)}
+        onConfirm={() => closeConfirm(true)}
+      />
+
+      {promptState ? (
+        <PromptDialog
+          label={promptState.label}
+          confirmLabel={promptState.confirmLabel}
+          placeholder={promptState.placeholder}
+          maxLength={promptState.maxLength}
+          draft={promptDraft}
+          inputRef={promptInputRef}
+          onDraftChange={setPromptDraft}
+          onCancel={() => closePrompt(null)}
+          onSave={() => {
+            const trimmed = promptDraft.replace(/\s+/g, " ").trim();
+            closePrompt(trimmed || null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -14,6 +14,7 @@ import { HomeTip } from "./chat/hero-marketing";
 import { MessageList } from "./chat/message-list";
 import { TopicList } from "./chat/topic-list";
 import { PromptDialog, usePromptDialog } from "./chat/use-prompt-dialog";
+import { ConfirmDialog, useConfirmDialog } from "./use-confirm-dialog";
 import { useChatTurn } from "./chat/use-chat-turn";
 import { useGuideBundle } from "./chat/use-guide-bundle";
 import { useHomeSession } from "./chat/use-home-session";
@@ -220,12 +221,7 @@ export default function Home() {
   const [voiceListening, setVoiceListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [librarySearch, setLibrarySearch] = useState("");
-  const [confirmState, setConfirmState] = useState<{
-    message: string;
-    confirmLabel?: string;
-    danger?: boolean;
-    resolve: (value: boolean) => void;
-  } | null>(null);
+  const { confirmState, askConfirm, closeConfirm } = useConfirmDialog();
   const [toast, setToast] = useState("");
   const [lastLibrary, setLastLibrary] = useState<"saved" | "steam">("saved");
   const {
@@ -236,16 +232,6 @@ export default function Home() {
     askPrompt,
     closePrompt,
   } = usePromptDialog();
-
-  // Promise-based confirm dialog. Declared up here so the Steam return effect can
-  // offer "Use your Steam account" without a declaration-order tangle.
-  const askConfirm = useCallback(
-    (message: string, confirmLabel?: string, danger = true) =>
-      new Promise<boolean>((resolve) =>
-        setConfirmState({ message, confirmLabel, danger, resolve }),
-      ),
-    [],
-  );
 
   const feedRef = useRef<HTMLDivElement>(null);
   const lastUserRef = useRef<HTMLDivElement>(null);
@@ -834,18 +820,6 @@ export default function Home() {
     const timer = setTimeout(() => setToast(""), 3500);
     return () => clearTimeout(timer);
   }, [toast]);
-
-  useEffect(() => {
-    if (!confirmState) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        confirmState!.resolve(false);
-        setConfirmState(null);
-      }
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [confirmState]);
 
   // Mobile edge-swipe. Closed: swipe in from the left edge → sidebar; from the
   // right edge → last-opened library (Steam if connected + last used, else saved).
@@ -1531,7 +1505,7 @@ export default function Home() {
     newGame();
   }
 
-  // Promise-based confirm dialog (replaces window.confirm): resolves true/false
+  // Themed confirm dialog via useConfirmDialog (shared with profile memory).
   // when the user acts. Shared by every destructive action. `confirmLabel`
   // overrides the default "Delete" button text (e.g. "Discard").
   function openSavedLibrary() {
@@ -2114,9 +2088,7 @@ export default function Home() {
       onBundleMetaChange={setGuideBundleMeta}
       onGuideCheckChange={setGuideChecking}
       onGuidePendingChange={setGuidePending}
-      onRequestConfirm={(opts) =>
-        new Promise((resolve) => setConfirmState({ ...opts, resolve }))
-      }
+      onRequestConfirm={(opts) => askConfirm(opts.message, opts.confirmLabel, opts.danger)}
       onSaveGameMeta={() => void saveGameMeta()}
       onRetryBundleIngest={(url) => void retryBundleIngest(url)}
       onSkipBundlePage={handleSkipBundlePage}
@@ -2373,9 +2345,7 @@ export default function Home() {
         onBundleMetaChange={setGuideBundleMeta}
         onGuideCheckChange={setGuideChecking}
         onGuidePendingChange={setGuidePending}
-        onRequestConfirm={(opts) =>
-          new Promise((resolve) => setConfirmState({ ...opts, resolve }))
-        }
+        onRequestConfirm={(opts) => askConfirm(opts.message, opts.confirmLabel, opts.danger)}
         onGameSpoilerChange={updateGameSpoiler}
         onSaveGameMeta={() => void saveGameMeta()}
       />
@@ -2580,38 +2550,13 @@ export default function Home() {
         </div>
       )}
 
-      {confirmState && (
-        <div
-          className="confirm-overlay"
-          role="presentation"
-        >
-          <div className="confirm-modal" role="dialog" aria-modal="true">
-            <p className="confirm-message">{confirmState.message}</p>
-            <div className="confirm-actions">
-              <button
-                type="button"
-                className="confirm-cancel"
-                onClick={() => {
-                  confirmState.resolve(false);
-                  setConfirmState(null);
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className={confirmState.danger === false ? "confirm-confirm" : "confirm-delete"}
-                onClick={() => {
-                  confirmState.resolve(true);
-                  setConfirmState(null);
-                }}
-              >
-                {confirmState.confirmLabel ?? "Delete"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {confirmState ? (
+        <ConfirmDialog
+          state={confirmState}
+          onCancel={() => closeConfirm(false)}
+          onConfirm={() => closeConfirm(true)}
+        />
+      ) : null}
 
       {promptState && (
         <PromptDialog

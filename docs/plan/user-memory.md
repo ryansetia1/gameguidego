@@ -38,7 +38,7 @@ manual **Update now**. Structured JSON injected into `buildPrompt()` — **not**
 | Long history | Incremental merge | Re-summarize full dump | Input size stays bounded |
 | Thresholds | 5 = draft, 10 = full | 10 only / immediate | Early value without garbage profiles |
 | Disable | Clear memory + reset counter | Keep draft on re-enable | Clean, privacy-aligned |
-| UI surface | `/profile` only | Game card chips | Keeps chat UI uncluttered |
+| UI surface | `/profile` link + `/profile/memory` | Game card chips | Keeps chat UI uncluttered; memory editor gets full page |
 
 ## State machine
 

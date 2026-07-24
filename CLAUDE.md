@@ -51,9 +51,9 @@ do not sync to the cloud or use Storage uploads.
   **paste** of image files into the composer (`dragActive` +
   `.composer.drag-active`/`.composer-dropzone` for drop, textarea `onPaste` for paste;
   both reuse `selectMessageImages`, signed-in + unlocked only); edit/retry drops truncated turns'
-  Storage images), profile avatar menu (theme, spoilers, sign out) and `/profile`
-  page for `user_metadata.display_name` (LLM uses it in prompts), theme via
-  `gg:theme` / `user_metadata.theme`,
+  Storage images), profile avatar menu (theme, spoilers, sign out), `/profile`
+  page (display name, avatar, voice language), and `/profile/memory` (Learn my
+  style editor), theme via `gg:theme` / `user_metadata.theme`,
   light-markdown rendering of answers (`lib/markdown.js`: bold/lists/headings),
   a dismissable examples strip
   (remembered in `localStorage`; on home it renders **below** the composer so the
@@ -879,7 +879,8 @@ large chat or persistence work:
 - [`docs/plan/user-memory.md`](docs/plan/user-memory.md): **Experimental (shipped):**
   opt-in signed-in **Learn my style** — incremental daily summarize into structured
   profile (`player_memory_state` + `player_game_memory`; apply `db/player-memory.sql`),
-  5 user messages = draft soft inject, 10 = full, `/profile` UI + **Update now**,
+  5 user messages = draft soft inject, 10 = full, `/profile` link + `/profile/memory`
+  editor + **Update now**,
   disable wipes memory; cron `GET /api/cron/player-memory` (needs `CRON_SECRET` +
   `SUPABASE_SERVICE_ROLE_KEY`).
 - [`docs/plan/answer-satisfaction-signals.md`](docs/plan/answer-satisfaction-signals.md):
