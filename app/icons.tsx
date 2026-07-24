@@ -262,6 +262,15 @@ export function IconAlert(props: IconProps) {
   );
 }
 
+export function IconInfo(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle {...base} cx="12" cy="12" r="10" />
+      <path {...base} d="M12 10v6M12 7h.01" />
+    </Svg>
+  );
+}
+
 export function IconClipboard(props: IconProps) {
   return (
     <Svg {...props}>

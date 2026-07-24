@@ -19,6 +19,7 @@ import { steamAppIdFromCoverUrl } from "@/lib/steam.js";
 import { CoverThumb, displayPlatform } from "./cover-thumb";
 import { GuideStatusChip } from "./guide-status-chip";
 import { SpoilerToggle } from "./spoiler-toggle";
+import { TopicTitleTypewriter } from "./topic-title-typewriter";
 
 import type { GuideIndexState } from "@/lib/guide-index-state";
 
@@ -80,6 +81,7 @@ export type ActiveGameCardProps = {
   topicCount?: number;
   /** Shown below game metadata in thread view. */
   topicTitle?: string;
+  topicTitlePending?: boolean;
   onDeleteAllTopics?: () => void;
   className?: string;
 };
@@ -132,6 +134,7 @@ export function ActiveGameCard({
   menuVariant = "thread",
   topicCount = 0,
   topicTitle = "",
+  topicTitlePending = false,
   onDeleteAllTopics,
   className,
 }: ActiveGameCardProps) {
@@ -480,8 +483,13 @@ export function ActiveGameCard({
           )}
         </div>
       </div>
-      {menuVariant === "thread" && topicTitle ? (
-        <p className="game-card-topic-title">{topicTitle}</p>
+      {menuVariant === "thread" && (topicTitlePending || topicTitle) ? (
+        <TopicTitleTypewriter
+          as="p"
+          className="game-card-topic-title"
+          title={topicTitle}
+          pending={topicTitlePending}
+        />
       ) : null}
       <div className="game-card-guides">
         <details

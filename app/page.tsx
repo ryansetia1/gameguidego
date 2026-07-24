@@ -13,6 +13,7 @@ import { HomeSetup } from "./chat/home-setup";
 import { HomeTip } from "./chat/hero-marketing";
 import { MessageList } from "./chat/message-list";
 import { TopicList } from "./chat/topic-list";
+import { TopicTitleTypewriter } from "./chat/topic-title-typewriter";
 import { PromptDialog, usePromptDialog } from "./chat/use-prompt-dialog";
 import { ConfirmDialog, useConfirmDialog } from "./use-confirm-dialog";
 import { useChatTurn } from "./chat/use-chat-turn";
@@ -63,6 +64,7 @@ import {
   displayTopicTitle,
   resolvedTopicTitle,
   saveTopicTitleById,
+  shouldShowTopicTitleSkeleton,
   titleFromMessages,
 } from "@/lib/topic-title.js";
 import { getSupabase, type Chat } from "@/lib/supabase";
@@ -635,7 +637,7 @@ export default function Home() {
     );
   }, []);
 
-  const loadChats = useCallback(async () => {
+  const loadChats = useCallback(async (options: { replace?: boolean } = {}) => {
     const supabase = getSupabase();
     if (!supabase || !userRef.current) {
       setChats(loadLocalGames());
@@ -650,7 +652,8 @@ export default function Home() {
       .select(fullSelect)
       .order("updated_at", { ascending: false });
     if (!fullResult.error && fullResult.data) {
-      setChats((prev) => mergeChatsFromServer(prev, fullResult.data as Chat[]));
+      const remote = fullResult.data as Chat[];
+      setChats((prev) => (options.replace ? remote : mergeChatsFromServer(prev, remote)));
       return;
     }
     const legacyResult = await supabase
@@ -658,7 +661,8 @@ export default function Home() {
       .select(legacySelect)
       .order("updated_at", { ascending: false });
     if (!legacyResult.error && legacyResult.data) {
-      setChats((prev) => mergeChatsFromServer(prev, legacyResult.data as Chat[]));
+      const remote = legacyResult.data as Chat[];
+      setChats((prev) => (options.replace ? remote : mergeChatsFromServer(prev, remote)));
     }
   }, []);
 
@@ -1244,6 +1248,7 @@ export default function Home() {
       window.history.back();
       return;
     }
+    activeChatIdRef.current = null;
     setActiveChatId(null);
     setMessages([]);
     setEditingIndex(null);
@@ -1258,6 +1263,7 @@ export default function Home() {
 
   function startNewTopic() {
     setMenuOpenId(null);
+    activeChatIdRef.current = null;
     setActiveChatId(null);
     setMessages([]);
     setEditingIndex(null);
@@ -1280,6 +1286,7 @@ export default function Home() {
     jumpRef.current = true;
     setChatUrl(chat.id);
     clearSessionDraft();
+    activeChatIdRef.current = chat.id;
     setActiveChatId(chat.id);
     applyRoomContext(chat);
     setEditingGame(false);
@@ -1714,16 +1721,23 @@ export default function Home() {
       return;
     }
     const thread = await resolveThreadMessages(supabase, chat);
-    await supabase.from("chats").delete().eq("id", chat.id);
+    const { error: deleteError } = await supabase.from("chats").delete().eq("id", chat.id);
+    if (deleteError) {
+      console.error("Failed to delete topic:", deleteError);
+      setToast("Couldn't delete that topic. Try again.");
+      return;
+    }
     await removeCoverStoragePaths(supabase, threadImageStoragePaths(thread));
+    setChats((prev) => prev.filter((row) => row.id !== chat.id));
     if (chat.id === activeChatId) {
       if (gameView === "thread") backToTopicList();
       else {
+        activeChatIdRef.current = null;
         setActiveChatId(null);
         setMessages([]);
       }
     }
-    void loadChats();
+    void loadChats({ replace: true });
   }
 
   async function deleteAllTopics() {
@@ -1752,15 +1766,23 @@ export default function Home() {
       setChats(loadLocalGames());
       return;
     }
+    const topicIds = new Set(topics.map((row) => row.id));
     for (const chat of topics) {
       const thread = await resolveThreadMessages(supabase, chat);
-      await supabase.from("chats").delete().eq("id", chat.id);
+      const { error: deleteError } = await supabase.from("chats").delete().eq("id", chat.id);
+      if (deleteError) {
+        console.error("Failed to delete topic:", deleteError);
+        setToast("Couldn't delete all topics. Try again.");
+        void loadChats({ replace: true });
+        return;
+      }
       await removeCoverStoragePaths(supabase, threadImageStoragePaths(thread));
     }
-    if (activeChatId && topics.some((row) => row.id === activeChatId)) {
+    setChats((prev) => prev.filter((row) => !topicIds.has(row.id)));
+    if (activeChatId && topicIds.has(activeChatId)) {
       backToTopicList();
     }
-    void loadChats();
+    void loadChats({ replace: true });
   }
 
   async function deleteGameRoom(chat: Chat, event?: MouseEvent<HTMLButtonElement>) {
@@ -1806,32 +1828,56 @@ export default function Home() {
       ])) {
         paths.add(path);
       }
-      await supabase.from("chats").delete().eq("id", row.id);
+      const { error: deleteError } = await supabase.from("chats").delete().eq("id", row.id);
+      if (deleteError) {
+        console.error("Failed to delete game room:", deleteError);
+        setToast("Couldn't delete that game. Try again.");
+        void loadChats({ replace: true });
+        return;
+      }
     }
     await removeCoverStoragePaths(supabase, [...paths]);
+    const roomIds = new Set(roomTopics.map((row) => row.id));
+    setChats((prev) => prev.filter((row) => !roomIds.has(row.id)));
     const removedActive = activeChatId && roomTopics.some((row) => row.id === activeChatId);
     if (removedActive || (gameView === "topics" && game === chat.game && platform === chat.platform)) {
       newGame();
     }
-    void loadChats();
+    void loadChats({ replace: true });
   }
 
   async function deleteChat(chat: Chat, event?: MouseEvent<HTMLButtonElement>) {
     await deleteGameRoom(chat, event);
   }
 
+  function activeChatRow(): Chat | null {
+    const chatId = activeChatIdRef.current ?? activeChatId;
+    if (!chatId) return null;
+    return (
+      chats.find((row) => row.id === chatId) ?? {
+        id: chatId,
+        game,
+        platform,
+        title: activeTopicTitle ?? "",
+        messages,
+        preferred_guide_url: preferredUrls[0] ?? "",
+        preferred_guide_urls: preferredUrls,
+        cover_url: cover,
+        release_year: releaseYear,
+        updated_at: new Date().toISOString(),
+      }
+    );
+  }
+
   async function deleteActiveTopic() {
     setMenuOpenId(null);
-    const chat = chats.find((row) => row.id === activeChatIdRef.current);
-    if (chat) {
-      await deleteTopicRow(chat);
-      return;
-    }
+    const chat = activeChatRow();
+    if (chat) await deleteTopicRow(chat);
   }
 
   async function deleteActiveChat() {
     setMenuOpenId(null);
-    const chat = chats.find((c) => c.id === activeChatIdRef.current);
+    const chat = activeChatRow();
     if (chat) {
       await deleteGameRoom(chat);
       return;
@@ -2034,12 +2080,22 @@ export default function Home() {
   const showStickyHeader =
     showSticky && (showTopicList || messages.length > 0);
 
-  const activeTopicTitle = showThread
-    ? displayTopicTitle(
-        activeChatId
-          ? resolvedTopicTitle(chats.find((row) => row.id === activeChatId) ?? { messages })
-          : titleFromMessages(messages),
-      )
+  const resolvedTopicTitleText = showThread
+    ? activeChatId
+      ? resolvedTopicTitle(chats.find((row) => row.id === activeChatId) ?? { messages })
+      : titleFromMessages(messages)
+    : "";
+
+  const topicTitlePending =
+    showThread &&
+    shouldShowTopicTitleSkeleton({
+      messages,
+      loading,
+      title: resolvedTopicTitleText,
+    });
+
+  const activeTopicTitle = showThread && !topicTitlePending
+    ? displayTopicTitle(resolvedTopicTitleText)
     : "";
 
   const renderActiveGameCard = (menuVariant: "thread" | "topics") => (
@@ -2069,6 +2125,7 @@ export default function Home() {
       menuVariant={menuVariant}
       topicCount={roomTopics.length}
       topicTitle={menuVariant === "thread" ? activeTopicTitle : undefined}
+      topicTitlePending={menuVariant === "thread" ? topicTitlePending : false}
       className={menuVariant === "topics" ? "topic-list-game-card" : undefined}
       onToggleTemporary={() => void toggleTemporary()}
       onToggleRowMenu={toggleRowMenu}
@@ -2242,8 +2299,13 @@ export default function Home() {
           {coverEnabled && <CoverThumb cover={cover} name={game} className="cover-mini" />}
           <div className="sticky-meta">
             <strong>{game || "Untitled game"}</strong>
-            {showThread && activeTopicTitle ? (
-              <small className="sticky-topic-title">{activeTopicTitle}</small>
+            {showThread && (topicTitlePending || activeTopicTitle) ? (
+              <TopicTitleTypewriter
+                as="small"
+                className="sticky-topic-title"
+                title={activeTopicTitle}
+                pending={topicTitlePending}
+              />
             ) : (platform || releaseYear || game) ? (
               <small className="meta-subline">
                 {displayPlatform(platform, cover) && (

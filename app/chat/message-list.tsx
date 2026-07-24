@@ -4,6 +4,7 @@ import {
   IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
+  IconInfo,
   IconPencil,
   IconPlus,
   IconRefresh,
@@ -22,6 +23,7 @@ import {
   uploadedSourceGuideLabel,
 } from "@/lib/chat-message-ui.js";
 import { isUploadedGuideUrl } from "@/lib/guide-urls.js";
+import { visualImageProxyUrl } from "@/lib/visual-image-proxy.js";
 
 /** Stop nudging for a guide after this many answers; re-nudge naturally in a new game. */
 const NUDGE_MAX_ANSWERS = 10;
@@ -112,6 +114,50 @@ function AnswerInfo({
               </button>
             )}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ILLUSTRATION_INFO_COPY =
+  "This image came from a web search. It might not match your game or question exactly.";
+
+function IllustrationInfo() {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="answer-illustration-info" ref={wrapRef}>
+      <button
+        type="button"
+        className="answer-illustration-info-toggle"
+        aria-label="About this reference image"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <IconInfo size={14} />
+      </button>
+      {open && (
+        <div className="answer-info-pop answer-illustration-info-pop" role="dialog" aria-label="About this reference image">
+          <p className="answer-info-copy">{ILLUSTRATION_INFO_COPY}</p>
         </div>
       )}
     </div>
@@ -416,15 +462,21 @@ export function MessageList({
             <AnswerBody text={message.content} />
             {message.illustration && (
               <figure className="answer-illustration">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  className="answer-illustration-image"
-                  src={message.illustration.url}
-                  alt={message.illustration.alt}
-                  loading="lazy"
-                  onClick={() => onOpenLightbox([message.illustration!.url], 0)}
-                  style={{ cursor: "zoom-in" }}
-                />
+                <div className="answer-illustration-frame">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    className="answer-illustration-image"
+                    src={visualImageProxyUrl(message.illustration.url)}
+                    alt={message.illustration.alt}
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    onClick={() =>
+                      onOpenLightbox([visualImageProxyUrl(message.illustration!.url)], 0)
+                    }
+                    style={{ cursor: "zoom-in" }}
+                  />
+                  <IllustrationInfo />
+                </div>
                 {message.illustration.sourceUrl ? (
                   <figcaption className="answer-illustration-caption">
                     <a href={message.illustration.sourceUrl} target="_blank" rel="noreferrer">

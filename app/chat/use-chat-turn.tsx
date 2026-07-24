@@ -81,14 +81,21 @@ export function useChatTurn(deps: ChatTurnDeps) {
 
     if (!(await confirmGuidePending())) return;
 
+    d.setInput("");
+
     const switching =
       d.messages.length > 0 &&
       d.normGameKey(d.game) !== d.normGameKey(d.conversationGame.current);
-    const priorMessages = switching ? [] : d.messages;
-    const targetChatId = switching ? null : d.activeChatIdRef.current;
-    if (switching) d.setActiveChatId(null);
+    // Empty thread = new topic. Ignore a stale activeChatIdRef (startNewTopic clears
+    // state async; ref can lag until the next render — trace 612adf0b).
+    const targetChatId =
+      switching || d.messages.length === 0 ? null : d.activeChatIdRef.current;
+    if (switching || d.messages.length === 0) {
+      d.activeChatIdRef.current = null;
+      d.setActiveChatId(null);
+    }
 
-    d.setInput("");
+    const priorMessages = switching || d.messages.length === 0 ? [] : d.messages;
     d.setLoading(true);
     const images = await d.uploadMessageImages();
     d.clearPendingImages();

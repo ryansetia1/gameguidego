@@ -15,6 +15,9 @@ import { guideRetrievalModeToApi } from "@/lib/guide-retrieval-mode.js";
 import { buildBundlePrefsBody } from "@/lib/guide-card-ui.js";
 import { coerceHighlights, coerceSpoilers } from "@/lib/highlights.js";
 import { coerceIllustration } from "@/lib/chat-messages.js";
+import { proxifyIllustration } from "@/lib/visual-image-proxy.js";
+import { saveTopicTitleById } from "@/lib/topic-title.js";
+import { upsertChatInList } from "@/lib/game-room.js";
 import { displayNameFromMetadata } from "@/lib/profile.js";
 import { getSupabase } from "@/lib/supabase";
 import type { ChatTurnDeps } from "./chat-turn-deps";
@@ -266,7 +269,7 @@ export async function executeChatTurn({
       spoilers: coerceSpoilers(data.spoilers),
       pipelineType,
       spoilerMajor: d.spoilerPrefs.major,
-      illustration: coerceIllustration(data.illustration),
+      illustration: proxifyIllustration(coerceIllustration(data.illustration)),
     });
     const nextMessages = buildTurnMessagesWithAssistant({
       priorMessages,
@@ -296,6 +299,24 @@ export async function executeChatTurn({
     const generatedFromApi =
       typeof data.topicTitle === "string" ? data.topicTitle.trim() : "";
     const persistOpts = generatedFromApi ? { title: generatedFromApi } : {};
+
+    if (generatedFromApi && activeId) {
+      saveTopicTitleById(activeId, generatedFromApi);
+      d.setChats((prev) => {
+        const existing = prev.find((row) => row.id === activeId);
+        return upsertChatInList(prev, {
+          ...(existing ?? {
+            id: activeId,
+            game: d.game,
+            platform: d.platform,
+            preferred_guide_url: d.preferredUrls[0] ?? "",
+          }),
+          id: activeId,
+          title: generatedFromApi,
+          updated_at: new Date().toISOString(),
+        });
+      });
+    }
 
     const serverPersistsAssistant = serverOwnsAssistantPersist({
       hasUser: Boolean(d.user),

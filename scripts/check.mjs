@@ -31,6 +31,7 @@ import {
   parseGeneratedTopicTitle,
   resolvedTopicTitle,
   saveTopicTitleById,
+  shouldShowTopicTitleSkeleton,
   titleFromMessages,
   topicTitleForPersist,
   truncateTitle,
@@ -167,6 +168,7 @@ import {
   derivePersistContext,
   lastUserTurnIndex,
   pairMessagesIntoTurns,
+  mergeAssistantFieldsFromLegacy,
   pickRicherThread,
   priorMessagesForRegen,
   threadReadyForAssistantMerge,
@@ -220,9 +222,11 @@ import {
 } from "../lib/player-memory-pins.js";
 import {
   buildVisualSearchQuery,
+  extractVisualSubject,
   isVisualLookupQuestion,
   pickBestSerperImage,
 } from "../lib/visual-search.js";
+import { proxifyIllustration, visualImageProxyUrl } from "../lib/visual-image-proxy.js";
 import { coerceIllustration } from "../lib/chat-messages.js";
 
 // System instruction carries the persona + safety rules.
@@ -1202,13 +1206,29 @@ assert.equal(
         game: "FF8",
         platform: "PS1",
         preferred_guide_url: "",
-        updated_at: "2026-01-03T00:00:00.000Z",
+        updated_at: new Date().toISOString(),
         title: "New topic",
       },
     ],
     [],
   ).length,
   1,
+);
+assert.equal(
+  mergeChatsFromServer(
+    [
+      {
+        id: "stale-local",
+        game: "FF8",
+        platform: "PS1",
+        preferred_guide_url: "",
+        updated_at: "2020-01-01T00:00:00.000Z",
+        title: "Deleted topic",
+      },
+    ],
+    [{ id: "remote", game: "Hades", platform: "PC", preferred_guide_url: "", updated_at: "2026-01-03T00:00:00.000Z" }],
+  ).some((row) => row.id === "stale-local"),
+  false,
 );
 assert.equal(isTopicColumnDbError({ message: 'column "title" does not exist' }), true);
 assert.equal(isTopicColumnDbError({ message: "network error" }), false);
@@ -1546,6 +1566,21 @@ assert.equal(persistRows[0].body.content, "old");
 assert.equal(persistRows[1].body.content, "answer");
 assert.equal(persistRows[1].trace_id, "trace-1");
 
+const illustrationBody = {
+  content: "answer",
+  sources: [],
+  illustration: {
+    url: "/api/visual-image?url=https%3A%2F%2Fexample.com%2Fa.png",
+    alt: "Dry Bowser",
+    sourceUrl: "https://example.com/wiki/Dry_Bowser",
+  },
+};
+const illustrationRows = variantRowsFromPersistedAssistant(
+  { role: "assistant", ...illustrationBody },
+  "trace-2",
+);
+assert.equal(illustrationRows[0]?.body.illustration?.alt, "Dry Bowser");
+
 const legacyRich = [
   { role: "user", content: "q" },
   {
@@ -1571,6 +1606,20 @@ assert.equal(
   false,
 );
 assert.equal(shouldApplySyncedMessages(legacyRich, legacyRich), false);
+assert.equal(
+  shouldApplySyncedMessages(
+    [
+      { role: "user", content: "q" },
+      {
+        role: "assistant",
+        content: "answer",
+        illustration: { url: "/api/visual-image?url=x", alt: "Sprite" },
+      },
+    ],
+    [{ role: "user", content: "q" }, { role: "assistant", content: "answer" }],
+  ),
+  false,
+);
 
 const regenPrior = priorMessagesForRegen([{ role: "user", content: "q" }], {
   role: "user",
@@ -1929,6 +1978,25 @@ assert.equal(
   false,
 );
 assert.equal(
+  shouldShowTopicTitleSkeleton({
+    messages: [{ role: "user", content: "What does Ifrit look like?" }],
+    loading: true,
+    title: "What does Ifrit look like?",
+  }),
+  true,
+);
+assert.equal(
+  shouldShowTopicTitleSkeleton({
+    messages: [
+      { role: "user", content: "What does Ifrit look like?" },
+      { role: "assistant", content: "A fire summon." },
+    ],
+    loading: false,
+    title: "Ifrit appearance",
+  }),
+  false,
+);
+assert.equal(
   topicTitleForPersist("My custom label", [{ role: "user", content: "Best GF setup?" }], "GF junction"),
   "My custom label",
 );
@@ -2055,8 +2123,22 @@ assert.equal(loadTopicSpoilerPrefs({ title: "x" }, "ZZZ-no-prefs").major, false)
 assert.equal(isVisualLookupQuestion("magic powder itu kaya gimana sih?"), true);
 assert.equal(isVisualLookupQuestion("where do I get magic powder?"), false);
 assert.equal(
+  extractVisualSubject(
+    "Bentuknya yang kaya gimana sih magic powder itu?",
+    "Describe the appearance of the Magic Powder item. This item is obtained from the Witch's Hut after bringing her a Toadstool from Mysterious Forest.",
+  ),
+  "Magic Powder",
+);
+assert.equal(
+  extractVisualSubject(
+    "ifrit itu wujudnya gimana sih? kmu ada gambarnya ga?",
+    "Describe the visual appearance of the Guardian Force Ifrit. Provide details on its physical characteristics.",
+  ),
+  "Ifrit",
+);
+assert.equal(
   buildVisualSearchQuery("Suikoden", "PS1", "magic powder"),
-  "Suikoden PS1 magic powder item icon",
+  "magic powder Suikoden PS1 sprite",
 );
 {
   const picked = pickBestSerperImage(
@@ -2079,10 +2161,86 @@ assert.equal(
   assert.match(picked.url, /magic-powder/);
   assert.equal(picked.sourceUrl, "https://suikoden.fandom.com/wiki/Magic_Powder");
 }
+{
+  const picked = pickBestSerperImage(
+    [
+      {
+        title: "Zelda walkthrough - how to get Magic Powder",
+        imageUrl: "https://www.rpgsite.net/images/guide-screenshot.jpg",
+        link: "https://www.rpgsite.net/feature/9018-zelda-links-awakening-how-to-get-past-the-raccoon",
+        domain: "rpgsite.net",
+      },
+      {
+        title: "Magic Powder - Zelda Wiki",
+        imageUrl: "https://static.wikia.nocookie.net/zelda/images/magic-powder.png",
+        link: "https://zelda.fandom.com/wiki/Magic_Powder",
+        domain: "zelda.fandom.com",
+      },
+    ],
+    { game: "Zelda Link's Awakening", topic: "Magic Powder" },
+  );
+  assert.ok(picked);
+  assert.match(picked.url, /wikia/);
+}
+{
+  const picked = pickBestSerperImage(
+    [
+      {
+        title: "The Legend of Zelda: Link's Awakening - Game Boy Color",
+        imageUrl: "https://www.gamestop.com/x.jpg",
+        link: "https://www.gamestop.com/video-games/retro-gaming/products/the-legend-of-zelda-links-awakening",
+        domain: "gamestop.com",
+      },
+      {
+        title: "Magic Powder - Zelda Wiki",
+        imageUrl: "https://static.wikia.nocookie.net/zelda/images/magic-powder.png",
+        link: "https://zelda.fandom.com/wiki/Magic_Powder",
+        domain: "zelda.fandom.com",
+      },
+    ],
+    { game: "The Legend of Zelda: Link's Awakening", topic: "Magic Powder" },
+  );
+  assert.ok(picked);
+  assert.match(picked.url, /wikia/);
+}
 assert.equal(
   coerceIllustration({ url: "https://example.com/a.png", alt: "Magic powder" })?.alt,
   "Magic powder",
 );
 assert.equal(coerceIllustration({ url: "ftp://bad" }), undefined);
+assert.ok(
+  coerceIllustration({
+    url: "/api/visual-image?url=https%3A%2F%2Fstatic.wikia.nocookie.net%2Fa.png",
+    alt: "Sprite",
+  }),
+);
+assert.match(
+  visualImageProxyUrl("https://static.wikia.nocookie.net/zelda/images/a.png"),
+  /^\/api\/visual-image\?url=/,
+);
+assert.match(
+  proxifyIllustration({
+    url: "https://static.wikia.nocookie.net/zelda/images/a.png",
+    alt: "Sprite",
+  })?.url,
+  /^\/api\/visual-image\?url=/,
+);
+{
+  const merged = mergeAssistantFieldsFromLegacy(
+    [
+      { role: "user", content: "q" },
+      { role: "assistant", content: "answer" },
+    ],
+    [
+      { role: "user", content: "q" },
+      {
+        role: "assistant",
+        content: "answer",
+        illustration: { url: "/api/visual-image?url=x", alt: "Sprite" },
+      },
+    ],
+  );
+  assert.equal(merged[1].illustration?.alt, "Sprite");
+}
 
 console.log("Self-check passed.");

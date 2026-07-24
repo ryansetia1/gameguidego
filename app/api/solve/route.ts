@@ -32,11 +32,13 @@ import {
 import { searchGuides, searchSerperImages, type SearchResult } from "@/lib/tavily";
 import {
   buildVisualSearchQuery,
+  extractVisualSubject,
   isVisualLookupQuestion,
   pickBestSerperImage,
 } from "@/lib/visual-search.js";
 import { logSolveJourneyToDb, sourcesForSolveLog, type SolveJourneyEntry } from "@/lib/solve-log";
 import { isAutoDerivedTopicTitle, topicTitleForPersist } from "@/lib/topic-title.js";
+import { proxifyIllustration } from "@/lib/visual-image-proxy.js";
 import { runWithTrace, logTraceEvent } from "@/lib/trace";
 
 export const runtime = "nodejs";
@@ -217,6 +219,7 @@ export async function POST(request: Request) {
           platform,
           userId,
           playerName,
+          historyLength: history.length,
         });
         try {
           let sources: SearchResult[] = [];
@@ -279,15 +282,19 @@ export async function POST(request: Request) {
           isVisualLookupQuestion(question);
         const visualIllustrationPromise = wantsVisualIllustration
           ? (async () => {
-              const visualQuery = buildVisualSearchQuery(game, platform, searchTopic);
+              const visualSubject = extractVisualSubject(question, searchTopic);
+              const visualQuery = buildVisualSearchQuery(game, platform, visualSubject);
               void logTraceEvent("visual_search_start", "Starting Serper image search", undefined, {
                 visualQuery,
+                visualSubject,
               });
               const hits = await searchSerperImages(visualQuery, undefined, 5);
-              const picked = pickBestSerperImage(hits, { game, topic: searchTopic });
+              const picked = pickBestSerperImage(hits, { game, platform, topic: visualSubject });
               void logTraceEvent("visual_search_complete", "Finished Serper image search", undefined, {
                 hitCount: hits.length,
                 picked: Boolean(picked),
+                pickedUrl: picked?.url,
+                pickedSource: picked?.sourceUrl,
               });
               return picked;
             })()
@@ -478,7 +485,7 @@ export async function POST(request: Request) {
         generationLatencyMs = Date.now() - generationStart;
         await logTraceEvent("generation_complete", `Answer generated in ${generationLatencyMs}ms`, generationLatencyMs, { pipelineType, sourceCount: sources.length });
         finalAnswer = answer;
-        const illustration = await visualIllustrationPromise;
+        const illustration = proxifyIllustration(await visualIllustrationPromise);
 
         let topicTitle: string | undefined;
         const isFirstTurn = history.length === 0;
@@ -504,7 +511,7 @@ export async function POST(request: Request) {
               shouldGenerate = isAutoDerivedTopicTitle(existingTitle, messages);
             } catch (titleCheckError) {
               console.error("Topic title check failed:", titleCheckError);
-              shouldGenerate = false;
+              shouldGenerate = true;
             }
           }
           if (shouldGenerate) {
