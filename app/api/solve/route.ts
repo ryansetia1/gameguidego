@@ -8,7 +8,7 @@ import {
 } from "@/lib/chat-persist.js";
 import { persistAssistantResponse, loadMessagesForServerMerge } from "@/lib/chat-thread-persist.js";
 import { getCachedSearch, setCachedSearch } from "@/lib/search-cache";
-import { censorSpoilers, resolveQuestion, summarize, type Turn } from "@/lib/replicate";
+import { censorSpoilers, generateTopicTitle, resolveQuestion, summarize, type Turn } from "@/lib/replicate";
 import {
   guideIngestHint,
   guideSearchFallbackHint,
@@ -29,8 +29,14 @@ import {
   loadMemoryForSolve,
   refreshPlayerMemory,
 } from "@/lib/player-memory-server";
-import { searchGuides, type SearchResult } from "@/lib/tavily";
+import { searchGuides, searchSerperImages, type SearchResult } from "@/lib/tavily";
+import {
+  buildVisualSearchQuery,
+  isVisualLookupQuestion,
+  pickBestSerperImage,
+} from "@/lib/visual-search.js";
 import { logSolveJourneyToDb, sourcesForSolveLog, type SolveJourneyEntry } from "@/lib/solve-log";
+import { isAutoDerivedTopicTitle, topicTitleForPersist } from "@/lib/topic-title.js";
 import { runWithTrace, logTraceEvent } from "@/lib/trace";
 
 export const runtime = "nodejs";
@@ -267,6 +273,26 @@ export async function POST(request: Request) {
         rewriteLatencyMs = Date.now() - rewriteStart;
         await logTraceEvent("rewrite_complete", "Resolved question into search topic", rewriteLatencyMs, { searchTopic });
 
+        const wantsVisualIllustration =
+          !images.length &&
+          Boolean(process.env.SERPER_API_KEY) &&
+          isVisualLookupQuestion(question);
+        const visualIllustrationPromise = wantsVisualIllustration
+          ? (async () => {
+              const visualQuery = buildVisualSearchQuery(game, platform, searchTopic);
+              void logTraceEvent("visual_search_start", "Starting Serper image search", undefined, {
+                visualQuery,
+              });
+              const hits = await searchSerperImages(visualQuery, undefined, 5);
+              const picked = pickBestSerperImage(hits, { game, topic: searchTopic });
+              void logTraceEvent("visual_search_complete", "Finished Serper image search", undefined, {
+                hitCount: hits.length,
+                picked: Boolean(picked),
+              });
+              return picked;
+            })()
+          : Promise.resolve(null);
+
         const hasSearchProvider = Boolean(
           process.env.TAVILY_API_KEY || process.env.SERPER_API_KEY,
         );
@@ -452,6 +478,72 @@ export async function POST(request: Request) {
         generationLatencyMs = Date.now() - generationStart;
         await logTraceEvent("generation_complete", `Answer generated in ${generationLatencyMs}ms`, generationLatencyMs, { pipelineType, sourceCount: sources.length });
         finalAnswer = answer;
+        const illustration = await visualIllustrationPromise;
+
+        let topicTitle: string | undefined;
+        const isFirstTurn = history.length === 0;
+        const authedChatId = chatId && authHeader ? chatId : null;
+        const authedAuthHeader = chatId && authHeader ? authHeader : null;
+        const authedSupabaseForTitle =
+          authedChatId && authedAuthHeader
+            ? createClient(
+                process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+                { global: { headers: { Authorization: authedAuthHeader } } },
+              )
+            : null;
+        if (isFirstTurn) {
+          let shouldGenerate = !authedSupabaseForTitle;
+          if (authedSupabaseForTitle && authedChatId) {
+            try {
+              const [{ data: chatRow }, messages] = await Promise.all([
+                authedSupabaseForTitle.from("chats").select("title").eq("id", authedChatId).maybeSingle(),
+                loadMessagesForServerMerge(authedSupabaseForTitle, authedChatId),
+              ]);
+              const existingTitle = (chatRow as { title?: string } | null)?.title?.trim() ?? "";
+              shouldGenerate = isAutoDerivedTopicTitle(existingTitle, messages);
+            } catch (titleCheckError) {
+              console.error("Topic title check failed:", titleCheckError);
+              shouldGenerate = false;
+            }
+          }
+          if (shouldGenerate) {
+            const generated = await generateTopicTitle({
+              game,
+              platform,
+              question,
+              answer: finalAnswer,
+              userId,
+            });
+            if (generated) {
+              if (authedSupabaseForTitle && authedChatId) {
+                try {
+                  const [{ data: chatRow }, messages] = await Promise.all([
+                    authedSupabaseForTitle
+                      .from("chats")
+                      .select("title")
+                      .eq("id", authedChatId)
+                      .maybeSingle(),
+                    loadMessagesForServerMerge(authedSupabaseForTitle, authedChatId),
+                  ]);
+                  const existingTitle = (chatRow as { title?: string } | null)?.title?.trim() ?? "";
+                  const safeTitle = topicTitleForPersist(existingTitle, messages, generated);
+                  if (safeTitle === generated) topicTitle = generated;
+                } catch (titleApplyError) {
+                  console.error("Topic title apply check failed:", titleApplyError);
+                }
+              } else {
+                topicTitle = generated;
+              }
+              if (topicTitle) {
+                await logTraceEvent("topic_title_complete", "Generated topic title", undefined, {
+                  topicTitle,
+                });
+              }
+            }
+          }
+        }
+
         // Dedupe by URL so multiple RAG chunks from the same page don't render as
         // "(section 1)"/"(section 2)" links that all open the exact same URL.
         const adminLogSources = sourcesForSolveLog(sources);
@@ -464,16 +556,37 @@ export async function POST(request: Request) {
           sources: finalSources,
           pipelineType,
           ...(guideHint ? { guideHint } : {}),
+          ...(illustration ? { illustration } : {}),
+          ...(topicTitle ? { topicTitle } : {}),
         });
         
         // Save to Supabase since we are generating in detached mode!
         if (chatId && authHeader) {
           try {
-            const supabase = createClient(
-              process.env.NEXT_PUBLIC_SUPABASE_URL!,
-              process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-              { global: { headers: { Authorization: authHeader } } },
-            );
+            const supabase =
+              authedSupabaseForTitle ??
+              createClient(
+                process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+                { global: { headers: { Authorization: authHeader } } },
+              );
+            if (topicTitle) {
+              const [{ data: chatRow }, titleMessages] = await Promise.all([
+                supabase.from("chats").select("title").eq("id", chatId).maybeSingle(),
+                loadMessagesForServerMerge(supabase, chatId),
+              ]);
+              const existingTitle = (chatRow as { title?: string } | null)?.title?.trim() ?? "";
+              const safeTitle = topicTitleForPersist(existingTitle, titleMessages, topicTitle);
+              if (safeTitle === topicTitle) {
+                const { error: titleError } = await supabase
+                  .from("chats")
+                  .update({ title: safeTitle, updated_at: new Date().toISOString() })
+                  .eq("id", chatId);
+                if (titleError) {
+                  console.error("Topic title save failed:", titleError);
+                }
+              }
+            }
             const messages = await loadMessagesForServerMerge(supabase, chatId);
             if (messages.length) {
               const variantBody = buildAssistantVariantBody({
@@ -483,6 +596,7 @@ export async function POST(request: Request) {
                 spoilers,
                 pipelineType,
                 spoilerMajor: spoilerPrefs.major,
+                illustration,
               });
 
               if (mergeAssistantIntoMessages(messages, variantBody)) {

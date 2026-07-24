@@ -7,9 +7,12 @@ import {
   REWRITE_INSTRUCTION,
   REWRITE_RAG_INSTRUCTION,
   SYSTEM_INSTRUCTION,
+  TOPIC_TITLE_INSTRUCTION,
   buildPrompt,
   buildRewritePrompt,
+  buildTopicTitlePrompt,
 } from "@/lib/prompt";
+import { parseGeneratedTopicTitle } from "@/lib/topic-title.js";
 import {
   SPOILER_CENSOR_INSTRUCTION,
   buildSpoilerCensorPrompt,
@@ -238,6 +241,67 @@ export type SummarizeInput = {
   signal?: AbortSignal;
   onProgress?: (msg: string, id?: string) => void;
 };
+
+export async function generateTopicTitle(input: {
+  game?: string;
+  platform?: string;
+  question: string;
+  answer: string;
+  userId?: string | null;
+  signal?: AbortSignal;
+}): Promise<string | null> {
+  const replicate = getReplicate();
+  const model = resolveModel();
+  if (!replicate || !model) return null;
+
+  const question = input.question.trim();
+  const answer = input.answer.trim();
+  if (!question || !answer) return null;
+
+  try {
+    const prompt = buildTopicTitlePrompt({
+      game: input.game,
+      platform: input.platform,
+      question,
+      answer,
+    });
+    const { output: rawOutput, durationMs, predictTimeMs, inputTokens, outputTokens } =
+      await runModel(
+        replicate,
+        model,
+        {
+          prompt,
+          system_instruction: TOPIC_TITLE_INSTRUCTION,
+          temperature: 0.2,
+          max_output_tokens: 512,
+          thinking_budget: 0,
+        },
+        10_000,
+        input.signal,
+      );
+
+    logLlmCall({
+      kind: "topic_title",
+      model,
+      system: TOPIC_TITLE_INSTRUCTION,
+      prompt,
+      response: rawOutput,
+      durationMs,
+      predictTimeMs,
+      inputTokens,
+      outputTokens,
+      game: input.game,
+      platform: input.platform,
+      userId: input.userId,
+    });
+
+    const title = parseGeneratedTopicTitle(rawOutput);
+    return title || null;
+  } catch (error) {
+    console.error("Topic title generation failed:", error);
+    return null;
+  }
+}
 
 export async function summarize(input: SummarizeInput): Promise<SummaryResult> {
   const replicate = getReplicate();

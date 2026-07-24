@@ -646,6 +646,14 @@ async function tieredDiscoverySearch(
 }
 
 const SERPER_URL = "https://google.serper.dev/search";
+const SERPER_IMAGES_URL = "https://google.serper.dev/images";
+
+export type SerperImageResult = {
+  title: string;
+  imageUrl: string;
+  link?: string;
+  domain?: string;
+};
 
 // Map Serper "organic" results into our SearchResult shape (snippet-only; Serper
 // has no page extraction). Score is a synthetic rank so downstream trimming works.
@@ -715,6 +723,76 @@ async function searchSerper(
   signal?: AbortSignal,
 ): Promise<SearchResult[]> {
   return (await serperQuery(apiKey, query, signal)).slice(0, 3);
+}
+
+function mapSerperImages(payload: unknown): SerperImageResult[] {
+  const images =
+    payload && typeof payload === "object" && "images" in payload
+      ? (payload.images as unknown)
+      : null;
+  if (!Array.isArray(images)) return [];
+
+  return images.flatMap((item): SerperImageResult[] => {
+    if (!item || typeof item !== "object") return [];
+    const imageUrl =
+      typeof (item as { imageUrl?: unknown }).imageUrl === "string"
+        ? (item as { imageUrl: string }).imageUrl.trim()
+        : "";
+    if (!imageUrl.startsWith("http")) return [];
+    try {
+      const url = new URL(imageUrl);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return [];
+    } catch {
+      return [];
+    }
+
+    const title =
+      typeof (item as { title?: unknown }).title === "string"
+        ? cleanSnippet((item as { title: string }).title)
+        : "";
+    const link =
+      typeof (item as { link?: unknown }).link === "string"
+        ? (item as { link: string }).link
+        : undefined;
+    const domain =
+      typeof (item as { domain?: unknown }).domain === "string"
+        ? (item as { domain: string }).domain
+        : undefined;
+    return [{ title, imageUrl, ...(link ? { link } : {}), ...(domain ? { domain } : {}) }];
+  });
+}
+
+/** Google Images via Serper.dev. Returns [] when unconfigured or on any failure. */
+export async function searchSerperImages(
+  query: string,
+  signal?: AbortSignal,
+  num = 5,
+): Promise<SerperImageResult[]> {
+  const apiKey = process.env.SERPER_API_KEY;
+  if (!apiKey || !query.trim()) return [];
+
+  try {
+    const response = await fetch(SERPER_IMAGES_URL, {
+      method: "POST",
+      headers: { "X-API-KEY": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ q: query, num }),
+      signal: combineSignal(12_000, signal),
+    });
+    if (!response.ok) {
+      const detail = await tavilyResponseDetail(response);
+      logTavily("search", `Serper images HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
+      return [];
+    }
+    return mapSerperImages(await response.json()).slice(0, num);
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    logTavily(
+      "search",
+      error instanceof Error ? error.message : "Serper images failed",
+      { query: query.slice(0, 120) },
+    );
+    return [];
+  }
 }
 
 /**

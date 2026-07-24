@@ -414,6 +414,26 @@ export function MessageList({
             ref={index === lastGuideIndex ? lastGuideRef : undefined}
           >
             <AnswerBody text={message.content} />
+            {message.illustration && (
+              <figure className="answer-illustration">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  className="answer-illustration-image"
+                  src={message.illustration.url}
+                  alt={message.illustration.alt}
+                  loading="lazy"
+                  onClick={() => onOpenLightbox([message.illustration!.url], 0)}
+                  style={{ cursor: "zoom-in" }}
+                />
+                {message.illustration.sourceUrl ? (
+                  <figcaption className="answer-illustration-caption">
+                    <a href={message.illustration.sourceUrl} target="_blank" rel="noreferrer">
+                      Reference image
+                    </a>
+                  </figcaption>
+                ) : null}
+              </figure>
+            )}
             {message.spoilers && spoilerMajor && message.spoilers.length > 0 && (
               <div className="spoiler-reveals">
                 {message.spoilers.map((item, i) => (

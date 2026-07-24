@@ -6,6 +6,12 @@ export type Source = {
   url: string;
 };
 
+export type Illustration = {
+  url: string;
+  alt: string;
+  sourceUrl?: string;
+};
+
 /** Client retry payload cached from a dropped solve stream. */
 export type RetryContext = {
   searchTopic?: string;
@@ -24,6 +30,7 @@ export type Message = {
   highlights?: Highlight[];
   spoilers?: SpoilerReveal[];
   images?: string[];
+  illustration?: Illustration;
   pipelineType?: string;
   variants?: Omit<Message, "role" | "variants" | "activeVariantIndex">[];
   activeVariantIndex?: number;

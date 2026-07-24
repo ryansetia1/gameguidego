@@ -10,6 +10,7 @@ import {
   SYSTEM_INSTRUCTION,
   buildPrompt,
   buildRewritePrompt,
+  buildTopicTitlePrompt,
   trimImageResolvedSubject,
 } from "../lib/prompt.js";
 import { selectSources } from "../lib/rank.js";
@@ -25,10 +26,13 @@ import {
 } from "../lib/game-room.js";
 import {
   displayTopicTitle,
+  isAutoDerivedTopicTitle,
   loadTopicTitleById,
+  parseGeneratedTopicTitle,
   resolvedTopicTitle,
   saveTopicTitleById,
   titleFromMessages,
+  topicTitleForPersist,
   truncateTitle,
 } from "../lib/topic-title.js";
 import { coverStoragePath } from "../lib/image.js";
@@ -214,6 +218,12 @@ import {
   readStyleRecord,
   writeStyleRecord,
 } from "../lib/player-memory-pins.js";
+import {
+  buildVisualSearchQuery,
+  isVisualLookupQuestion,
+  pickBestSerperImage,
+} from "../lib/visual-search.js";
+import { coerceIllustration } from "../lib/chat-messages.js";
 
 // System instruction carries the persona + safety rules.
 assert.match(SYSTEM_INSTRUCTION, /untrusted data/);
@@ -1907,6 +1917,35 @@ assert.equal(mergedPins.answerLength, "short");
 assert.equal(writeStyleRecord(mergedPins, pinFixture.userPins).userPins.fields[0], "answerLength");
 
 assert.equal(truncateTitle("  How do I beat the first boss in this area?  ", 20), "How do I beat the f…");
+assert.equal(parseGeneratedTopicTitle('{"title":"GF junction build"}'), "GF junction build");
+assert.equal(parseGeneratedTopicTitle("```json\n{\"title\":\"Boss Diablos\"}\n```"), "Boss Diablos");
+assert.equal(isAutoDerivedTopicTitle("", [{ role: "user", content: "Best GF setup?" }]), true);
+assert.equal(
+  isAutoDerivedTopicTitle("Best GF setup?", [{ role: "user", content: "Best GF setup?" }]),
+  true,
+);
+assert.equal(
+  isAutoDerivedTopicTitle("My custom label", [{ role: "user", content: "Best GF setup?" }]),
+  false,
+);
+assert.equal(
+  topicTitleForPersist("My custom label", [{ role: "user", content: "Best GF setup?" }], "GF junction"),
+  "My custom label",
+);
+assert.equal(
+  topicTitleForPersist("Best GF setup?", [{ role: "user", content: "Best GF setup?" }], "GF junction"),
+  "GF junction",
+);
+assert.equal(
+  topicTitleForPersist("", [{ role: "user", content: "Best GF setup?" }], ""),
+  "Best GF setup?",
+);
+assert.match(buildTopicTitlePrompt({
+  game: "FF8",
+  platform: "PC",
+  question: "Best GF junction?",
+  answer: "Use Str-J.",
+}), /Best GF junction/);
 assert.equal(displayTopicTitle(""), "Untitled topic");
 assert.equal(
   titleFromMessages([{ role: "user", content: "Best GF junction setup?" }]),
@@ -2012,5 +2051,38 @@ assert.equal(loadTopicSpoilerPrefs({ title: "x" }, "ZZZ-no-prefs").major, false)
   saveTopicSpoilerMajorById("chat-1", true);
   assert.equal(loadTopicSpoilerPrefs({ id: "chat-1", title: "x" }, "FF8").major, true);
 }
+
+assert.equal(isVisualLookupQuestion("magic powder itu kaya gimana sih?"), true);
+assert.equal(isVisualLookupQuestion("where do I get magic powder?"), false);
+assert.equal(
+  buildVisualSearchQuery("Suikoden", "PS1", "magic powder"),
+  "Suikoden PS1 magic powder item icon",
+);
+{
+  const picked = pickBestSerperImage(
+    [
+      {
+        title: "Random meme",
+        imageUrl: "https://example.com/noise.jpg",
+        domain: "example.com",
+      },
+      {
+        title: "Suikoden magic powder item icon",
+        imageUrl: "https://static.wikia.nocookie.net/suikoden/images/magic-powder.png",
+        link: "https://suikoden.fandom.com/wiki/Magic_Powder",
+        domain: "suikoden.fandom.com",
+      },
+    ],
+    { game: "Suikoden", topic: "magic powder" },
+  );
+  assert.ok(picked);
+  assert.match(picked.url, /magic-powder/);
+  assert.equal(picked.sourceUrl, "https://suikoden.fandom.com/wiki/Magic_Powder");
+}
+assert.equal(
+  coerceIllustration({ url: "https://example.com/a.png", alt: "Magic powder" })?.alt,
+  "Magic powder",
+);
+assert.equal(coerceIllustration({ url: "ftp://bad" }), undefined);
 
 console.log("Self-check passed.");

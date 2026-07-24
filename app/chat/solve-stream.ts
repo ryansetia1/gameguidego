@@ -1,4 +1,4 @@
-import type { RetryContext } from "./types";
+import type { Illustration, RetryContext } from "./types";
 
 export type SolveStreamPayload = {
   answer: string;
@@ -7,6 +7,8 @@ export type SolveStreamPayload = {
   spoilers?: unknown;
   pipelineType?: string;
   guideHint?: string;
+  illustration?: Illustration;
+  topicTitle?: string;
 };
 
 export type SolveStreamCallbacks = {

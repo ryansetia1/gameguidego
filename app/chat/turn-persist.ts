@@ -11,7 +11,7 @@ import {
   syncSharedMetaToLocalGames,
   upsertChatInList,
 } from "@/lib/game-room.js";
-import { saveTopicTitleById, titleFromMessages } from "@/lib/topic-title.js";
+import { saveTopicTitleById, topicTitleForPersist } from "@/lib/topic-title.js";
 import { topicSpoilerPayload } from "@/lib/spoiler-prefs.js";
 import type { Chat } from "@/lib/supabase";
 import { getSupabase } from "@/lib/supabase";
@@ -101,13 +101,14 @@ export function createTurnPersist(depsRef: RefObject<ChatTurnDeps>) {
     const syncMode = options.sync ?? "tail";
     if (d.temporary) return null;
     const supabase = getSupabase();
-    const derivedTitle =
-      options.title?.trim() ||
-      titleFromMessages(nextMessages) ||
-      "";
+    const explicitTitle = options.title?.trim() || "";
 
     if (!supabase || !d.user) {
       const id = targetChatId ?? crypto.randomUUID();
+      const existingTitle = targetChatId
+        ? (loadLocalGames().find((row) => row.id === targetChatId)?.title?.trim() ?? "")
+        : "";
+      const resolvedTitle = topicTitleForPersist(existingTitle, nextMessages, explicitTitle);
       const sharedMeta = {
         ...guideUrlsPayload(d.preferredUrls),
         cover_url: d.cover.startsWith("blob:") ? "" : d.cover,
@@ -118,7 +119,7 @@ export function createTurnPersist(depsRef: RefObject<ChatTurnDeps>) {
         game: d.game,
         platform: d.platform,
         ...sharedMeta,
-        title: derivedTitle,
+        title: resolvedTitle,
         ...topicSpoilerPayload(d.topicSpoilerMajor),
         messages: nextMessages,
         updated_at: new Date().toISOString(),
@@ -136,11 +137,11 @@ export function createTurnPersist(depsRef: RefObject<ChatTurnDeps>) {
       cover_url: coverUrl,
       release_year: d.releaseYear,
     };
-    const payload = {
+    let resolvedTitle = topicTitleForPersist("", nextMessages, explicitTitle);
+    const payload: Record<string, unknown> = {
       game: d.game,
       platform: d.platform,
       ...sharedMeta,
-      title: derivedTitle,
       ...topicSpoilerPayload(d.topicSpoilerMajor),
       messages: nextMessages,
       updated_at: new Date().toISOString(),
@@ -155,14 +156,18 @@ export function createTurnPersist(depsRef: RefObject<ChatTurnDeps>) {
           .maybeSingle();
         if (!titleRes.error) {
           const row = titleRes.data as { title?: string } | null;
-          if (row?.title?.trim()) payload.title = row.title;
+          const existing = row?.title?.trim() ?? "";
+          resolvedTitle = topicTitleForPersist(existing, nextMessages, explicitTitle);
+          payload.title = resolvedTitle;
+        } else if (!explicitTitle) {
+          payload.title = topicTitleForPersist("", nextMessages, "");
         }
         let { error: updateError } = await supabase
           .from("chats")
           .update(payload)
           .eq("id", targetChatId);
         if (updateError && isTopicColumnDbError(updateError)) {
-          if (derivedTitle) saveTopicTitleById(targetChatId, derivedTitle);
+          if (resolvedTitle) saveTopicTitleById(targetChatId, resolvedTitle);
           ({ error: updateError } = await supabase
             .from("chats")
             .update(chatPayloadWithoutTopicColumns(payload))
@@ -176,11 +181,12 @@ export function createTurnPersist(depsRef: RefObject<ChatTurnDeps>) {
         return targetChatId;
       }
       const newId = crypto.randomUUID();
+      payload.title = resolvedTitle;
       let { error: insertError } = await supabase
         .from("chats")
         .insert({ ...payload, id: newId, user_id: d.user.id });
       if (insertError && isTopicColumnDbError(insertError)) {
-        if (derivedTitle) saveTopicTitleById(newId, derivedTitle);
+        if (resolvedTitle) saveTopicTitleById(newId, resolvedTitle);
         ({ error: insertError } = await supabase.from("chats").insert({
           ...chatPayloadWithoutTopicColumns(payload),
           id: newId,

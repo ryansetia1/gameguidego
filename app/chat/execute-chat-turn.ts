@@ -14,6 +14,7 @@ import { solveTurnToast } from "@/lib/guide-hints.js";
 import { guideRetrievalModeToApi } from "@/lib/guide-retrieval-mode.js";
 import { buildBundlePrefsBody } from "@/lib/guide-card-ui.js";
 import { coerceHighlights, coerceSpoilers } from "@/lib/highlights.js";
+import { coerceIllustration } from "@/lib/chat-messages.js";
 import { displayNameFromMetadata } from "@/lib/profile.js";
 import { getSupabase } from "@/lib/supabase";
 import type { ChatTurnDeps } from "./chat-turn-deps";
@@ -38,7 +39,7 @@ export type RunTurnFn = (
 type PersistFn = (
   nextMessages: Message[],
   targetChatId: string | null,
-  options?: { sync?: ThreadSyncMode },
+  options?: { sync?: ThreadSyncMode; title?: string },
 ) => Promise<string | null>;
 
 type ExecuteChatTurnParams = {
@@ -265,6 +266,7 @@ export async function executeChatTurn({
       spoilers: coerceSpoilers(data.spoilers),
       pipelineType,
       spoilerMajor: d.spoilerPrefs.major,
+      illustration: coerceIllustration(data.illustration),
     });
     const nextMessages = buildTurnMessagesWithAssistant({
       priorMessages,
@@ -290,6 +292,10 @@ export async function executeChatTurn({
       if (finalToast) d.setToast(finalToast);
       else if (ingestResult?.hint) d.setToast(ingestResult.hint);
     }
+
+    const generatedFromApi =
+      typeof data.topicTitle === "string" ? data.topicTitle.trim() : "";
+    const persistOpts = generatedFromApi ? { title: generatedFromApi } : {};
 
     const serverPersistsAssistant = serverOwnsAssistantPersist({
       hasUser: Boolean(d.user),
@@ -320,16 +326,16 @@ export async function executeChatTurn({
               d.setMessages(syncedMessages);
             }
           } else {
-            await persistChat(nextMessages, syncChatId);
+            await persistChat(nextMessages, syncChatId, persistOpts);
           }
           void d.loadChats();
         })();
       } else {
-        await persistChat(nextMessages, activeId);
+        await persistChat(nextMessages, activeId, persistOpts);
         void d.loadChats();
       }
     } else {
-      await persistChat(nextMessages, activeId);
+      await persistChat(nextMessages, activeId, persistOpts);
       void d.loadChats();
     }
     if (activeId) d.activeChatIdRef.current = activeId;

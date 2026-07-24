@@ -2902,6 +2902,31 @@ details.sources small {
   display: block;
 }
 
+/* Reference image on an assistant answer (Serper visual lookup) */
+.answer-illustration {
+  margin-top: 10px;
+  max-width: 220px;
+}
+
+.answer-illustration-image {
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  border: 1.5px solid var(--ink);
+  background: var(--paper);
+  display: block;
+}
+
+.answer-illustration-caption {
+  margin-top: 4px;
+  font-size: 0.72rem;
+}
+
+.answer-illustration-caption a {
+  color: var(--ink-muted);
+  text-decoration: underline;
+}
+
 /* Composer attach menu + pending previews */
 .composer-attach-wrap {
   position: relative;

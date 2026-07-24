@@ -13,7 +13,14 @@ const LOG_PATH =
 const MAX_ENTRIES = 10;
 
 export type LlmLogEntry = {
-  kind: "rewrite" | "summarize" | "censor" | "embed_index" | "embed_query" | "memory_summarize";
+  kind:
+    | "rewrite"
+    | "summarize"
+    | "censor"
+    | "embed_index"
+    | "embed_query"
+    | "memory_summarize"
+    | "topic_title";
   model: string;
   system: string;
   prompt: string;
@@ -56,20 +63,23 @@ export function logLlmCall(entry: LlmLogEntry): void {
     })();
   }
 
-  const dbEntry: LlmDbLogEntry = {
-    kind: entry.kind,
-    model: entry.model,
-    system: entry.system,
-    prompt: entry.prompt,
-    response: entry.response,
-    inputTokens: entry.inputTokens,
-    outputTokens: entry.outputTokens,
-    durationMs: entry.durationMs,
-    predictTimeMs: entry.predictTimeMs,
-    game: entry.game,
-    platform: entry.platform,
-    userId: entry.userId,
-    traceId: entry.traceId ?? getTraceId() ?? null,
-  };
-  void logLlmCallToDb(dbEntry);
+  // ponytail: topic_title is file-log only until llm_calls kind check is extended.
+  if (entry.kind !== "topic_title") {
+    const dbEntry: LlmDbLogEntry = {
+      kind: entry.kind,
+      model: entry.model,
+      system: entry.system,
+      prompt: entry.prompt,
+      response: entry.response,
+      inputTokens: entry.inputTokens,
+      outputTokens: entry.outputTokens,
+      durationMs: entry.durationMs,
+      predictTimeMs: entry.predictTimeMs,
+      game: entry.game,
+      platform: entry.platform,
+      userId: entry.userId,
+      traceId: entry.traceId ?? getTraceId() ?? null,
+    };
+    void logLlmCallToDb(dbEntry);
+  }
 }

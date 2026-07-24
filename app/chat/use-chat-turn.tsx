@@ -215,6 +215,7 @@ export function useChatTurn(deps: ChatTurnDeps) {
         highlights: variant.highlights,
         spoilers: variant.spoilers,
         pipelineType: variant.pipelineType,
+        illustration: variant.illustration,
         activeVariantIndex: variantIndex,
       };
 

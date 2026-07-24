@@ -418,6 +418,7 @@ do not sync to the cloud or use Storage uploads.
   `lib/replicate.ts#runModel` — Gemini reports usage there, not in `metrics`).
   `game`/`platform`/`user_id` are logged on every call (client sends `userId`;
   validated as a UUID in `/api/solve`). Kinds: `rewrite`, `summarize`, `censor`,
+  `topic_title` (file log only until `llm_calls` kind check is extended),
   plus `embed_index` / `embed_query` from `lib/embed-log.ts` (guide ingest batches
   and per-turn RAG query embeds, including cache hits). File tail in
   `llm-log.json` (dev / `LLM_LOG=1`, async writes to avoid blocking the event
@@ -471,6 +472,9 @@ do not sync to the cloud or use Storage uploads.
   `db/chat-topics.sql`). Cover art and preferred guides are shared across all
   topics in the same room (write-time sync via `lib/game-room.js#syncRoomSharedMeta`).
   Sidebar/carousel list one row per room; tap opens the topic list (`app/chat/topic-list.tsx`).
+  **Topic title:** first persist uses a truncated first question (`lib/topic-title.js`);
+  after the first answer `/api/solve` runs `generateTopicTitle` (Gemini via
+  `lib/replicate.ts`) and overwrites auto-derived titles only (user renames are kept).
   Pre-migration installs without `title`/`spoiler_major` columns fall back to
   `gg:topic-title` / `gg:topic-spoiler` localStorage keyed by chat id.
   `preferred_guide_url` (legacy first URL), `preferred_guide_urls` (text[]; see
@@ -725,8 +729,11 @@ The following Tier 3 cleanup tasks were deliberately skipped to prioritize stabi
   RAG chunks; (4) shorten the RAG rewrite cap in `resolveQuestion` (`forRag`
   `maxChars` / `REWRITE_RAG_INSTRUCTION` word limit). Do not remove the SQL
   `LIMIT` or send unbounded `guide_chunks` rows to `summarize`.
-- Every turn runs two sequential Gemini calls (`resolveQuestion` then
-  `summarize`). A preferred-guide RAG turn adds **one Cohere rerank HTTP call only
+- Every turn runs at least two sequential Gemini calls (`resolveQuestion` then
+  `summarize`). The **first turn** of a new topic adds a third (`generateTopicTitle`
+  via `lib/replicate.ts`) when the stored title is still auto-derived from the
+  first question (`topicTitleForPersist` / `isAutoDerivedTopicTitle` in
+  `lib/topic-title.js`). A preferred-guide RAG turn adds **one Cohere rerank HTTP call only
   when `COHERE_API_KEY` is set**; unset adds nothing and routes on cosine
   `GUIDE_HIT`. Web rewrite `max_output_tokens` ~200; preferred-guide RAG rewrite
   ~400 (`forRag`). Too tight a cap returns empty even with thinking off.
@@ -803,6 +810,9 @@ Server-only secrets (never expose via `NEXT_PUBLIC_`, never commit `.env.local`)
   via Extract. Enables supporting web search + guide picker).
 - `SERPER_API_KEY` (optional; Serper.dev fallback when Tavily **Search** fails or
   is unconfigured — snippet-only, **does not** replace Tavily Extract for ingest).
+  Also powers **visual item lookup** on appearance questions (`lib/visual-search.js`
+  → `searchSerperImages` / Google Images via `google.serper.dev/images`; one call
+  per visual-intent turn, fail-open).
 - `REPLICATE_MODEL` (optional, default `google/gemini-2.5-flash`).
 - `COHERE_API_KEY` (optional, server-only; its **presence** enables the Phase C
   preferred-guide reranker — no other flag. Unset = route on cosine `GUIDE_HIT`.
