@@ -67,6 +67,7 @@ import {
   buildGamefaqsDiscoveryBaseQueries,
   buildGamefaqsPartDiscoveryQueries,
   gamefaqsDiscoveryTerms,
+  gamefaqsPrintExtractUrl,
   parseGamefaqsFaqUrl,
   parseGamefaqsTocFromHtml,
   parseGamefaqsPagesFromUrls,
@@ -599,6 +600,17 @@ const suikodenIntro =
 const suikodenBundle = "https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674";
 assert.equal(parseGamefaqsFaqUrl(suikodenIntro)?.faqId, "80674");
 assert.equal(canonicalGamefaqsBundleUrl(suikodenIntro), suikodenBundle);
+assert.equal(
+  gamefaqsPrintExtractUrl(suikodenIntro),
+  `${suikodenIntro}?print=1`,
+  "GameFAQs ingest prefers printable FAQ view",
+);
+assert.equal(
+  gamefaqsPrintExtractUrl(`${suikodenIntro}?print=1`),
+  `${suikodenIntro}?print=1`,
+  "print=1 is idempotent",
+);
+assert.equal(gamefaqsPrintExtractUrl("https://example.com/guide"), null);
 assert.equal(normalizePreferredGuideUrl(suikodenIntro), suikodenBundle);
 assert.equal(isGamefaqsBundleUrl(suikodenBundle), true);
 assert.equal(isGamefaqsBundleUrl(suikodenIntro), false);

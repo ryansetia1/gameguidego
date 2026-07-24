@@ -308,7 +308,10 @@ do not sync to the cloud or use Storage uploads.
   Embedding model specs & migration checklist: [`docs/embedding-models.md`](docs/embedding-models.md).
 - `lib/tavily.ts`: `searchGuides(query)` orchestrates Tavily tiered search then a
   Serper.dev fallback; `extractGuidePage(url)` pulls full page text for RAG ingest
-  (**Tavily Extract only** — Serper cannot replace this); `discoverGuideLinks(...)`
+  (**Tavily Extract only** — Serper cannot replace this; GameFAQs ingest tries
+  `?print=1` first via `gamefaqsPrintExtractUrl`, then normal URL → advanced →
+  Wayback; discovery keeps the normal page for TOC links);
+  `discoverGuideLinks(...)`
   powers the guide picker (Tavily then Serper fallback). See provider fallback
   notes under Known limits.
 - `lib/search-cache.ts`: best-effort Supabase-backed cache of `searchGuides`

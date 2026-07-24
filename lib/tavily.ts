@@ -1,4 +1,5 @@
 import { cleanSnippet } from "@/lib/clean";
+import { gamefaqsPrintExtractUrl } from "@/lib/gamefaqs-bundle.js";
 import {
   buildGuideDiscoveryQuery,
   filterGuideDiscoveryResults,
@@ -236,9 +237,15 @@ export function looksLikeHub(rawUrl: string): boolean {
 }
 
 export function isBlockedGuideContent(text: string): boolean {
-  return /Social Media Cookies|Just a moment|challenges\.cloudflare|Enable JavaScript and cookies to continue|Please stand by, while we are checking your browser|Cloudflare Ray ID|cf-browser-verification|DDoS protection by Cloudflare/i.test(
+  // ponytail: do NOT match GameFAQs' normal "Social Media Cookies" footer — that
+  // rides on real guide extracts and was forcing needless Wayback replacements.
+  return /Just a moment|challenges\.cloudflare|Enable JavaScript and cookies to continue|Please stand by, while we are checking your browser|Cloudflare Ray ID|cf-browser-verification|DDoS protection by Cloudflare/i.test(
     text,
   );
+}
+
+function usableExtractContent(content: string | undefined): content is string {
+  return Boolean(content && content.length >= MIN_CONTENT && !isBlockedGuideContent(content));
 }
 
 const EXTRACT_BATCH_SIZE = 10;
@@ -340,6 +347,80 @@ function normalizeExtractUrls(rawUrls: string[], cap = EXTRACT_BATCH_SIZE): stri
   return urls;
 }
 
+/** ponytail: basic → advanced only (no Wayback). */
+async function extractBasicAdvanced(
+  urls: string[],
+  apiKey: string,
+  signal?: AbortSignal,
+  raw = false,
+): Promise<Map<string, string>> {
+  const out = await runTavilyExtract(urls, apiKey, signal, "basic", raw);
+  const missing = urls.filter((url) => !out.has(url));
+  if (!missing.length) return out;
+
+  const advanced = await runTavilyExtract(missing, apiKey, signal, "advanced", raw);
+  for (const [url, content] of advanced) out.set(url, content);
+  if (advanced.size) {
+    logTavily("extract", "advanced extract filled basic misses", {
+      recovered: advanced.size,
+      missing: missing.length,
+    });
+  }
+  return out;
+}
+
+/** ponytail: basic → advanced → Wayback on the caller's exact URLs. */
+async function extractWithWaybackFallback(
+  urls: string[],
+  apiKey: string,
+  signal?: AbortSignal,
+  raw = false,
+): Promise<Map<string, string>> {
+  const out = await extractBasicAdvanced(urls, apiKey, signal, raw);
+
+  const blockedUrls = urls.filter((url) => {
+    const content = out.get(url);
+    return content && isBlockedGuideContent(content);
+  });
+
+  if (!blockedUrls.length) return out;
+
+  void logTraceEvent(
+    "tavily_wayback_fallback",
+    `GameFAQs blocked ${blockedUrls.length} URLs, falling back to Wayback Machine`,
+    undefined,
+    { urlsCount: blockedUrls.length },
+  );
+  const waybackUrls = blockedUrls.map((url) => `https://web.archive.org/web/2/${url}`);
+  const waybackResults = await runTavilyExtract(waybackUrls, apiKey, signal, "basic", raw);
+
+  for (let i = 0; i < blockedUrls.length; i++) {
+    const originalUrl = blockedUrls[i];
+    const waybackUrl = waybackUrls[i];
+    const waybackContent = waybackResults.get(waybackUrl);
+
+    if (!waybackContent) {
+      void logTraceEvent(
+        "tavily_wayback_empty",
+        `Wayback Machine has no readable archive for ${originalUrl}`,
+        undefined,
+        { url: originalUrl },
+      );
+    } else if (isBlockedGuideContent(waybackContent)) {
+      void logTraceEvent(
+        "tavily_wayback_blocked",
+        `Wayback Machine archive for ${originalUrl} is also blocked or unreadable`,
+        undefined,
+        { url: originalUrl },
+      );
+    } else {
+      out.set(originalUrl, waybackContent);
+    }
+  }
+
+  return out;
+}
+
 /** ponytail: some GameFAQs pages fail basic extract; advanced is the upgrade path. */
 async function extractWithAdvancedFallback(
   urls: string[],
@@ -347,44 +428,44 @@ async function extractWithAdvancedFallback(
   signal?: AbortSignal,
   raw = false,
 ): Promise<Map<string, string>> {
-  const out = await runTavilyExtract(urls, apiKey, signal, "basic", raw);
-  let missing = urls.filter((url) => !out.has(url));
-  
-  if (missing.length) {
-    const advanced = await runTavilyExtract(missing, apiKey, signal, "advanced", raw);
-    for (const [url, content] of advanced) out.set(url, content);
-    if (advanced.size) {
-      logTavily("extract", "advanced extract filled basic misses", {
-        recovered: advanced.size,
-        missing: missing.length,
-      });
+  if (raw) {
+    return extractWithWaybackFallback(urls, apiKey, signal, raw);
+  }
+
+  const out = new Map<string, string>();
+  const printPairs = urls
+    .map((original) => ({ original, print: gamefaqsPrintExtractUrl(original) }))
+    .filter(
+      (pair): pair is { original: string; print: string } =>
+        Boolean(pair.print && pair.print !== pair.original),
+    );
+
+  if (printPairs.length) {
+    void logTraceEvent(
+      "tavily_gamefaqs_print",
+      `GameFAQs ingest trying ?print=1 for ${printPairs.length} URL(s)`,
+      undefined,
+      { count: printPairs.length },
+    );
+    const printFetched = await extractBasicAdvanced(
+      printPairs.map((pair) => pair.print),
+      apiKey,
+      signal,
+      raw,
+    );
+    for (const { original, print } of printPairs) {
+      const content = printFetched.get(print);
+      if (usableExtractContent(content)) out.set(original, content);
     }
   }
 
-  // Ponytail: fallback to Wayback Machine if Cloudflare blocked us
-  const blockedUrls = urls.filter(url => {
-    const content = out.get(url);
-    return content && isBlockedGuideContent(content);
-  });
+  const stillNeed = urls.filter((url) => !out.has(url));
+  if (!stillNeed.length) return out;
 
-  if (blockedUrls.length > 0) {
-    void logTraceEvent("tavily_wayback_fallback", `GameFAQs blocked ${blockedUrls.length} URLs, falling back to Wayback Machine`, undefined, { urlsCount: blockedUrls.length });
-    const waybackUrls = blockedUrls.map(url => `https://web.archive.org/web/2/${url}`);
-    const waybackResults = await runTavilyExtract(waybackUrls, apiKey, signal, "basic", raw);
-    
-    for (let i = 0; i < blockedUrls.length; i++) {
-      const originalUrl = blockedUrls[i];
-      const waybackUrl = waybackUrls[i];
-      const waybackContent = waybackResults.get(waybackUrl);
-      
-      if (!waybackContent) {
-        void logTraceEvent("tavily_wayback_empty", `Wayback Machine has no readable archive for ${originalUrl}`, undefined, { url: originalUrl });
-      } else if (isBlockedGuideContent(waybackContent)) {
-        void logTraceEvent("tavily_wayback_blocked", `Wayback Machine archive for ${originalUrl} is also blocked or unreadable`, undefined, { url: originalUrl });
-      } else {
-        out.set(originalUrl, waybackContent);
-      }
-    }
+  const normalFetched = await extractWithWaybackFallback(stillNeed, apiKey, signal, raw);
+  for (const url of stillNeed) {
+    const content = normalFetched.get(url);
+    if (content) out.set(url, content);
   }
 
   return out;
