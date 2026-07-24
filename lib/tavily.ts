@@ -68,48 +68,37 @@ const EXCLUDE_DOMAINS = [
 // Searched in order, stopping once enough results are collected. GameFAQs is the
 // primary source, then trusted text walkthrough providers, then forums, then the
 // open web as a last resort.
+const WALKTHROUGH_SITE_DOMAINS = [
+  "ign.com",
+  "gamespot.com",
+  "game8.co",
+  "powerpyx.com",
+  "fextralife.com",
+  "polygon.com",
+  "gamesradar.com",
+  "neoseeker.com",
+  "primagames.com",
+  "gameskinny.com",
+];
+
 const TIERS: string[][] = [
   ["gamefaqs.gamespot.com"],
-  [
-    "ign.com",
-    "gamespot.com",
-    "game8.co",
-    "powerpyx.com",
-    "fextralife.com",
-    "polygon.com",
-    "gamesradar.com",
-    "neoseeker.com",
-    "primagames.com",
-    "gameskinny.com",
-  ],
+  WALKTHROUGH_SITE_DOMAINS,
   ["reddit.com", "steamcommunity.com", "gamefaqs.gamespot.com"],
   [],
 ];
 
-// Guide picker only: GameFAQs is mixed with other text guides (often blocked or
-// missing for newer games). Do not stop until enough title-relevant hits.
+// Guide picker: same GameFAQs-first tier order as answer-time search; keeps
+// guideDiscoveryMatchesGame early-stop + title filter from the mixed-tier experiment.
 const DISCOVER_TIERS: string[][] = [
-  [
-    "gamefaqs.gamespot.com",
-    "ign.com",
-    "gamespot.com",
-    "game8.co",
-    "powerpyx.com",
-    "fextralife.com",
-    "polygon.com",
-    "gamesradar.com",
-    "neoseeker.com",
-    "primagames.com",
-    "gameskinny.com",
-    "gamerant.com",
-    "gamespew.com",
-  ],
+  ["gamefaqs.gamespot.com"],
+  WALKTHROUGH_SITE_DOMAINS,
   ["reddit.com", "steamcommunity.com"],
   [],
 ];
 
 // Hard cap on Tavily Search calls per guide-picker request (one call per tier).
-// ponytail: never add loops/retries above this; worst case = 3 basic searches.
+// ponytail: never add loops/retries above this; worst case = 4 advanced searches.
 const DISCOVER_MAX_TAVILY_CALLS = DISCOVER_TIERS.length;
 
 // Enough collected results to stop querying further tiers; final relevance
@@ -610,7 +599,7 @@ function mergeSearchTier(
   }
 }
 
-/** Guide-picker tiered search: mixed domains, relevance-aware early stop. */
+/** Guide-picker tiered search: GameFAQs-first tiers + relevance-aware early stop. */
 async function tieredDiscoverySearch(
   apiKey: string,
   query: string,
@@ -628,8 +617,7 @@ async function tieredDiscoverySearch(
     let tier: SearchResult[] = [];
     tavilyCalls += 1;
     try {
-      // Picker only needs URLs + snippets; basic is cheaper than advanced.
-      tier = await runSearch(apiKey, query, includeDomains, signal, 5, "basic");
+      tier = await runSearch(apiKey, query, includeDomains, signal, 5, "advanced");
     } catch (error) {
       failures += 1;
       if (!isAbortError(error)) {

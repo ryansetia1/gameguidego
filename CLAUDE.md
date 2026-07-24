@@ -312,7 +312,8 @@ do not sync to the cloud or use Storage uploads.
   `?print=1` first via `gamefaqsPrintExtractUrl`, then normal URL → advanced →
   Wayback; discovery keeps the normal page for TOC links);
   `discoverGuideLinks(...)`
-  powers the guide picker (Tavily then Serper fallback). See provider fallback
+  powers the guide picker (GameFAQs-first tiers, advanced Tavily search, then
+  Serper fallback; title-relevance filter kept). See provider fallback
   notes under Known limits.
 - `lib/search-cache.ts`: best-effort Supabase-backed cache of `searchGuides`
   output (`getCachedSearch`/`setCachedSearch`, 7-day TTL). Uses the shared
