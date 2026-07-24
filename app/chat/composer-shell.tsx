@@ -44,6 +44,10 @@ export type ComposerShellProps = {
   onOpenLightbox: (images: string[], index: number) => void;
   onToggleTemporary: () => void;
   onToggleSpoiler: () => void;
+  showGuideRetrievalToggles?: boolean;
+  guideRetrievalMode?: "default" | "skip" | "supplement";
+  onToggleSkipGuide?: () => void;
+  onToggleSupplementGuide?: () => void;
   onVoiceListeningChange: (listening: boolean) => void;
   onVoiceTranscript: (text: string) => void;
   onStopGeneration: () => void;
@@ -78,6 +82,10 @@ export function ComposerShell({
   onOpenLightbox,
   onToggleTemporary,
   onToggleSpoiler,
+  showGuideRetrievalToggles,
+  guideRetrievalMode,
+  onToggleSkipGuide,
+  onToggleSupplementGuide,
   onVoiceListeningChange,
   onVoiceTranscript,
   onStopGeneration,
@@ -229,6 +237,10 @@ export function ComposerShell({
             onToggleTemporary={() => void onToggleTemporary()}
             spoilerMajor={spoilerMajor}
             onToggleSpoiler={() => onToggleSpoiler()}
+            showGuideRetrievalToggles={showGuideRetrievalToggles}
+            guideRetrievalMode={guideRetrievalMode}
+            onToggleSkipGuide={onToggleSkipGuide}
+            onToggleSupplementGuide={onToggleSupplementGuide}
             onListeningChange={onVoiceListeningChange}
             onTranscript={onVoiceTranscript}
             onSelectImages={(files) => void onSelectImages(files)}

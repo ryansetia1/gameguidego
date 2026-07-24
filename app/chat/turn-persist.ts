@@ -171,7 +171,7 @@ export function createTurnPersist(depsRef: RefObject<ChatTurnDeps>) {
         if (updateError) throw updateError;
         await syncRoomSharedMeta(supabase, d.user.id, d.game, d.platform, sharedMeta);
         scheduleThreadSync(supabase, targetChatId, nextMessages, syncMode);
-        bumpChatInState(targetChatId, { ...payload, messages: nextMessages });
+        bumpChatInState(targetChatId, { id: targetChatId, ...payload, messages: nextMessages });
         void d.loadChats();
         return targetChatId;
       }
@@ -191,7 +191,7 @@ export function createTurnPersist(depsRef: RefObject<ChatTurnDeps>) {
       await syncRoomSharedMeta(supabase, d.user.id, d.game, d.platform, sharedMeta);
       d.setActiveChatId(newId);
       scheduleThreadSync(supabase, newId, nextMessages, syncMode);
-      bumpChatInState(newId, { ...payload, messages: nextMessages });
+      bumpChatInState(newId, { id: newId, ...payload, messages: nextMessages });
       void d.loadChats();
       return newId;
     } catch (caught) {

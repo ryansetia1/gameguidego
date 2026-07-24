@@ -868,10 +868,10 @@ large chat or persistence work:
 - [`docs/plan/rag-tuning-roadmap.md`](docs/plan/rag-tuning-roadmap.md): RAG quality
   research (chunk size, `RETRIEVE_K`, `GUIDE_HIT` calibration, reranker vs learned
   router). Phased backlog for the next preferred-guide upgrade; no runtime change yet.
-- [`docs/plan/guide-web-override.md`](docs/plan/guide-web-override.md): **Planned**
-  per-turn **Search web instead** toggle when a preferred guide is attached — skips RAG
-  for that message and runs tiered web search + model knowledge; guide stays on the card;
-  default OFF. Supersedes an earlier supplement draft (wrong intent).
+- [`docs/plan/guide-web-override.md`](docs/plan/guide-web-override.md): **Shipped**
+  composer toggles when a preferred guide is attached — **Search web instead**
+  (`skipPreferredGuide` / `web_skip_guide`) and **Also search web**
+  (`alsoSearchWeb` / `rag_supplemented`); default OFF; `lib/guide-retrieval-mode.js`.
 - [`docs/plan/image-character-recognition.md`](docs/plan/image-character-recognition.md):
   **Experimental (shipped, prompt-only):** vision character naming on image attachments.
   Worth trying in production; revert via `git revert` or manual `lib/prompt.js` rollback

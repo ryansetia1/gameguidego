@@ -20,6 +20,11 @@ type Props = {
   onToggleTemporary?: () => void;
   spoilerMajor?: boolean;
   onToggleSpoiler?: () => void;
+  /** Show guide retrieval toggles when a preferred guide is attached. */
+  showGuideRetrievalToggles?: boolean;
+  guideRetrievalMode?: "default" | "skip" | "supplement";
+  onToggleSkipGuide?: () => void;
+  onToggleSupplementGuide?: () => void;
   onTranscript: (text: string) => void;
   onListeningChange?: (listening: boolean) => void;
   onSelectImages: (files: FileList | null) => void;
@@ -40,6 +45,10 @@ export function ComposerExtras({
   onToggleTemporary,
   spoilerMajor = false,
   onToggleSpoiler,
+  showGuideRetrievalToggles,
+  guideRetrievalMode = "default",
+  onToggleSkipGuide,
+  onToggleSupplementGuide,
   onTranscript,
   onListeningChange,
   onSelectImages,
@@ -144,6 +153,46 @@ export function ComposerExtras({
                 <button type="button" role="menuitem" onClick={handleVoiceClick}>
                   Voice input
                 </button>
+              )}
+              {showGuideRetrievalToggles && (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="composer-extras-toggle"
+                    aria-pressed={guideRetrievalMode === "skip"}
+                    onClick={() => {
+                      onToggleSkipGuide?.();
+                      setMenuOpen(false);
+                      setMenuView("main");
+                    }}
+                  >
+                    Search web instead
+                    <span
+                      className={`composer-extras-state${guideRetrievalMode === "skip" ? " on" : ""}`}
+                    >
+                      {guideRetrievalMode === "skip" ? "On" : "Off"}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="composer-extras-toggle"
+                    aria-pressed={guideRetrievalMode === "supplement"}
+                    onClick={() => {
+                      onToggleSupplementGuide?.();
+                      setMenuOpen(false);
+                      setMenuView("main");
+                    }}
+                  >
+                    Also search web
+                    <span
+                      className={`composer-extras-state${guideRetrievalMode === "supplement" ? " on" : ""}`}
+                    >
+                      {guideRetrievalMode === "supplement" ? "On" : "Off"}
+                    </span>
+                  </button>
+                </>
               )}
               <button
                 type="button"

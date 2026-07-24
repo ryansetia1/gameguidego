@@ -73,6 +73,11 @@ import {
 } from "@/lib/local-games.js";
 import { steamAppIdFromCoverUrl, steamIdFromMetadata } from "@/lib/steam.js";
 import { dismissGuideNudge, isGuideNudgeDismissed } from "@/lib/guide-nudge.js";
+import {
+  loadGuideRetrievalMode,
+  saveGuideRetrievalMode,
+  toggleGuideRetrievalMode,
+} from "@/lib/guide-retrieval-mode.js";
 import { getSpeechRecognition } from "@/lib/voice.js";
 import {
   clearSessionDraft,
@@ -127,6 +132,9 @@ export default function Home() {
   const [game, setGame] = useState("");
   const [platform, setPlatform] = useState("");
   const [preferredUrls, setPreferredUrls] = useState<string[]>([]);
+  const [guideRetrievalMode, setGuideRetrievalMode] = useState<
+    "default" | "skip" | "supplement"
+  >("default");
   // Which optional section shows below the trigger row — only one at a time, so
   // toggling keeps the two triggers fixed in place instead of reflowing them.
   const [optPanel, setOptPanel] = useState<"guide" | "spoiler" | null>(null);
@@ -651,12 +659,20 @@ export default function Home() {
       "id, game, platform, preferred_guide_url, preferred_guide_urls, cover_url, release_year, title, spoiler_major, updated_at, messages";
     const legacySelect =
       "id, game, platform, preferred_guide_url, preferred_guide_urls, cover_url, release_year, updated_at, messages";
-    let result = await supabase.from("chats").select(fullSelect).order("updated_at", { ascending: false });
-    if (result.error) {
-      result = await supabase.from("chats").select(legacySelect).order("updated_at", { ascending: false });
+    const fullResult = await supabase
+      .from("chats")
+      .select(fullSelect)
+      .order("updated_at", { ascending: false });
+    if (!fullResult.error && fullResult.data) {
+      setChats((prev) => mergeChatsFromServer(prev, fullResult.data as Chat[]));
+      return;
     }
-    if (!result.error && result.data) {
-      setChats((prev) => mergeChatsFromServer(prev, result.data as Chat[]));
+    const legacyResult = await supabase
+      .from("chats")
+      .select(legacySelect)
+      .order("updated_at", { ascending: false });
+    if (!legacyResult.error && legacyResult.data) {
+      setChats((prev) => mergeChatsFromServer(prev, legacyResult.data as Chat[]));
     }
   }, []);
 
@@ -1008,6 +1024,28 @@ export default function Home() {
       updateGameSpoiler(true);
     }
   }, [spoilerPrefs.major, turnOffSpoilers, updateGameSpoiler]);
+
+  useEffect(() => {
+    setGuideRetrievalMode(loadGuideRetrievalMode());
+  }, []);
+
+  useEffect(() => {
+    saveGuideRetrievalMode(guideRetrievalMode);
+  }, [guideRetrievalMode]);
+
+  useEffect(() => {
+    if (preferredUrls.length === 0 && guideRetrievalMode !== "default") {
+      setGuideRetrievalMode("default");
+    }
+  }, [preferredUrls.length, guideRetrievalMode]);
+
+  const toggleSkipGuide = useCallback(() => {
+    setGuideRetrievalMode((prev) => toggleGuideRetrievalMode(prev, "skip"));
+  }, []);
+
+  const toggleSupplementGuide = useCallback(() => {
+    setGuideRetrievalMode((prev) => toggleGuideRetrievalMode(prev, "supplement"));
+  }, []);
 
   useEffect(() => {
     if (editingIndex === null) return;
@@ -1888,6 +1926,7 @@ export default function Home() {
     game,
     platform,
     preferredUrls,
+    guideRetrievalMode,
     cover,
     releaseYear,
     messages,
@@ -2451,6 +2490,10 @@ export default function Home() {
           onOpenLightbox={(images, index) => setLightboxState({ images, index })}
           onToggleTemporary={() => void toggleTemporary()}
           onToggleSpoiler={toggleEffectiveSpoiler}
+          showGuideRetrievalToggles={preferredUrls.length > 0}
+          guideRetrievalMode={guideRetrievalMode}
+          onToggleSkipGuide={toggleSkipGuide}
+          onToggleSupplementGuide={toggleSupplementGuide}
           onVoiceListeningChange={setVoiceListening}
           onVoiceTranscript={(text) =>
             setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))

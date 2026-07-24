@@ -104,8 +104,12 @@ function pipelineService(pipeline: string | null | undefined): string {
   switch (pipeline) {
     case "rag":
       return "Preferred guide RAG";
+    case "rag_supplemented":
+      return "Guide + web";
     case "web":
       return "Web search";
+    case "web_skip_guide":
+      return "Web search (guide skipped)";
     case "fallback_web":
       return "Web fallback";
     case "knowledge_only":

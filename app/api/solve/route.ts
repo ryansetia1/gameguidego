@@ -12,9 +12,12 @@ import { censorSpoilers, resolveQuestion, summarize, type Turn } from "@/lib/rep
 import {
   guideIngestHint,
   guideSearchFallbackHint,
+  guideSkippedForWebHint,
+  guideWebSupplementHint,
   GUIDE_WEB_KNOWLEDGE_FALLBACK_HINT,
   WEB_KNOWLEDGE_FALLBACK_HINT,
 } from "@/lib/guide-hints.js";
+import { coerceGuideRetrievalFlags } from "@/lib/guide-retrieval-mode.js";
 import { coerceGuideUrlsFromBody } from "@/lib/guide-urls.js";
 import { coerceBundlePrefsFromBody } from "@/lib/bundle-prefs.js";
 import { retrieveFromPreferredGuides } from "@/lib/guide-rag";
@@ -147,6 +150,7 @@ export async function POST(request: Request) {
   const userId = cleanUuid(record.userId);
   const bundlePrefs = coerceBundlePrefsFromBody(record.bundlePrefs);
   const chatId = cleanUuid(record.chatId);
+  const { skipPreferredGuide, alsoSearchWeb } = coerceGuideRetrievalFlags(record);
   const authHeader = request.headers.get("Authorization");
   const retryContext = record.retryContext as {
     searchTopic?: string;
@@ -221,10 +225,20 @@ export async function POST(request: Request) {
 
         sendEvent("status", { text: "Understanding your question..." });
         const rewriteStart = Date.now();
-        const forRag = preferredUrls.length > 0;
+        const useGuideRag = preferredUrls.length > 0 && !skipPreferredGuide;
+        const forRag = useGuideRag;
         // images are part of the query context now (vision-aware rewrite), so they
         // must key the cache too — else a text-only query gets served for a screenshot.
-        const rawInputs = JSON.stringify({ question, history, game, platform, forRag, images });
+        const rawInputs = JSON.stringify({
+          question,
+          history,
+          game,
+          platform,
+          forRag,
+          images,
+          skipPreferredGuide,
+          alsoSearchWeb,
+        });
         const rewriteCacheKey = `rewrite::${createHash("sha256").update(rawInputs).digest("hex")}`;
 
         let searchTopic = retryContext?.searchTopic || (await getCachedSearch(rewriteCacheKey)) as string | null;
@@ -266,6 +280,21 @@ export async function POST(request: Request) {
           sources = retryContext.sources;
           pipelineType = retryContext.pipelineType as SolveJourneyEntry["pipelineType"] || "knowledge_only";
           guideHint = retryContext.guideHint;
+        } else if (preferredUrls.length && skipPreferredGuide) {
+          if (hasSearchProvider) {
+            sendEvent("status", { text: "Searching the web..." });
+            void logTraceEvent("web_search_start", "Starting tiered web search (guide skipped)");
+            sources = await tieredWebSearch(searchQuery);
+            void logTraceEvent("web_search_complete", "Finished tiered web search", Date.now() - retrievalStart, {
+              sourceCount: sources.length,
+              skipPreferredGuide: true,
+            });
+            pipelineType = sources.length > 0 ? "web_skip_guide" : "knowledge_only";
+            if (sources.length > 0) guideHint = guideSkippedForWebHint();
+          } else {
+            pipelineType = "knowledge_only";
+            guideHint = GUIDE_WEB_KNOWLEDGE_FALLBACK_HINT;
+          }
         } else if (preferredUrls.length) {
           sendEvent("status", { text: "Searching your guide..." });
           rag = await retrieveFromPreferredGuides({
@@ -288,7 +317,18 @@ export async function POST(request: Request) {
               }) ?? undefined;
           }
 
-          if (rag?.skipWebSearch) {
+          if (rag?.skipWebSearch && alsoSearchWeb && hasSearchProvider) {
+            sendEvent("status", { text: "Searching the web..." });
+            void logTraceEvent("web_search_start", "Starting tiered web search (guide supplement)");
+            const web = await tieredWebSearch(searchQuery);
+            void logTraceEvent("web_search_complete", "Finished tiered web search", Date.now() - retrievalStart, {
+              sourceCount: web.length,
+              alsoSearchWeb: true,
+            });
+            sources = [...rag.sources, ...web];
+            pipelineType = web.length > 0 ? "rag_supplemented" : "rag";
+            if (web.length > 0) guideHint = guideWebSupplementHint();
+          } else if (rag?.skipWebSearch) {
             sources = rag.sources;
             pipelineType = "rag";
           } else if (rag) {
@@ -342,6 +382,8 @@ export async function POST(request: Request) {
         await logTraceEvent("retrieval_complete", "Finished gathering sources", retrievalLatencyMs, {
           sourceCount: sources.length,
           pipelineType,
+          skipPreferredGuide,
+          alsoSearchWeb,
           webSources: sources
             .filter((s) => !s.preferred)
             .map((s) => ({
@@ -374,6 +416,7 @@ export async function POST(request: Request) {
           playerName,
           playerMemory,
           userId,
+          webSupplement: pipelineType === "rag_supplemented",
           onProgress: (msg: string, id?: string) => {
             if (id) sendEvent("prediction_id", { id });
             sendEvent("status", { text: msg });

@@ -12,6 +12,7 @@ export type ChatTurnDeps = {
   game: string;
   platform: string;
   preferredUrls: string[];
+  guideRetrievalMode: "default" | "skip" | "supplement";
   cover: string;
   releaseYear: string;
   messages: Message[];

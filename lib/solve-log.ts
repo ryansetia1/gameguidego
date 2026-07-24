@@ -38,7 +38,13 @@ export type SolveJourneyEntry = {
   platform?: string | null;
   question: string;
   preferredUrls?: string[];
-  pipelineType: "rag" | "web" | "fallback_web" | "knowledge_only";
+  pipelineType:
+    | "rag"
+    | "rag_supplemented"
+    | "web"
+    | "web_skip_guide"
+    | "fallback_web"
+    | "knowledge_only";
   rewriteLatencyMs?: number;
   retrievalLatencyMs?: number;
   generationLatencyMs?: number;

@@ -12,6 +12,6 @@ they describe where the codebase is going, not necessarily what is shipped yet.
 | [image-character-recognition.md](./image-character-recognition.md) | **Experimental** | Prompt-only vision character naming — try in prod, revert if quality drops |
 | [user-memory.md](./user-memory.md) | **Experimental** | Opt-in player style memory — daily summarize, 5/10 tiers, profile UI |
 | [answer-satisfaction-signals.md](./answer-satisfaction-signals.md) | **Future** | Retry / feedback as answer-quality signals — phased experiment backlog |
-| [guide-web-override.md](./guide-web-override.md) | **Planned** | Per-turn **Search web instead** — skip preferred-guide RAG, web + knowledge only |
+| [guide-web-override.md](./guide-web-override.md) | **Shipped** | **Search web instead** + **Also search web** toggles when a preferred guide is attached |
 
 When a plan phase ships, update its status here and cross-link from `CLAUDE.md`.

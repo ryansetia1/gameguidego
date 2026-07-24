@@ -11,6 +11,7 @@ import {
   snapshotAssistantVariants,
 } from "@/lib/chat-messages.js";
 import { solveTurnToast } from "@/lib/guide-hints.js";
+import { guideRetrievalModeToApi } from "@/lib/guide-retrieval-mode.js";
 import { buildBundlePrefsBody } from "@/lib/guide-card-ui.js";
 import { coerceHighlights, coerceSpoilers } from "@/lib/highlights.js";
 import { displayNameFromMetadata } from "@/lib/profile.js";
@@ -214,6 +215,7 @@ export async function executeChatTurn({
           : "",
         userId: d.user?.id ?? null,
         bundlePrefs: buildBundlePrefsBody(guideUrls, d.guideBundleMeta),
+        ...guideRetrievalModeToApi(d.guideRetrievalMode),
         retryContext,
       }),
     });

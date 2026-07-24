@@ -79,11 +79,19 @@ import {
   guideIngestHint,
   guideIngestHintFromResponse,
   guideSearchFallbackHint,
+  guideSkippedForWebHint,
+  guideWebSupplementHint,
   GUIDE_WEB_KNOWLEDGE_FALLBACK_HINT,
   isPreferredGuideHint,
   solveTurnToast,
   WEB_KNOWLEDGE_FALLBACK_HINT,
 } from "../lib/guide-hints.js";
+import {
+  coerceGuideRetrievalFlags,
+  coerceGuideRetrievalMode,
+  guideRetrievalModeToApi,
+  toggleGuideRetrievalMode,
+} from "../lib/guide-retrieval-mode.js";
 import {
   bundleHasPendingPages,
   bundlePrefsAllFromUserMetadata,
@@ -482,9 +490,37 @@ assert.match(
 );
 assert.match(guideSearchFallbackHint(), /in your guide/i);
 assert.match(guideSearchFallbackHint(), /web search/i);
+assert.match(guideSkippedForWebHint(), /Skipped your guide/i);
+assert.match(guideWebSupplementHint(), /Also checked the web/i);
 assert.equal(isPreferredGuideHint(guideSearchFallbackHint()), true);
 assert.equal(isPreferredGuideHint(WEB_KNOWLEDGE_FALLBACK_HINT), false);
 assert.equal(isPreferredGuideHint("Couldn't read that guide. Try a different link or source."), true);
+assert.deepEqual(coerceGuideRetrievalFlags({ skipPreferredGuide: true, alsoSearchWeb: true }), {
+  skipPreferredGuide: true,
+  alsoSearchWeb: false,
+});
+assert.deepEqual(guideRetrievalModeToApi("supplement"), {
+  skipPreferredGuide: false,
+  alsoSearchWeb: true,
+});
+assert.equal(toggleGuideRetrievalMode("supplement", "skip"), "skip");
+assert.equal(toggleGuideRetrievalMode("skip", "supplement"), "supplement");
+assert.equal(coerceGuideRetrievalMode("nope"), "default");
+assert.equal(
+  solveTurnToast({
+    pipelineType: "web_skip_guide",
+    preferredUrls: ["upload://u/g.pdf"],
+  }),
+  guideSkippedForWebHint(),
+);
+assert.equal(
+  solveTurnToast({
+    pipelineType: "rag_supplemented",
+    preferredUrls: ["upload://u/g.pdf"],
+    guideHint: guideWebSupplementHint(),
+  }),
+  guideWebSupplementHint(),
+);
 assert.equal(solveTurnToast({ pipelineType: "web" }), undefined);
 assert.equal(solveTurnToast({ pipelineType: "web", guideHint: guideSearchFallbackHint() }), undefined);
 assert.equal(
@@ -1651,6 +1687,12 @@ assert.equal(sourceHostname("https://www.example.com/path"), "example.com");
 assert.equal(pipelineSourceLabel("rag", undefined), "Your guide");
 assert.equal(pipelineSourceLabel("fallback_web", [{ title: "Wiki", url: "https://example.com/a" }]), "Web search");
 assert.equal(pipelineSourceLabel("web", [{ title: "Wiki", url: "https://example.com/a" }]), "Web search");
+assert.equal(pipelineSourceLabel("web_skip_guide", [{ title: "Wiki", url: "https://example.com/a" }]), "Web search");
+assert.equal(pipelineSourceLabel("rag_supplemented", undefined), "Your guide + Web search");
+assert.equal(
+  pipelineSourceLabel("rag_supplemented", [{ title: "guide.pdf", url: "upload://u/guide.pdf" }]),
+  "PDF guide + Web search",
+);
 assert.equal(
   pipelineSourceLabel("rag", [{ title: "steamcommunity.com", url: "https://steamcommunity.com/x" }]),
   "Your guide",

@@ -269,6 +269,7 @@ export function buildActivityPipeline(
   const hasCohere = cohereEvents.length > 0;
   const hasRag =
     pipelineType === "rag" ||
+    pipelineType === "rag_supplemented" ||
     pipelineType === "fallback_web" ||
     ragChunks.length > 0 ||
     Boolean(ragScore) ||
@@ -276,6 +277,8 @@ export function buildActivityPipeline(
 
   const hasWeb =
     pipelineType === "web" ||
+    pipelineType === "web_skip_guide" ||
+    pipelineType === "rag_supplemented" ||
     pipelineType === "fallback_web" ||
     webSources.length > 0 ||
     events.some((e) => e.event_type.startsWith("tavily_search") || e.event_type.startsWith("web_search"));
