@@ -109,7 +109,7 @@ do not sync to the cloud or use Storage uploads.
   `NEXT_PUBLIC_SUPABASE_*` vars; returns `null` when unset so the app degrades to
   anonymous-only. Exports the `Chat` row type.
 - `lib/local-games.js`: anon "recent games" list in `localStorage`
-  (`gg:local-games`, `Chat`-shaped, cap 20) so signed-out users also get the
+  (`gg:local-games`, `Chat`-shaped, cap 20 **topic rows**, not rooms) so signed-out users also get the
   home quick-access carousel, sidebar, and library. `loadChats`/`persistChat`/
   `saveGameMeta`/`deleteChat` in `page.tsx` branch on `userRef` (Supabase when
   signed-in, this when anon). Anon has no Storage, so these rows are text +
@@ -466,14 +466,20 @@ do not sync to the cloud or use Storage uploads.
   export in `app/layout.tsx` sets `maximumScale: 1` + `userScalable: false` to
   disable pinch-zoom (honored in the installed PWA; iOS Safari tabs ignore it by
   design).
-- Persistence model: one `public.chats` row per saved game (`game`, `platform`,
+- Persistence model: one `public.chats` row per **topic** (thread) within a
+  game+platform **room** (`game`, `platform`, `title`, `spoiler_major` per topic;
+  `db/chat-topics.sql`). Cover art and preferred guides are shared across all
+  topics in the same room (write-time sync via `lib/game-room.js#syncRoomSharedMeta`).
+  Sidebar/carousel list one row per room; tap opens the topic list (`app/chat/topic-list.tsx`).
+  Pre-migration installs without `title`/`spoiler_major` columns fall back to
+  `gg:topic-title` / `gg:topic-spoiler` localStorage keyed by chat id.
   `preferred_guide_url` (legacy first URL), `preferred_guide_urls` (text[]; see
-  `db/preferred-guide-urls.sql`), `cover_url`, `release_year`, `messages` jsonb), RLS-scoped
-  to `auth.uid()`; the client upserts the whole `messages` array each turn and
-  reads with `select("*")` so it tolerates the cover columns being absent before
-  the migration. Device-uploaded covers live in the public `covers` Storage bucket
-  under an `<uid>/` prefix (RLS: owner writes, public read). Both are set up by
-  `db/cover-metadata.sql`. `public.search_cache` is a shared public cache table
+  `db/preferred-guide-urls.sql`), `cover_url`, `release_year`, `messages` jsonb),
+  RLS-scoped to `auth.uid()`; the client upserts the whole `messages` array each
+  turn and reads with `select("*")` so it tolerates the cover columns being absent
+  before the migration. Device-uploaded covers live in the public `covers` Storage
+  bucket under an `<uid>/` prefix (RLS: owner writes, public read). Both are set up
+  by `db/cover-metadata.sql`. `public.search_cache` is a shared public cache table
   (see Known limits).
 
 ## GameFAQs multi-page bundles (agent reference)

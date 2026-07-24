@@ -5,11 +5,13 @@ import {
   IconDotsVertical,
   IconGrid,
   IconHome,
+  IconChevronLeft,
   IconPlus,
   IconX,
 } from "../icons";
 import { SteamLibrary, type SteamGame } from "../steam-library";
 import type { Chat } from "@/lib/supabase";
+import { gameRoomKey } from "@/lib/game-room.js";
 import { CoverThumb, displayPlatform } from "./cover-thumb";
 import { SteamIcon } from "./hero-marketing";
 
@@ -18,6 +20,7 @@ export type GamesSidebarProps = {
   user: User | null;
   chats: Chat[];
   activeChatId: string | null;
+  activeRoomKey: string | null;
   sidebarOpen: boolean;
   libraryOpen: boolean;
   steamLibraryOpen: boolean;
@@ -28,6 +31,8 @@ export type GamesSidebarProps = {
   onDismissOverlay: () => void;
   onCloseSidebar: () => void;
   onGoHome: () => void;
+  showBackToGame?: boolean;
+  onBackToGame?: () => void;
   onOpenSavedLibrary: () => void;
   onConnectSteam: () => void;
   onOpenSteamLibrary: () => void;
@@ -47,6 +52,7 @@ export function GamesSidebar({
   user,
   chats,
   activeChatId,
+  activeRoomKey,
   sidebarOpen,
   libraryOpen,
   steamLibraryOpen,
@@ -57,6 +63,8 @@ export function GamesSidebar({
   onDismissOverlay,
   onCloseSidebar,
   onGoHome,
+  showBackToGame = false,
+  onBackToGame,
   onOpenSavedLibrary,
   onConnectSteam,
   onOpenSteamLibrary,
@@ -85,9 +93,16 @@ export function GamesSidebar({
         aria-hidden={!sidebarOpen}
       >
         <div className="sidebar-top">
-          <button type="button" className="sidebar-home icon-inline" onClick={onGoHome}>
-            <IconHome /> HOME
-          </button>
+          <div className="sidebar-top-nav">
+            <button type="button" className="sidebar-home icon-inline" onClick={onGoHome}>
+              <IconHome /> Home
+            </button>
+            {showBackToGame && onBackToGame ? (
+              <button type="button" className="sidebar-home icon-inline" onClick={onBackToGame}>
+                <IconChevronLeft /> Back to game
+              </button>
+            ) : null}
+          </div>
           <button
             type="button"
             className="sidebar-close"
@@ -123,7 +138,12 @@ export function GamesSidebar({
               {chats.map((chat) => (
                 <li
                   key={chat.id}
-                  className={`sidebar-row${chat.id === activeChatId ? " active" : ""}`}
+                  className={`sidebar-row${
+                    chat.id === activeChatId ||
+                    (activeRoomKey && gameRoomKey(chat.game, chat.platform) === activeRoomKey)
+                      ? " active"
+                      : ""
+                  }`}
                 >
                   <button type="button" className="sidebar-open" onClick={() => onOpenChat(chat)}>
                     <CoverThumb cover={chat.cover_url ?? ""} name={chat.game} className="cover-sm" />
@@ -162,7 +182,7 @@ export function GamesSidebar({
                           className="row-menu-item row-menu-delete"
                           onClick={(event) => void onDeleteChat(chat, event)}
                         >
-                          Delete
+                          Delete game
                         </button>
                       </div>
                     )}

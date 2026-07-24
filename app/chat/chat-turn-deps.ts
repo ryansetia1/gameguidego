@@ -22,8 +22,10 @@ export type ChatTurnDeps = {
   bundleIndexStatus: Record<string, { pages: { slug: string }[] }>;
   guideIndexState: GuideIndexState;
   spoilerPrefs: SpoilerPrefs;
+  /** Per-topic toggle stored on the chats row (not the global OR effective value). */
+  topicSpoilerMajor: boolean;
   setActiveChatId: (id: string | null) => void;
-  setChats: (chats: Chat[]) => void;
+  setChats: import("react").Dispatch<import("react").SetStateAction<Chat[]>>;
   setMessages: Dispatch<SetStateAction<Message[]>>;
   setError: (value: string) => void;
   setRetryAction: (value: (() => void) | null) => void;
@@ -73,5 +75,5 @@ export type ChatTurnDeps = {
   ) => GuideBundleMeta | undefined;
   startBundleIndexingPoll: (url: string, targets: string[]) => void;
   stopBundleIndexingPoll: () => void;
-  normGame: (value: string) => string;
+  normGameKey: (value: string) => string;
 };

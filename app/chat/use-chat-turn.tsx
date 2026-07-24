@@ -83,7 +83,7 @@ export function useChatTurn(deps: ChatTurnDeps) {
 
     const switching =
       d.messages.length > 0 &&
-      d.normGame(d.game) !== d.normGame(d.conversationGame.current);
+      d.normGameKey(d.game) !== d.normGameKey(d.conversationGame.current);
     const priorMessages = switching ? [] : d.messages;
     const targetChatId = switching ? null : d.activeChatIdRef.current;
     if (switching) d.setActiveChatId(null);

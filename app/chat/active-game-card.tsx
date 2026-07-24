@@ -51,9 +51,12 @@ export type ActiveGameCardProps = {
   onToggleTemporary: () => void;
   onToggleRowMenu: (id: string, event: React.MouseEvent<HTMLButtonElement>) => void;
   onEditGame: () => void;
+  onNewTopic: () => void;
   onClearActiveChat: () => void;
   chatHasMessages: boolean;
   onDeleteActiveChat: () => void;
+  /** Thread only: delete the open topic row. */
+  onDeleteTopic?: () => void;
   onSetShowQuickAdd: (value: boolean) => void;
   onPreferredUrlsChange: (urls: string[]) => void;
   onBundleMetaChange: (meta: Record<string, GuideBundleMeta>) => void;
@@ -72,6 +75,13 @@ export type ActiveGameCardProps = {
   onRefreshBundleDiscovery: (url: string) => void;
   onReindexAllPending: () => void;
   onGameSpoilerChange: (value: boolean) => void;
+  /** Thread: New topic / Clear chat / Delete topic. Topics list: Delete all topics / Delete game. */
+  menuVariant?: "thread" | "topics";
+  topicCount?: number;
+  /** Shown below game metadata in thread view. */
+  topicTitle?: string;
+  onDeleteAllTopics?: () => void;
+  className?: string;
 };
 
 export function ActiveGameCard({
@@ -100,9 +110,11 @@ export function ActiveGameCard({
   onToggleTemporary,
   onToggleRowMenu,
   onEditGame,
+  onNewTopic,
   onClearActiveChat,
   chatHasMessages,
   onDeleteActiveChat,
+  onDeleteTopic,
   onSetShowQuickAdd,
   onPreferredUrlsChange,
   onBundleMetaChange,
@@ -117,6 +129,11 @@ export function ActiveGameCard({
   onRefreshBundleDiscovery,
   onReindexAllPending,
   onGameSpoilerChange,
+  menuVariant = "thread",
+  topicCount = 0,
+  topicTitle = "",
+  onDeleteAllTopics,
+  className,
 }: ActiveGameCardProps) {
   const hasBlocked = preferredUrls.some(
     (url) => guideIndexState[url] === "blocked" || guideBundleMeta[url]?.isBlocked,
@@ -359,9 +376,12 @@ export function ActiveGameCard({
     );
   };
 
+  const gameCardClass = className ? `game-card ${className}` : "game-card";
+  const showIncognito = !temporary && (Boolean(activeChatId) || menuVariant === "topics");
+
   return (
-    <section className="game-card" aria-label="Game" ref={topRef}>
-      {activeChatId && !temporary && (
+    <section className={gameCardClass} aria-label="Game" ref={topRef}>
+      {showIncognito && (
         <button
           type="button"
           className="game-card-incognito"
@@ -389,21 +409,47 @@ export function ActiveGameCard({
             <button type="button" className="row-menu-item" onClick={onEditGame}>
               Edit
             </button>
-            <button
-              type="button"
-              className="row-menu-item"
-              disabled={!chatHasMessages || loading}
-              onClick={() => void onClearActiveChat()}
-            >
-              Clear chat
-            </button>
-            <button
-              type="button"
-              className="row-menu-item row-menu-delete"
-              onClick={() => void onDeleteActiveChat()}
-            >
-              Delete
-            </button>
+            {menuVariant === "topics" ? (
+              <>
+                <button
+                  type="button"
+                  className="row-menu-item row-menu-delete"
+                  disabled={topicCount === 0 || loading}
+                  onClick={() => void onDeleteAllTopics?.()}
+                >
+                  Delete all topics
+                </button>
+                <button
+                  type="button"
+                  className="row-menu-item row-menu-delete"
+                  onClick={() => void onDeleteActiveChat()}
+                >
+                  Delete game
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="row-menu-item" onClick={onNewTopic} disabled={loading}>
+                  New topic
+                </button>
+                <button
+                  type="button"
+                  className="row-menu-item"
+                  disabled={!chatHasMessages || loading}
+                  onClick={() => void onClearActiveChat()}
+                >
+                  Clear chat
+                </button>
+                <button
+                  type="button"
+                  className="row-menu-item row-menu-delete"
+                  disabled={!activeChatId || loading}
+                  onClick={() => void onDeleteTopic?.()}
+                >
+                  Delete topic
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -411,7 +457,7 @@ export function ActiveGameCard({
         {coverEnabled && (
           <CoverThumb cover={cover} name={game} className="cover-lg game-card-cover" />
         )}
-        <div className={`game-card-meta${activeChatId && !temporary ? " has-quick" : ""}`}>
+        <div className={`game-card-meta${showIncognito ? " has-quick" : ""}`}>
           <h2>{game || "Untitled game"}</h2>
           {(platform || releaseYear || game) && (
             <p className="meta-subline game-card-meta-line">
@@ -434,6 +480,9 @@ export function ActiveGameCard({
           )}
         </div>
       </div>
+      {menuVariant === "thread" && topicTitle ? (
+        <p className="game-card-topic-title">{topicTitle}</p>
+      ) : null}
       <div className="game-card-guides">
         <details
           className={isCollapsible ? "sources game-card-guides-hidden" : ""}
@@ -504,9 +553,11 @@ export function ActiveGameCard({
           </div>
         </details>
       </div>
-      <div className="opt-spoiler-row game-card-spoiler">
-        <SpoilerToggle prefs={{ major: gameSpoilerMajor }} onChange={onGameSpoilerChange} compact />
-      </div>
+      {menuVariant !== "topics" ? (
+        <div className="opt-spoiler-row game-card-spoiler">
+          <SpoilerToggle prefs={{ major: gameSpoilerMajor }} onChange={onGameSpoilerChange} compact />
+        </div>
+      ) : null}
     </section>
   );
 }

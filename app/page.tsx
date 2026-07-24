@@ -12,6 +12,8 @@ import { GamesSidebar } from "./chat/games-sidebar";
 import { HomeSetup } from "./chat/home-setup";
 import { HomeTip } from "./chat/hero-marketing";
 import { MessageList } from "./chat/message-list";
+import { TopicList } from "./chat/topic-list";
+import { PromptDialog, usePromptDialog } from "./chat/use-prompt-dialog";
 import { useChatTurn } from "./chat/use-chat-turn";
 import { useGuideBundle } from "./chat/use-guide-bundle";
 import { useHomeSession } from "./chat/use-home-session";
@@ -30,7 +32,12 @@ import {
   guideUrlsPayload,
   normalizeGuideUrlList,
 } from "@/lib/guide-urls.js";
-import { compressImage } from "@/lib/image.js";
+import { compressImage, coverStoragePath } from "@/lib/image.js";
+import {
+  coverUrlsToStoragePaths,
+  removeCoverStoragePaths,
+  threadImageStoragePaths,
+} from "@/lib/chat-delete.js";
 import { type GuideBundleMeta } from "./guide-link-field";
 import { HltbRow } from "./hltb-row";
 import { type SteamGame } from "./steam-library";
@@ -41,16 +48,27 @@ import {
   effectiveSpoilerPrefs,
   loadGameSpoilerPrefs,
   loadGlobalSpoilerPrefs,
+  loadTopicSpoilerPrefs,
   saveGameSpoilerPrefs,
   saveGlobalSpoilerPrefs,
+  saveTopicSpoilerMajorById,
+  topicSpoilerPayload,
   SPOILER_MODE_OFF_TITLE,
   SPOILER_MODE_ON_LABEL,
   spoilerMajorFromUserMetadata,
 } from "@/lib/spoiler-prefs.js";
+import { groupChatsByRoom, isTopicColumnDbError, mergeChatsFromServer, normGameKey, syncRoomSharedMeta, syncSharedMetaToLocalGames, topicsForRoom, gameRoomKey, upsertChatInList } from "@/lib/game-room.js";
+import {
+  displayTopicTitle,
+  resolvedTopicTitle,
+  saveTopicTitleById,
+  titleFromMessages,
+} from "@/lib/topic-title.js";
 import { getSupabase, type Chat } from "@/lib/supabase";
 import {
   loadLocalGames,
   removeLocalGame,
+  setLocalGames,
   upsertLocalGame,
 } from "@/lib/local-games.js";
 import { steamAppIdFromCoverUrl, steamIdFromMetadata } from "@/lib/steam.js";
@@ -79,15 +97,7 @@ const examples = [
   { game: "Elden Ring", platform: "PC", q: "Best build for beginners" },
 ];
 
-function normGame(value: string) {
-  return value.replace(/\s+/g, " ").trim().toLowerCase();
-}
-
-const COVERS_MARKER = "/storage/v1/object/public/covers/";
-function coverStoragePath(url: string): string | null {
-  const at = url.indexOf(COVERS_MARKER);
-  return at === -1 ? null : url.slice(at + COVERS_MARKER.length);
-}
+type GameView = "topics" | "thread" | null;
 
 function collectMessageImagePaths(messages: Message[]): string[] {
   return [
@@ -177,6 +187,7 @@ export default function Home() {
   // user already has saved games (signed-in or anon local). Reset on newGame().
   const [newGameOpen, setNewGameOpen] = useState(false);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [gameView, setGameView] = useState<GameView>(null);
   // Temporary chat: lives only in memory, never written to Supabase/localStorage/
   // sessionStorage, so a refresh or close wipes it. Follow-ups still work (they
   // read from `messages` state, not storage).
@@ -209,6 +220,14 @@ export default function Home() {
   } | null>(null);
   const [toast, setToast] = useState("");
   const [lastLibrary, setLastLibrary] = useState<"saved" | "steam">("saved");
+  const {
+    promptState,
+    promptDraft,
+    setPromptDraft,
+    promptInputRef,
+    askPrompt,
+    closePrompt,
+  } = usePromptDialog();
 
   // Promise-based confirm dialog. Declared up here so the Steam return effect can
   // offer "Use your Steam account" without a declaration-order tangle.
@@ -227,6 +246,12 @@ export default function Home() {
   const jumpRef = useRef(false);
   const variantScrollTargetRef = useRef<number | null>(null);
   const chatHistoryPushed = useRef(false);
+  const topicsHistoryPushed = useRef(false);
+  const gameViewRef = useRef<GameView>(null);
+  function syncGameView(view: GameView) {
+    gameViewRef.current = view;
+    setGameView(view);
+  }
   const newGameHistoryPushed = useRef(false);
   const homeExitPromptAt = useRef(0);
   const HOME_EXIT_BACK_MS = 2000;
@@ -240,7 +265,9 @@ export default function Home() {
   // Guards session URL/draft sync while openChat is still fetching messages.
   const openingChatIdRef = useRef<string | null>(null);
   const conversationGame = useRef("");
+  const conversationPlatform = useRef("");
   const activeChatIdRef = useRef<string | null>(null);
+  const chatsRef = useRef<Chat[]>([]);
   // Snapshot of the thread open before entering temporary chat, so turning it off
   // returns there (temporary is a non-destructive detour, not a reset).
   const preTemporaryRef = useRef<{
@@ -252,6 +279,7 @@ export default function Home() {
     cover: string;
     releaseYear: string;
     conversationGame: string;
+    gameView: GameView;
   } | null>(null);
   // Mirror `user` in a ref so the stable loadChats/persist callbacks can branch
   // signed-in (Supabase) vs anon (localStorage) without stale-closure bugs.
@@ -265,6 +293,22 @@ export default function Home() {
   function pushOverlayHistory() {
     if (typeof window === "undefined") return;
     window.history.pushState({ gggOverlay: true }, "");
+  }
+
+  function pushTopicsHistory() {
+    if (typeof window === "undefined") return;
+    topicsHistoryPushed.current = true;
+    window.history.pushState({ gggTopics: true }, "");
+  }
+
+  /** Strip overlay marker in-place (no popstate); safe before router.push. */
+  function stripOverlayHistory() {
+    if (typeof window === "undefined") return;
+    const state = window.history.state as { gggOverlay?: boolean } | null;
+    if (!state?.gggOverlay) return;
+    const next = { ...state };
+    delete next.gggOverlay;
+    window.history.replaceState(next, "");
   }
 
   /** Strip overlay marker in-place (no popstate); safe before router.push. */
@@ -434,11 +478,36 @@ export default function Home() {
         setNewGameOpen(false);
         return;
       }
-      // No overlay open: a back press from a game thread returns to the home page.
-      if (messages.length > 0) {
+      const view = gameViewRef.current;
+      if (view === "thread") {
         chatHistoryPushed.current = false;
-        homeExitPromptAt.current = 0;
-        newGame();
+        setMenuOpenId(null);
+        setActiveChatId(null);
+        setMessages([]);
+        setEditingIndex(null);
+        setInput("");
+        setError("");
+        clearPendingImages();
+        setTemporary(false);
+        syncGameView("topics");
+        setChatUrl(null);
+        clearSessionDraft();
+        const top = window.history.state as { gggTopics?: boolean } | null;
+        if (top?.gggTopics) topicsHistoryPushed.current = true;
+        else {
+          topicsHistoryPushed.current = false;
+          pushTopicsHistory();
+        }
+        return;
+      }
+      if (view === "topics") {
+        goHome();
+        return;
+      }
+      // Thread with messages: back goes to the topic list first.
+      if (messages.length > 0 && view !== "topics") {
+        chatHistoryPushed.current = false;
+        backToTopicList();
         return;
       }
       // Home idle: first back warns; second back within 2s leaves the app.
@@ -474,13 +543,24 @@ export default function Home() {
   // hardware/gesture back returns home instead of leaving the app.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (messages.length > 0 && !chatHistoryPushed.current) {
+    const inThread =
+      gameView === "thread" && (messages.length > 0 || Boolean(activeChatId));
+    if (inThread && !chatHistoryPushed.current) {
       chatHistoryPushed.current = true;
       window.history.pushState({ gggChat: true }, "");
-    } else if (messages.length === 0) {
+    } else if (!inThread && gameView !== "topics") {
       chatHistoryPushed.current = false;
     }
-  }, [messages.length]);
+  }, [messages.length, gameView, activeChatId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (gameView === "topics" && !topicsHistoryPushed.current) {
+      pushTopicsHistory();
+    } else if (gameView !== "topics") {
+      topicsHistoryPushed.current = false;
+    }
+  }, [gameView]);
 
   // Arm hardware back on home idle so the first press shows a leave hint instead
   // of exiting the PWA immediately. Only seed when the stack top has no guard
@@ -488,6 +568,7 @@ export default function Home() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const arm =
+      gameView === null &&
       messages.length === 0 &&
       !newGameOpen &&
       !editingGame &&
@@ -497,13 +578,19 @@ export default function Home() {
       !libraryOpen &&
       !steamLibraryOpen;
     if (!arm) {
-      if (messages.length > 0 || newGameOpen) homeExitPromptAt.current = 0;
+      if (messages.length > 0 || newGameOpen || gameView !== null) homeExitPromptAt.current = 0;
       return;
     }
-    const top = window.history.state as { gggHomeRoot?: boolean; gggOverlay?: boolean; gggChat?: boolean } | null;
-    if (top?.gggHomeRoot || top?.gggOverlay || top?.gggChat) return;
+    const top = window.history.state as {
+      gggHomeRoot?: boolean;
+      gggOverlay?: boolean;
+      gggChat?: boolean;
+      gggTopics?: boolean;
+    } | null;
+    if (top?.gggHomeRoot || top?.gggOverlay || top?.gggChat || top?.gggTopics) return;
     window.history.pushState({ gggHomeRoot: true }, "");
   }, [
+    gameView,
     messages.length,
     newGameOpen,
     editingGame,
@@ -516,7 +603,9 @@ export default function Home() {
 
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
-  }, [activeChatId]);
+    chatsRef.current = chats;
+    gameViewRef.current = gameView;
+  }, [activeChatId, chats, gameView]);
 
   // The in-answer guide nudge is dismissable per game; reload that flag when the
   // open game changes so a "not now" on one game doesn't hide it on another.
@@ -565,13 +654,17 @@ export default function Home() {
       setChats(loadLocalGames());
       return;
     }
-    const { data, error: loadError } = await supabase
-      .from("chats")
-      .select(
-        "id, game, platform, preferred_guide_url, preferred_guide_urls, cover_url, release_year, updated_at, messages",
-      )
-      .order("updated_at", { ascending: false });
-    if (!loadError && data) setChats(data as Chat[]);
+    const fullSelect =
+      "id, game, platform, preferred_guide_url, preferred_guide_urls, cover_url, release_year, title, spoiler_major, updated_at, messages";
+    const legacySelect =
+      "id, game, platform, preferred_guide_url, preferred_guide_urls, cover_url, release_year, updated_at, messages";
+    let result = await supabase.from("chats").select(fullSelect).order("updated_at", { ascending: false });
+    if (result.error) {
+      result = await supabase.from("chats").select(legacySelect).order("updated_at", { ascending: false });
+    }
+    if (!result.error && result.data) {
+      setChats((prev) => mergeChatsFromServer(prev, result.data as Chat[]));
+    }
   }, []);
 
   useEffect(() => {
@@ -597,7 +690,6 @@ export default function Home() {
     const draft = loadSessionDraft();
     if (draft) {
       jumpRef.current = true;
-      setActiveChatId(draft.activeChatId);
       setGame(draft.game);
       setPlatform(draft.platform);
       setPreferredUrls(draft.preferredUrls);
@@ -607,11 +699,22 @@ export default function Home() {
       clearPendingImages();
       setReleaseYear(draft.releaseYear);
       setEditingGame(false);
-      setMessages(parseStoredMessages(draft.messages));
-      conversationGame.current = draft.game;
       setInput("");
       setError("");
       setEditingIndex(null);
+      conversationGame.current = draft.game;
+      conversationPlatform.current = draft.platform;
+      if (draft.gameView === "topics") {
+        setActiveChatId(null);
+        setMessages([]);
+        syncGameView("topics");
+        setChatUrl(null);
+        sessionHydratedRef.current = true;
+        return;
+      }
+      setActiveChatId(draft.activeChatId);
+      setMessages(parseStoredMessages(draft.messages));
+      syncGameView("thread");
       if (draft.activeChatId && user) setChatUrl(draft.activeChatId);
       sessionHydratedRef.current = true;
       return;
@@ -656,6 +759,20 @@ export default function Home() {
     if (!sessionHydratedRef.current) return;
     if (messages.length === 0) {
       if (openingChatIdRef.current) return;
+      if (gameView === "topics" && game.trim() && !temporary) {
+        setChatUrl(null);
+        saveSessionDraft({
+          game,
+          platform,
+          preferredUrls,
+          cover: cover.startsWith("blob:") ? "" : cover,
+          releaseYear,
+          activeChatId: null,
+          messages: [],
+          gameView: "topics",
+        });
+        return;
+      }
       clearSessionDraft();
       setChatUrl(null);
       return;
@@ -679,8 +796,20 @@ export default function Home() {
       releaseYear,
       activeChatId,
       messages,
+      gameView: "thread",
     });
-  }, [messages, activeChatId, game, platform, preferredUrls, cover, releaseYear, user, temporary]);
+  }, [
+    messages,
+    activeChatId,
+    game,
+    platform,
+    preferredUrls,
+    cover,
+    releaseYear,
+    user,
+    temporary,
+    gameView,
+  ]);
 
   useEffect(() => {
     if (!menuOpenId) return;
@@ -720,7 +849,12 @@ export default function Home() {
     const EDGE = 24;
     const THRESHOLD = 60;
     const modalOpen =
-      authOpen || navMenu !== null || confirmState !== null || editingGame || editingIndex !== null;
+      authOpen ||
+      navMenu !== null ||
+      confirmState !== null ||
+      promptState !== null ||
+      editingGame ||
+      editingIndex !== null;
     const overlayOpen = sidebarOpen || libraryOpen || steamLibraryOpen;
     let startX = 0;
     let startY = 0;
@@ -779,6 +913,7 @@ export default function Home() {
     steamLibraryOpen,
     authOpen,
     confirmState,
+    promptState,
     editingGame,
     editingIndex,
     steamConnected,
@@ -802,13 +937,26 @@ export default function Home() {
     }
   }, [user]);
 
+  // Load per-topic spoiler when switching game/topic — not on every chats refresh
+  // (loadChats after toggle would reset the checkbox via stale server rows).
   useEffect(() => {
     if (!game.trim()) {
       setGameSpoilerMajor(false);
       return;
     }
-    setGameSpoilerMajor(loadGameSpoilerPrefs(game).major);
-  }, [game]);
+    if (!activeChatId) {
+      setGameSpoilerMajor(loadGameSpoilerPrefs(game).major);
+      return;
+    }
+    const row = chatsRef.current.find((chat) => chat.id === activeChatId);
+    setGameSpoilerMajor(loadTopicSpoilerPrefs(row, game).major);
+  }, [game, activeChatId]);
+
+  useEffect(() => {
+    if (messages.length > 0 && gameView === null && game.trim()) {
+      syncGameView("thread");
+    }
+  }, [messages.length, gameView, game]);
 
   const updateGlobalSpoiler = useCallback((value: boolean) => {
     setGlobalSpoilerMajor(value);
@@ -816,11 +964,40 @@ export default function Home() {
   }, []);
 
   const updateGameSpoiler = useCallback(
-    (value: boolean) => {
+    async (value: boolean) => {
       setGameSpoilerMajor(value);
-      if (game.trim()) saveGameSpoilerPrefs(game, { major: value });
+      const chatId = activeChatIdRef.current;
+      if (chatId) {
+        setChats((prev) =>
+          prev.map((row) =>
+            row.id === chatId ? { ...row, ...topicSpoilerPayload(value) } : row,
+          ),
+        );
+      }
+      const supabase = getSupabase();
+      if (chatId && supabase && user) {
+        let { error } = await supabase
+          .from("chats")
+          .update(topicSpoilerPayload(value))
+          .eq("id", chatId);
+        if (error && isTopicColumnDbError(error)) {
+          saveTopicSpoilerMajorById(chatId, value);
+          error = null;
+        }
+        if (!error) void loadChats();
+      } else if (chatId && !user) {
+        const row = loadLocalGames().find((entry) => entry.id === chatId);
+        if (row) {
+          upsertLocalGame({ ...row, ...topicSpoilerPayload(value) });
+          setChats(loadLocalGames());
+        }
+      } else if (chatId) {
+        saveTopicSpoilerMajorById(chatId, value);
+      } else if (game.trim()) {
+        saveGameSpoilerPrefs(game, { major: value });
+      }
     },
-    [game],
+    [game, user, loadChats],
   );
 
   const turnOffSpoilers = useCallback(() => {
@@ -843,10 +1020,13 @@ export default function Home() {
     if (editingIndex === null) return;
   }, [editingIndex]);
 
-  // Show the compact sticky header once the game card/fields scroll out of view.
+  // Show the compact sticky header once the game card scrolls out of view.
+  // Empty thread (new topic): full game card stays visible, no mini header.
   useEffect(() => {
     const element = topRef.current;
-    if (!element) {
+    const stickyEligible =
+      gameView === "topics" || (gameView === "thread" && messages.length > 0);
+    if (!element || !stickyEligible) {
       setShowSticky(false);
       return;
     }
@@ -856,7 +1036,7 @@ export default function Home() {
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, [messages.length, editingGame]);
+  }, [messages.length, editingGame, gameView]);
 
   // Jump-to-bottom FAB: show when the thread overflows and the user scrolls up.
   useEffect(() => {
@@ -895,6 +1075,7 @@ export default function Home() {
     setChatUrl(null);
     clearSessionDraft();
     setActiveChatId(null);
+    syncGameView(null);
     setMessages([]);
     setGame("");
     setPlatform("");
@@ -911,10 +1092,12 @@ export default function Home() {
     setError("");
     setEditingIndex(null);
     conversationGame.current = "";
+    conversationPlatform.current = "";
     setSidebarOpen(false);
     setMenuOpenId(null);
     setTemporary(false);
     newGameHistoryPushed.current = false;
+    topicsHistoryPushed.current = false;
     // Back to quick-access home; the setup form re-hides behind "+ New game".
     setNewGameOpen(false);
   }
@@ -945,14 +1128,24 @@ export default function Home() {
         cover,
         releaseYear,
         conversationGame: conversationGame.current,
+        gameView,
       };
       clearTransient();
       setMessages([]);
       setActiveChatId(null);
       conversationGame.current = "";
+      conversationPlatform.current = "";
       clearSessionDraft();
       setChatUrl(null);
       setTemporary(true);
+      if (gameView === "topics") {
+        syncGameView("thread");
+        setShowSticky(false);
+        requestAnimationFrame(() => {
+          window.scrollTo({ top: 0, behavior: "auto" });
+          composerRef.current?.focus();
+        });
+      }
       return;
     }
 
@@ -982,12 +1175,14 @@ export default function Home() {
       setCover(prior.cover);
       setReleaseYear(prior.releaseYear);
       conversationGame.current = prior.conversationGame;
+      syncGameView(prior.gameView);
       // Restore the saved-chat deep link so a later refresh reopens it.
       if (prior.activeChatId && user) setChatUrl(prior.activeChatId);
     } else {
       setMessages([]);
       setActiveChatId(null);
       conversationGame.current = "";
+    conversationPlatform.current = "";
     }
   }
 
@@ -1003,11 +1198,7 @@ export default function Home() {
     });
   }
 
-  function commitOpenChat(chat: Chat, loaded: Message[], isBgLoading: boolean) {
-    jumpRef.current = true;
-    setChatUrl(chat.id);
-    clearSessionDraft();
-    setActiveChatId(chat.id);
+  function applyRoomContext(chat: Chat) {
     setGame(chat.game);
     setPlatform(chat.platform);
     setPreferredUrls(guideUrlsFromChat(chat));
@@ -1017,17 +1208,82 @@ export default function Home() {
     replacedCoverRef.current = null;
     clearPendingImages();
     setReleaseYear(chat.release_year ?? "");
-    setEditingGame(false);
-    setMessages(loaded);
-    setLoading(isBgLoading || false);
-    setGenerationStatus(backgroundStatusRef.current[chat.id] || null);
     conversationGame.current = chat.game;
+    conversationPlatform.current = chat.platform;
+    setGameSpoilerMajor(loadTopicSpoilerPrefs(chat, chat.game).major);
+  }
+
+  function openGameRoom(chat: Chat) {
+    jumpRef.current = true;
+    applyRoomContext(chat);
+    setActiveChatId(null);
+    setMessages([]);
+    setEditingGame(false);
     setInput("");
     setError("");
     setEditingIndex(null);
     setSidebarOpen(false);
     setMenuOpenId(null);
     setTemporary(false);
+    syncGameView("topics");
+    setChatUrl(null);
+    setLibraryOpen(false);
+    setSteamLibraryOpen(false);
+    pushTopicsHistory();
+    void loadChats();
+  }
+
+  function backToTopicList() {
+    setMenuOpenId(null);
+    setActiveChatId(null);
+    setMessages([]);
+    setEditingIndex(null);
+    setInput("");
+    setError("");
+    clearPendingImages();
+    setTemporary(false);
+    syncGameView("topics");
+    setChatUrl(null);
+    void loadChats();
+  }
+
+  function startNewTopic() {
+    setMenuOpenId(null);
+    setActiveChatId(null);
+    setMessages([]);
+    setEditingIndex(null);
+    setInput("");
+    setError("");
+    clearPendingImages();
+    setTemporary(false);
+    setGameSpoilerMajor(false);
+    syncGameView("thread");
+    setChatUrl(null);
+    clearSessionDraft();
+    setShowSticky(false);
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: "auto" });
+      composerRef.current?.focus();
+    });
+  }
+
+  function commitOpenChat(chat: Chat, loaded: Message[], isBgLoading: boolean) {
+    jumpRef.current = true;
+    setChatUrl(chat.id);
+    clearSessionDraft();
+    setActiveChatId(chat.id);
+    applyRoomContext(chat);
+    setEditingGame(false);
+    setMessages(loaded);
+    setLoading(isBgLoading || false);
+    setGenerationStatus(backgroundStatusRef.current[chat.id] || null);
+    setInput("");
+    setError("");
+    setEditingIndex(null);
+    setSidebarOpen(false);
+    setMenuOpenId(null);
+    setTemporary(false);
+    syncGameView("thread");
   }
 
   async function openChat(chat: Chat) {
@@ -1146,58 +1402,67 @@ export default function Home() {
     setCover("");
     setPendingCover(null);
     const supabase = getSupabase();
-    const id = activeChatIdRef.current;
-    if (supabase && id) {
-      await supabase.from("chats").update({ cover_url: "" }).eq("id", id);
-      void loadChats();
-    }
-    // Remove the old uploaded cover file(s) too (skips TheGamesDB CDN covers).
-    if (supabase && toRemove.length) {
-      try {
-        await supabase.storage.from("covers").remove(toRemove);
-      } catch (caught) {
-        console.error("Cover cleanup failed:", caught);
+    const roomGame = conversationGame.current || game;
+    const roomPlatform = conversationPlatform.current || platform;
+    if (!supabase || !user) {
+      if (roomGame.trim()) {
+        const synced = syncSharedMetaToLocalGames(loadLocalGames(), roomGame, roomPlatform, {
+          cover_url: "",
+        });
+        setChats(setLocalGames(synced));
       }
+    } else if (roomGame.trim()) {
+      try {
+        await syncRoomSharedMeta(supabase, user.id, roomGame, roomPlatform, {
+          cover_url: "",
+        });
+        void loadChats();
+      } catch (caught) {
+        console.error("Failed to clear cover:", caught);
+      }
+    }
+    if (supabase && toRemove.length) {
+      await removeCoverStoragePaths(supabase, toRemove);
     }
   }
 
   async function saveGameMeta() {
     setEditingGame(false);
-    conversationGame.current = game;
+    const priorGame = conversationGame.current || game;
+    const priorPlatform = conversationPlatform.current || platform;
     const urls = normalizeGuideUrlList(preferredUrls);
     setPreferredUrls(urls);
     const supabase = getSupabase();
-    const id = activeChatIdRef.current;
-    if (!id) return;
-    // Anon: update the local entry's metadata in place.
+    const sharedMeta = {
+      game,
+      platform,
+      ...guideUrlsPayload(urls),
+      release_year: releaseYear,
+    };
+    // Anon: sync metadata across every topic in this room.
     if (!supabase || !user) {
-      const existing = loadLocalGames().find((row) => row.id === id);
-      if (existing) {
-        upsertLocalGame({
-          ...existing,
-          game,
-          platform,
-          ...guideUrlsPayload(urls),
-          release_year: releaseYear,
-          updated_at: new Date().toISOString(),
-        });
-        setChats(loadLocalGames());
-      }
+      const coverUrl = cover.startsWith("blob:") ? "" : cover;
+      const priorKey = gameRoomKey(priorGame, priorPlatform);
+      const synced = syncSharedMetaToLocalGames(loadLocalGames(), priorGame, priorPlatform, {
+        ...guideUrlsPayload(urls),
+        cover_url: coverUrl,
+        release_year: releaseYear,
+      }).map((row) =>
+        gameRoomKey(row.game, row.platform) === priorKey ? { ...row, ...sharedMeta, cover_url: coverUrl } : row,
+      );
+      setChats(setLocalGames(synced));
+      conversationGame.current = game;
+      conversationPlatform.current = platform;
       return;
     }
     try {
       const coverUrl = await resolveCoverUrl();
-      await supabase
-        .from("chats")
-        .update({
-          game,
-          platform,
-          ...guideUrlsPayload(urls),
-          cover_url: coverUrl,
-          release_year: releaseYear,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", id);
+      await syncRoomSharedMeta(supabase, user.id, priorGame, priorPlatform, {
+        ...sharedMeta,
+        cover_url: coverUrl,
+      });
+      conversationGame.current = game;
+      conversationPlatform.current = platform;
       void loadChats();
     } catch (caught) {
       console.error("Failed to save game details:", caught);
@@ -1206,7 +1471,7 @@ export default function Home() {
 
   function editGame(chat: Chat, event: MouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
-    openChat(chat);
+    openGameRoom(chat);
     setEditingGame(true);
   }
 
@@ -1223,12 +1488,12 @@ export default function Home() {
     setShowScrollFab(false);
   }
 
-  // Return to the empty home view. Pop the pushed chat entry so the history stack
-  // matches a hardware back (popstate then runs newGame); fall back to a direct
-  // reset if nothing was pushed.
+  // Return to the empty home view. Logo and explicit "Home" always reset here;
+  // hardware back from a thread still pops to the topic list via popstate.
   function goHome() {
-    if (chatHistoryPushed.current) window.history.back();
-    else newGame();
+    chatHistoryPushed.current = false;
+    topicsHistoryPushed.current = false;
+    newGame();
   }
 
   // Promise-based confirm dialog (replaces window.confirm): resolves true/false
@@ -1252,9 +1517,11 @@ export default function Home() {
   }
 
   function openFromLibrary(chat: Chat) {
-    openChat(chat);
-    if (libraryOpen) dismissOverlay();
-    else setLibraryOpen(false);
+    setLibraryOpen(false);
+    setSidebarOpen(false);
+    setMenuOpenId(null);
+    stripOverlayHistory();
+    openGameRoom(chat);
   }
 
   function editFromLibrary(chat: Chat) {
@@ -1265,10 +1532,11 @@ export default function Home() {
 
 
   function startFromSteamGame(game: SteamGame) {
-    if (steamLibraryOpen) dismissOverlay();
-    else setSteamLibraryOpen(false);
+    setSteamLibraryOpen(false);
     setSidebarOpen(false);
     setLibraryOpen(false);
+    setMenuOpenId(null);
+    stripOverlayHistory();
 
     const existing = chats.find(
       (chat) =>
@@ -1276,7 +1544,7 @@ export default function Home() {
         (chat.platform === "PC" || !chat.platform),
     );
     if (existing) {
-      openChat(existing);
+      openGameRoom(existing);
       return;
     }
 
@@ -1300,6 +1568,7 @@ export default function Home() {
     setError("");
     setEditingIndex(null);
     conversationGame.current = game.name;
+    conversationPlatform.current = "PC";
     setNewGameOpen(true);
     newGameHistoryPushed.current = true;
     pushOverlayHistory();
@@ -1317,13 +1586,12 @@ export default function Home() {
         if (typeof data.year !== "string" || !data.year) return;
         if (conversationGame.current !== game.name) return;
         setReleaseYear(data.year);
-        const id = activeChatIdRef.current;
         const supabase = getSupabase();
-        if (id && supabase && user) {
-          await supabase
-            .from("chats")
-            .update({ release_year: data.year, updated_at: new Date().toISOString() })
-            .eq("id", id);
+        if (supabase && user && conversationGame.current === game.name) {
+          await syncRoomSharedMeta(supabase, user.id, game.name, "PC", {
+            release_year: data.year,
+            updated_at: new Date().toISOString(),
+          });
           void loadChats();
         }
       } catch {
@@ -1412,56 +1680,199 @@ export default function Home() {
     setMenuOpenId((prev) => (prev === id ? null : id));
   }
 
-  async function deleteChat(chat: Chat, event?: MouseEvent<HTMLButtonElement>) {
+  async function deleteTopicRow(chat: Chat, event?: MouseEvent<HTMLButtonElement>) {
     event?.stopPropagation();
     setMenuOpenId(null);
     if (
       !(await askConfirm(
-        `Delete "${chat.game || "Untitled game"}"? This cannot be undone.`,
+        `Delete "${displayTopicTitle(resolvedTopicTitle(chat))}"? This cannot be undone.`,
+        "Delete topic",
       ))
     ) {
       return;
     }
     const supabase = getSupabase();
-    // Anon: no Storage files to clean up — just drop the local entry.
     if (!supabase || !user) {
       removeLocalGame(chat.id);
-      if (chat.id === activeChatId) newGame();
+      if (chat.id === activeChatId) {
+        if (gameView === "thread") backToTopicList();
+        else {
+          setActiveChatId(null);
+          setMessages([]);
+        }
+      }
       setChats(loadLocalGames());
       return;
     }
     const thread = await resolveThreadMessages(supabase, chat);
-    const urls = [
-      chat.cover_url ?? "",
-      ...thread.flatMap((message) =>
-        Array.isArray(message.images) ? message.images : [],
-      ),
-    ];
-    const paths = urls
-      .map(coverStoragePath)
-      .filter((path): path is string => Boolean(path));
     await supabase.from("chats").delete().eq("id", chat.id);
-    if (paths.length) {
-      try {
-        await supabase.storage.from("covers").remove(paths);
-      } catch (caught) {
-        console.error("Storage cleanup failed:", caught);
+    await removeCoverStoragePaths(supabase, threadImageStoragePaths(thread));
+    if (chat.id === activeChatId) {
+      if (gameView === "thread") backToTopicList();
+      else {
+        setActiveChatId(null);
+        setMessages([]);
       }
     }
-    if (chat.id === activeChatId) newGame();
     void loadChats();
   }
 
-  // Delete the chat currently shown in the game card. Unsaved drafts (no row yet)
-  // just discard back to home.
+  async function deleteAllTopics() {
+    setMenuOpenId(null);
+    const topics = topicsForRoom(chats, game, platform);
+    if (topics.length === 0) return;
+    if (
+      !(await askConfirm(
+        `Delete all ${topics.length} topics? Your guides and game info stay. This cannot be undone.`,
+        "Delete all topics",
+      ))
+    ) {
+      return;
+    }
+    const supabase = getSupabase();
+    if (!supabase || !user) {
+      const ids = new Set(topics.map((row) => row.id));
+      for (const id of ids) removeLocalGame(id);
+      if (activeChatId && ids.has(activeChatId)) {
+        if (gameView === "thread") backToTopicList();
+        else {
+          setActiveChatId(null);
+          setMessages([]);
+        }
+      }
+      setChats(loadLocalGames());
+      return;
+    }
+    for (const chat of topics) {
+      const thread = await resolveThreadMessages(supabase, chat);
+      await supabase.from("chats").delete().eq("id", chat.id);
+      await removeCoverStoragePaths(supabase, threadImageStoragePaths(thread));
+    }
+    if (activeChatId && topics.some((row) => row.id === activeChatId)) {
+      backToTopicList();
+    }
+    void loadChats();
+  }
+
+  async function deleteGameRoom(chat: Chat, event?: MouseEvent<HTMLButtonElement>) {
+    event?.stopPropagation();
+    setMenuOpenId(null);
+    const roomTopics = topicsForRoom(chats, chat.game, chat.platform);
+    const label = chat.game || "Untitled game";
+    if (
+      !(await askConfirm(
+        roomTopics.length > 1
+          ? `Delete "${label}" and all ${roomTopics.length} topics? This cannot be undone.`
+          : `Delete "${label}"? This cannot be undone.`,
+        "Delete game",
+      ))
+    ) {
+      return;
+    }
+    const supabase = getSupabase();
+    if (!supabase || !user) {
+      const ids = new Set(roomTopics.map((row) => row.id));
+      const next = loadLocalGames().filter((row) => !ids.has(row.id));
+      setLocalGames(next);
+      if (activeChatId && ids.has(activeChatId)) newGame();
+      else if (gameView === "topics" && game.trim()) {
+        const stillHere = next.some(
+          (row) =>
+            row.game === chat.game &&
+            row.platform === chat.platform,
+        );
+        if (!stillHere) newGame();
+      }
+      setChats(loadLocalGames());
+      return;
+    }
+    const paths = new Set<string>();
+    for (const row of roomTopics) {
+      const thread = await resolveThreadMessages(supabase, row);
+      for (const path of coverUrlsToStoragePaths([
+        row.cover_url ?? "",
+        ...thread.flatMap((message) =>
+          Array.isArray(message.images) ? message.images : [],
+        ),
+      ])) {
+        paths.add(path);
+      }
+      await supabase.from("chats").delete().eq("id", row.id);
+    }
+    await removeCoverStoragePaths(supabase, [...paths]);
+    const removedActive = activeChatId && roomTopics.some((row) => row.id === activeChatId);
+    if (removedActive || (gameView === "topics" && game === chat.game && platform === chat.platform)) {
+      newGame();
+    }
+    void loadChats();
+  }
+
+  async function deleteChat(chat: Chat, event?: MouseEvent<HTMLButtonElement>) {
+    await deleteGameRoom(chat, event);
+  }
+
+  async function deleteActiveTopic() {
+    setMenuOpenId(null);
+    const chat = chats.find((row) => row.id === activeChatIdRef.current);
+    if (chat) {
+      await deleteTopicRow(chat);
+      return;
+    }
+  }
+
   async function deleteActiveChat() {
     setMenuOpenId(null);
     const chat = chats.find((c) => c.id === activeChatIdRef.current);
     if (chat) {
-      await deleteChat(chat);
+      await deleteGameRoom(chat);
+      return;
+    }
+    if (game.trim()) {
+      await deleteGameRoom({
+        id: "",
+        game,
+        platform,
+        preferred_guide_url: preferredUrls[0] ?? "",
+        preferred_guide_urls: preferredUrls,
+        cover_url: cover,
+        release_year: releaseYear,
+        updated_at: new Date().toISOString(),
+      });
       return;
     }
     if (await askConfirm("Discard this game?")) newGame();
+  }
+
+  async function renameTopic(chat: Chat) {
+    setMenuOpenId(null);
+    const current = resolvedTopicTitle(chat);
+    const next = await askPrompt("Rename topic", current, "Save");
+    if (next === null) return;
+    const title = next.trim().slice(0, 120);
+    const updated = { ...chat, title };
+
+    setChats((prev) =>
+      prev.map((row) => (row.id === chat.id ? updated : row)),
+    );
+
+    const supabase = getSupabase();
+    if (!supabase || !user) {
+      upsertLocalGame(updated);
+      setChats(loadLocalGames());
+      return;
+    }
+    let error = (await supabase.from("chats").update({ title }).eq("id", chat.id)).error;
+    if (error && isTopicColumnDbError(error)) {
+      saveTopicTitleById(chat.id, title);
+      error = null;
+    }
+    if (error) {
+      console.error("Failed to rename topic:", error);
+      setToast("Couldn't rename topic. Try again.");
+      void loadChats();
+      return;
+    }
+    void loadChats();
   }
 
   const {
@@ -1491,6 +1902,7 @@ export default function Home() {
     guideIndexState,
     guidePending,
     spoilerPrefs,
+    topicSpoilerMajor: gameSpoilerMajor,
     setActiveChatId,
     setChats,
     setMessages,
@@ -1529,7 +1941,7 @@ export default function Home() {
     applyIngestRowToMeta,
     startBundleIndexingPoll,
     stopBundleIndexingPoll,
-    normGame,
+    normGameKey,
   });
 
   const clearActiveChat = useCallback(async () => {
@@ -1576,25 +1988,111 @@ export default function Home() {
     deleteMessageImages,
   ]);
 
-  const started = messages.length > 0 || Boolean(activeChatId && game.trim());
+  const started =
+    gameView !== null ||
+    messages.length > 0 ||
+    Boolean(activeChatId && game.trim()) ||
+    editingGame;
   const hasGame = Boolean(game.trim());
-  const composerLocked = loading || !hasGame || guideChecking;
+  const showTopicList = gameView === "topics" && hasGame && !editingGame;
+  const showThread =
+    hasGame &&
+    !editingGame &&
+    gameView !== "topics" &&
+    (gameView === "thread" || messages.length > 0 || Boolean(activeChatId));
+  const composerLocked = loading || !hasGame || guideChecking || showTopicList;
+  const gameRooms = groupChatsByRoom(chats);
+  const roomTopics = hasGame ? topicsForRoom(chats, game, platform) : [];
+  const activeRoomKey = hasGame && gameView !== null ? gameRoomKey(game, platform) : null;
   // Home layout states:
   // - Empty account: marketing hero + setup form (+ examples).
   // - Has saved games (quick home): hero + carousel + CTAs; "+ New game" collapses
   //   the hero and reveals the setup form below the carousel (push-up motion).
   const homeMode = !started && !editingGame;
-  const hasRecent = homeMode && chats.length > 0;
+  const hasRecent = homeMode && gameRooms.length > 0;
   const showCarousel = isMounted && hasRecent && !started;
   const quickIdle = showCarousel && !newGameOpen;
   const showHero = isMounted && homeMode;
   const showSetupForm =
     (isMounted && homeMode && (!hasRecent || newGameOpen)) || (started && editingGame);
   const QUICK_LIMIT = 7;
-  const recentGames = chats.slice(0, QUICK_LIMIT);
-  const moreGamesCount = chats.length - recentGames.length;
+  const recentGames = gameRooms.slice(0, QUICK_LIMIT).map((room) => room.representative);
+  const moreGamesCount = gameRooms.length - recentGames.length;
   const lastUserIndex = messages.map((m) => m.role).lastIndexOf("user");
   const lastGuideIndex = messages.map((m) => m.role).lastIndexOf("assistant");
+
+  const showStickyHeader =
+    showSticky && (showTopicList || messages.length > 0);
+
+  const activeTopicTitle = showThread
+    ? displayTopicTitle(
+        activeChatId
+          ? resolvedTopicTitle(chats.find((row) => row.id === activeChatId) ?? { messages })
+          : titleFromMessages(messages),
+      )
+    : "";
+
+  const renderActiveGameCard = (menuVariant: "thread" | "topics") => (
+    <ActiveGameCard
+      topRef={topRef}
+      coverEnabled={coverEnabled}
+      cover={cover}
+      game={game}
+      platform={platform}
+      releaseYear={releaseYear}
+      activeChatId={menuVariant === "thread" ? activeChatId : null}
+      temporary={menuVariant === "thread" ? temporary : false}
+      loading={loading}
+      menuOpenId={menuOpenId}
+      preferredUrls={preferredUrls}
+      guideBundleMeta={guideBundleMeta}
+      bundleIndexStatus={bundleIndexStatus}
+      bundlePanelLoad={bundlePanelLoad}
+      guideIndexState={guideIndexState}
+      showQuickAdd={showQuickAdd}
+      guidePending={guidePending}
+      retryingBundleUrl={retryingBundleUrl}
+      refreshingBundleUrl={refreshingBundleUrl}
+      isReindexingAll={isReindexingAll}
+      gameSpoilerMajor={gameSpoilerMajor}
+      user={user}
+      menuVariant={menuVariant}
+      topicCount={roomTopics.length}
+      topicTitle={menuVariant === "thread" ? activeTopicTitle : undefined}
+      className={menuVariant === "topics" ? "topic-list-game-card" : undefined}
+      onToggleTemporary={() => void toggleTemporary()}
+      onToggleRowMenu={toggleRowMenu}
+      onEditGame={() => {
+        setMenuOpenId(null);
+        setEditingGame(true);
+        scrollToTop();
+      }}
+      onNewTopic={startNewTopic}
+      chatHasMessages={messages.length > 0}
+      onClearActiveChat={() => void clearActiveChat()}
+      onDeleteTopic={() => void deleteActiveTopic()}
+      onDeleteActiveChat={() => void deleteActiveChat()}
+      onDeleteAllTopics={() => void deleteAllTopics()}
+      onSetShowQuickAdd={setShowQuickAdd}
+      onPreferredUrlsChange={setPreferredUrls}
+      onBundleMetaChange={setGuideBundleMeta}
+      onGuideCheckChange={setGuideChecking}
+      onGuidePendingChange={setGuidePending}
+      onRequestConfirm={(opts) =>
+        new Promise((resolve) => setConfirmState({ ...opts, resolve }))
+      }
+      onSaveGameMeta={() => void saveGameMeta()}
+      onRetryBundleIngest={(url) => void retryBundleIngest(url)}
+      onSkipBundlePage={handleSkipBundlePage}
+      onUnskipBundlePage={handleUnskipBundlePage}
+      onSkipAllMissingBundlePages={(url, slugs) =>
+        handleSkipAllMissingBundlePages(url, slugs)
+      }
+      onRefreshBundleDiscovery={(url) => void refreshBundleDiscovery(url)}
+      onReindexAllPending={() => void reindexAllPending()}
+      onGameSpoilerChange={updateGameSpoiler}
+    />
+  );
 
   return (
     <main>
@@ -1659,8 +2157,9 @@ export default function Home() {
       <GamesSidebar
         visible={Boolean(user || chats.length > 0)}
         user={user}
-        chats={chats}
+        chats={gameRooms.map((room) => room.representative)}
         activeChatId={activeChatId}
+        activeRoomKey={activeRoomKey}
         sidebarOpen={sidebarOpen}
         libraryOpen={libraryOpen}
         steamLibraryOpen={steamLibraryOpen}
@@ -1683,10 +2182,17 @@ export default function Home() {
           // history unwind if it ever bothers anyone.
           newGame();
         }}
+        showBackToGame={showThread}
+        onBackToGame={() => {
+          setSidebarOpen(false);
+          setMenuOpenId(null);
+          if (chatHistoryPushed.current) window.history.back();
+          else backToTopicList();
+        }}
         onOpenSavedLibrary={openSavedLibrary}
         onConnectSteam={connectSteam}
         onOpenSteamLibrary={openSteamLibrary}
-        onOpenChat={openChat}
+        onOpenChat={openGameRoom}
         onToggleRowMenu={toggleRowMenu}
         onEditGame={editGame}
         onDeleteChat={deleteChat}
@@ -1697,9 +2203,9 @@ export default function Home() {
         onPickSteamGame={startFromSteamGame}
       />
 
-      {started && showSticky && (
+      {(showThread || showTopicList) && showStickyHeader && (
         <div
-          className="sticky-header"
+          className={`sticky-header${spoilerPrefs.major ? " spoilers-on" : ""}`}
           onClick={scrollToTop}
           role="button"
           tabIndex={0}
@@ -1729,7 +2235,9 @@ export default function Home() {
           {coverEnabled && <CoverThumb cover={cover} name={game} className="cover-mini" />}
           <div className="sticky-meta">
             <strong>{game || "Untitled game"}</strong>
-            {(platform || releaseYear || game) && (
+            {showThread && activeTopicTitle ? (
+              <small className="sticky-topic-title">{activeTopicTitle}</small>
+            ) : (platform || releaseYear || game) ? (
               <small className="meta-subline">
                 {displayPlatform(platform, cover) && (
                   <span className="meta-chunk">{displayPlatform(platform, cover)}</span>
@@ -1767,7 +2275,7 @@ export default function Home() {
                   </>
                 )}
               </small>
-            )}
+            ) : null}
           </div>
           {activeChatId && !temporary && (
             <button
@@ -1812,7 +2320,7 @@ export default function Home() {
         guidePending={guidePending}
         gameSpoilerMajor={gameSpoilerMajor}
         user={user}
-        onOpenChat={openChat}
+        onOpenChat={openGameRoom}
         onOpenSavedLibrary={openSavedLibrary}
         onStartNewGame={startNewGame}
         onOpenSteamLibrary={openSteamLibrary}
@@ -1837,63 +2345,26 @@ export default function Home() {
         onSaveGameMeta={() => void saveGameMeta()}
       />
 
-      {started && !editingGame ? (
-        <ActiveGameCard
-          topRef={topRef}
-          coverEnabled={coverEnabled}
-          cover={cover}
-          game={game}
-          platform={platform}
-          releaseYear={releaseYear}
-          activeChatId={activeChatId}
-          temporary={temporary}
-          loading={loading}
-          menuOpenId={menuOpenId}
-          preferredUrls={preferredUrls}
-          guideBundleMeta={guideBundleMeta}
-          bundleIndexStatus={bundleIndexStatus}
-          bundlePanelLoad={bundlePanelLoad}
-          guideIndexState={guideIndexState}
-          showQuickAdd={showQuickAdd}
-          guidePending={guidePending}
-          retryingBundleUrl={retryingBundleUrl}
-          refreshingBundleUrl={refreshingBundleUrl}
-          isReindexingAll={isReindexingAll}
-          gameSpoilerMajor={gameSpoilerMajor}
-          user={user}
-          onToggleTemporary={() => void toggleTemporary()}
-          onToggleRowMenu={toggleRowMenu}
-          onEditGame={() => {
-            setMenuOpenId(null);
-            setEditingGame(true);
-            scrollToTop();
-          }}
-          chatHasMessages={messages.length > 0}
-          onClearActiveChat={() => void clearActiveChat()}
-          onDeleteActiveChat={() => void deleteActiveChat()}
-          onSetShowQuickAdd={setShowQuickAdd}
-          onPreferredUrlsChange={setPreferredUrls}
-          onBundleMetaChange={setGuideBundleMeta}
-          onGuideCheckChange={setGuideChecking}
-          onGuidePendingChange={setGuidePending}
-          onRequestConfirm={(opts) =>
-            new Promise((resolve) => setConfirmState({ ...opts, resolve }))
-          }
-          onSaveGameMeta={() => void saveGameMeta()}
-          onRetryBundleIngest={(url) => void retryBundleIngest(url)}
-          onSkipBundlePage={handleSkipBundlePage}
-          onUnskipBundlePage={handleUnskipBundlePage}
-          onSkipAllMissingBundlePages={(url, slugs) =>
-            handleSkipAllMissingBundlePages(url, slugs)
-          }
-          onRefreshBundleDiscovery={(url) => void refreshBundleDiscovery(url)}
-          onReindexAllPending={() => void reindexAllPending()}
-          onGameSpoilerChange={updateGameSpoiler}
-        />
+      {showTopicList ? (
+        <div className="topic-list-shell">
+          <TopicList
+            headerBefore={renderActiveGameCard("topics")}
+            topics={roomTopics}
+            menuOpenId={menuOpenId}
+            loading={loading}
+            onNewTopic={startNewTopic}
+            onOpenTopic={(topic) => void openChat(topic)}
+            onToggleRowMenu={toggleRowMenu}
+            onRenameTopic={(topic) => void renameTopic(topic)}
+            onDeleteTopic={(topic) => void deleteTopicRow(topic)}
+          />
+          <HomeTip />
+        </div>
       ) : null}
 
-      
-      {started && (
+      {showThread ? renderActiveGameCard("thread") : null}
+
+      {showThread ? (
         <MessageList
           messages={messages}
           loading={loading}
@@ -1926,9 +2397,9 @@ export default function Home() {
             setGuideNudgeDismissed(true);
           }}
         />
-      )}
+      ) : null}
 
-      {started && (
+      {showThread && (
         <button
           type="button"
           className={`scroll-to-bottom-fab${showScrollFab ? " visible" : ""}`}
@@ -1953,7 +2424,7 @@ export default function Home() {
           (editSlotEl) so it replaces the green bubble in place. Input/images
           live in page state so they survive the docked<->portal switch;
           startEdit's setTimeout(0) re-focuses the textarea after it mounts. */}
-      {!quickIdle &&
+      {!quickIdle && !showTopicList &&
         (() => {
           const composer = (
         <ComposerShell
@@ -2035,7 +2506,7 @@ export default function Home() {
         </div>
       )}
 
-      {!quickIdle && (
+      {!quickIdle && !showTopicList && (
         <p className="disclaimer">
           Guides are summarized by AI. Check the sources for version-specific details.
         </p>
@@ -2101,6 +2572,18 @@ export default function Home() {
             </div>
           </div>
         </div>
+      )}
+
+      {promptState && (
+        <PromptDialog
+          label={promptState.label}
+          confirmLabel={promptState.confirmLabel}
+          draft={promptDraft}
+          inputRef={promptInputRef}
+          onDraftChange={setPromptDraft}
+          onCancel={() => closePrompt(null)}
+          onSave={() => closePrompt()}
+        />
       )}
 
       {toast && (

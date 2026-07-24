@@ -14,7 +14,31 @@ import {
 } from "../lib/prompt.js";
 import { selectSources } from "../lib/rank.js";
 import { parseBlocks, parseInline } from "../lib/markdown.js";
-import { buildSpoilerBlock, coerceSpoilerPrefs, loadSpoilerPrefs } from "../lib/spoiler-prefs.js";
+import {
+  chatPayloadWithoutTopicColumns,
+  gameRoomKey,
+  groupChatsByRoom,
+  isTopicColumnDbError,
+  mergeChatsFromServer,
+  syncSharedMetaToLocalGames,
+  topicsForRoom,
+} from "../lib/game-room.js";
+import {
+  displayTopicTitle,
+  loadTopicTitleById,
+  resolvedTopicTitle,
+  saveTopicTitleById,
+  titleFromMessages,
+  truncateTitle,
+} from "../lib/topic-title.js";
+import { coverStoragePath } from "../lib/image.js";
+import {
+  buildSpoilerBlock,
+  coerceSpoilerPrefs,
+  loadSpoilerPrefs,
+  loadTopicSpoilerPrefs,
+  saveTopicSpoilerMajorById,
+} from "../lib/spoiler-prefs.js";
 import {
   avatarUrlFromUser,
   coerceDisplayName,
@@ -1047,6 +1071,43 @@ const draft = coerceSessionDraft({
 });
 assert.equal(draft?.game, "Hades");
 assert.equal(coerceSessionDraft({ messages: [] }), null);
+assert.equal(
+  coerceSessionDraft({
+    game: "FF8",
+    platform: "PS1",
+    messages: [],
+    gameView: "topics",
+  })?.gameView,
+  "topics",
+);
+assert.equal(
+  mergeChatsFromServer(
+    [
+      {
+        id: "only-local",
+        game: "FF8",
+        platform: "PS1",
+        preferred_guide_url: "",
+        updated_at: "2026-01-03T00:00:00.000Z",
+        title: "New topic",
+      },
+    ],
+    [],
+  ).length,
+  1,
+);
+assert.equal(isTopicColumnDbError({ message: 'column "title" does not exist' }), true);
+assert.equal(isTopicColumnDbError({ message: "network error" }), false);
+assert.equal(isTopicColumnDbError({ message: "invalid title field in request" }), false);
+assert.deepEqual(
+  chatPayloadWithoutTopicColumns({
+    game: "Hades",
+    title: "Boss help",
+    spoiler_major: true,
+    messages: [],
+  }),
+  { game: "Hades", messages: [] },
+);
 
 assert.equal(
   mergeSpeechParts(["hello", "hello", "world", "world"]),
@@ -1709,5 +1770,112 @@ const mergedPins = mergeStyleAfterSummarize(
 );
 assert.equal(mergedPins.answerLength, "short");
 assert.equal(writeStyleRecord(mergedPins, pinFixture.userPins).userPins.fields[0], "answerLength");
+
+assert.equal(truncateTitle("  How do I beat the first boss in this area?  ", 20), "How do I beat the f…");
+assert.equal(displayTopicTitle(""), "Untitled topic");
+assert.equal(
+  titleFromMessages([{ role: "user", content: "Best GF junction setup?" }]),
+  "Best GF junction setup?",
+);
+assert.equal(
+  resolvedTopicTitle({
+    id: "t1",
+    title: "",
+    messages: [{ role: "user", content: "Where is the key?" }],
+  }),
+  "Where is the key?",
+);
+{
+  const store = new Map();
+  /** @type {any} */ (globalThis).window = {
+    localStorage: {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => store.set(k, v),
+      removeItem: (k) => store.delete(k),
+    },
+  };
+  saveTopicTitleById("legacy-t", "Saved locally");
+  assert.equal(loadTopicTitleById("legacy-t"), "Saved locally");
+  assert.equal(
+    resolvedTopicTitle({ id: "legacy-t", title: "", messages: [] }),
+    "Saved locally",
+  );
+}
+assert.equal(
+  coverStoragePath("https://x.supabase.co/storage/v1/object/public/covers/u1/c.jpg"),
+  "u1/c.jpg",
+);
+assert.equal(coverStoragePath("https://cdn.example.com/cover.jpg"), null);
+assert.equal(gameRoomKey("Final Fantasy VIII", "PC"), "final fantasy viii|pc");
+const roomFixture = groupChatsByRoom([
+  {
+    id: "a",
+    game: "FF8",
+    platform: "PC",
+    preferred_guide_url: "",
+    updated_at: "2026-01-02T00:00:00.000Z",
+    title: "GF build",
+  },
+  {
+    id: "b",
+    game: "FF8",
+    platform: "PC",
+    preferred_guide_url: "",
+    updated_at: "2026-01-03T00:00:00.000Z",
+    title: "Characters",
+  },
+  {
+    id: "c",
+    game: "Zelda",
+    platform: "NES",
+    preferred_guide_url: "",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    title: "Dungeon 1",
+  },
+]);
+assert.equal(roomFixture.length, 2);
+assert.equal(roomFixture[0].topics.length, 2);
+assert.equal(topicsForRoom(roomFixture[0].topics.concat(roomFixture[1].topics), "FF8", "PC").length, 2);
+assert.equal(
+  topicsForRoom(
+    [
+      {
+        id: "older",
+        game: "FF8",
+        platform: "PC",
+        preferred_guide_url: "",
+        updated_at: "2026-01-01T12:00:00.000Z",
+      },
+      {
+        id: "newer",
+        game: "FF8",
+        platform: "PC",
+        preferred_guide_url: "",
+        updated_at: "2026-01-03T08:30:00.000Z",
+      },
+    ],
+    "FF8",
+    "PC",
+  )[0].id,
+  "newer",
+);
+assert.equal(
+  syncSharedMetaToLocalGames(roomFixture[0].topics, "FF8", "PC", { cover_url: "x" })[0].cover_url,
+  "x",
+);
+assert.equal(loadTopicSpoilerPrefs({ spoiler_major: true }, "FF8").major, true);
+assert.equal(loadTopicSpoilerPrefs({ title: "x" }, "ZZZ-no-prefs").major, false);
+{
+  const store = new Map();
+  /** @type {any} */ (globalThis).window = {
+    localStorage: {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => store.set(k, v),
+      removeItem: (k) => store.delete(k),
+    },
+  };
+  saveTopicSpoilerMajorById("chat-1", true);
+  assert.equal(loadTopicSpoilerPrefs({ id: "chat-1", title: "x" }, "FF8").major, true);
+}
 
 console.log("Self-check passed.");

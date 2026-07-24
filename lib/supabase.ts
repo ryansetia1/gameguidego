@@ -28,6 +28,10 @@ export type Chat = {
   // Supabase Storage public URL from a device upload.
   cover_url?: string;
   release_year?: string;
+  /** Topic title; empty until the first question (see lib/topic-title.js). */
+  title?: string;
+  /** Per-topic major-spoiler toggle (global profile toggle still ORs in). */
+  spoiler_major?: boolean;
   /** Signed-in: read from normalized tables. Anon/local: stored inline. */
   messages?: unknown;
   updated_at: string;
