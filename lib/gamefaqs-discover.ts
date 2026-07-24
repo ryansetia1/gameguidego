@@ -3,6 +3,7 @@ import {
   buildGamefaqsPartDiscoveryQueries,
   discoverGamefaqsBundle,
   isGenericGamefaqsBundleTitle,
+  isLikelySinglePageGamefaqsGuide,
   mergeGamefaqsBundlePages,
   parseGamefaqsFaqUrl,
   parseGamefaqsGuideTitle,
@@ -196,11 +197,33 @@ function buildExtractCandidates(parsed: ParsedFaq, rawUrl: string): string[] {
   };
 
   const hinted = parseGamefaqsFaqUrl(rawUrl);
-  if (hinted?.sectionSlug) add(rawUrl);
-  add(`${parsed.canonicalUrl}/introduction`);
-  add(`${parsed.canonicalUrl}/walkthrough`);
-  add(parsed.canonicalUrl);
+  const intro = `${parsed.canonicalUrl}/introduction`;
+  const walkthrough = `${parsed.canonicalUrl}/walkthrough`;
+  const root = parsed.canonicalUrl;
+
+  if (hinted?.sectionSlug) {
+    add(rawUrl);
+    add(root);
+    add(intro);
+    add(walkthrough);
+    return out;
+  }
+
+  // Bundle-root paste: try the FAQ root first — one extract often yields either
+  // a multi-page TOC or the full single-page guide text.
+  add(root);
+  add(intro);
+  add(walkthrough);
   return out;
+}
+
+async function cacheSinglePageDiscovery(parsed: ParsedFaq, title: string): Promise<void> {
+  void setCachedBundleDiscovery(parsed.bundleKey, {
+    canonicalUrl: parsed.canonicalUrl,
+    title,
+    pages: [],
+    singlePage: true,
+  });
 }
 
 async function discoverGamefaqsBundleViaExtract(
@@ -210,7 +233,6 @@ async function discoverGamefaqsBundleViaExtract(
   signal?: AbortSignal,
 ): Promise<{ pages: BundlePage[]; title: string; definiteSinglePage?: boolean; isBlocked?: boolean }> {
   let bestTitle = "GameFAQs guide";
-  let definiteSinglePage = false;
   let isBlocked = false;
 
   for (const url of buildExtractCandidates(parsed, rawUrl)) {
@@ -231,23 +253,29 @@ async function discoverGamefaqsBundleViaExtract(
 
     const fromToc = parseGamefaqsTocFromHtml(extracted.content, parsed);
     const merged = mergeGamefaqsBundlePages([...seedPages, ...fromToc]);
-    
-    if (merged.length <= 1) {
-      if (url === parsed.canonicalUrl || url === rawUrl) {
-        definiteSinglePage = true;
-      }
-      void logTraceEvent("discovery_extract_single", `Extracted ${url} but found no multi-page TOC`);
-      continue;
+
+    if (merged.length > 1) {
+      void logTraceEvent("discovery_extract_success", `Found ${merged.length} pages via TOC on ${url}`);
+      return {
+        pages: merged,
+        title: bestTitle,
+      };
     }
 
-    void logTraceEvent("discovery_extract_success", `Found ${merged.length} pages via TOC on ${url}`);
-    return {
-      pages: merged,
-      title: bestTitle,
-    };
+    if (url === parsed.canonicalUrl && isLikelySinglePageGamefaqsGuide(extracted.content, parsed)) {
+      void logTraceEvent(
+        "discovery_single_page",
+        `Detected single-page GameFAQs FAQ at ${url}`,
+        undefined,
+        { bundleKey: parsed.bundleKey, chars: extracted.content.length },
+      );
+      return { pages: seedPages, title: bestTitle, definiteSinglePage: true };
+    }
+
+    void logTraceEvent("discovery_extract_single", `Extracted ${url} but found no multi-page TOC`);
   }
 
-  return { pages: seedPages, title: bestTitle, definiteSinglePage, isBlocked };
+  return { pages: seedPages, title: bestTitle, isBlocked };
 }
 
 async function discoverViaTavily(
@@ -262,6 +290,9 @@ async function discoverViaTavily(
   }
 
   if (fromExtract.definiteSinglePage || fromExtract.isBlocked) {
+    if (fromExtract.definiteSinglePage && !fromExtract.isBlocked) {
+      await cacheSinglePageDiscovery(parsed, fromExtract.title);
+    }
     return { pages: seedPages, title: fromExtract.title, isBlocked: fromExtract.isBlocked };
   }
 
@@ -317,6 +348,15 @@ async function discoverGamefaqsBundleCacheFirst(
       void logTraceEvent("discovery_cache_hit_blocked", `Blocked discovery cache hit for ${parsed.bundleKey}`);
       return { bundle: false, isBlocked: true };
     }
+    if (cached.singlePage) {
+      void logTraceEvent(
+        "discovery_cache_hit_single",
+        `Single-page discovery cache hit for ${parsed.bundleKey}`,
+        undefined,
+        { bundleKey: parsed.bundleKey },
+      );
+      return { bundle: false };
+    }
     if (seedPages.length > 1) {
       void logTraceEvent("discovery_cache_hit", `Discovery cache hit: ${seedPages.length} pages for ${parsed.bundleKey}`, undefined, { bundleKey: parsed.bundleKey, pageCount: seedPages.length });
       return buildBundleDiscovery(parsed, seedPages, title);
@@ -337,6 +377,9 @@ async function discoverGamefaqsBundleCacheFirst(
   }
 
   if (extracted.definiteSinglePage || extracted.isBlocked) {
+    if (extracted.definiteSinglePage && !extracted.isBlocked) {
+      await cacheSinglePageDiscovery(parsed, extracted.title);
+    }
     if (seedPages.length > 0) {
       return buildBundleDiscovery(parsed, seedPages, title);
     }

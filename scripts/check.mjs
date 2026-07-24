@@ -73,6 +73,7 @@ import {
   parseGamefaqsPagesFromUrls,
   parseGamefaqsGuideTitle,
   isGenericGamefaqsBundleTitle,
+  isLikelySinglePageGamefaqsGuide,
   pickGamefaqsBundleTitle,
   titleFromGamefaqsSlug,
 } from "../lib/gamefaqs-bundle.js";
@@ -720,6 +721,32 @@ assert.deepEqual(
   })?.pages[0]?.slug,
   "part-1",
 );
+assert.equal(
+  coerceCachedBundleDiscovery({
+    singlePage: true,
+    title: "Binding of Isaac FAQ",
+    canonicalUrl: suikodenBundle,
+  })?.singlePage,
+  true,
+);
+assert.equal(
+  coerceCachedBundleDiscovery({
+    singlePage: true,
+    title: "Binding of Isaac FAQ",
+  })?.pages.length,
+  0,
+);
+assert.equal(
+  isLikelySinglePageGamefaqsGuide("x".repeat(500), parsed80674),
+  true,
+  "long root extract without sibling TOC is single-page",
+);
+assert.equal(
+  isLikelySinglePageGamefaqsGuide(sampleTocHtml + "x".repeat(500), parsed80674),
+  false,
+  "multi-section TOC is not single-page",
+);
+assert.equal(isLikelySinglePageGamefaqsGuide("short", parsed80674), false);
 
 assert.equal(isReplicateRateLimit(new Error("429 Too Many Requests")), true);
 assert.equal(isReplicateRateLimit(new Error("network down")), false);

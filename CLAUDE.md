@@ -502,7 +502,10 @@ Full refresh pipeline:
 
 1. **Direct fetch** (`discoverGamefaqsBundle` in `lib/gamefaqs-bundle.js`) when
    Cloudflare allows (rare).
-2. **Tavily Extract** introduction / walkthrough / root → `parseGamefaqsTocFromHtml`.
+2. **Tavily Extract** FAQ root first (then introduction / walkthrough only if
+   needed). `isLikelySinglePageGamefaqsGuide` stops after one root extract when
+   the text is long and the TOC has no sibling sections; result is cached as
+   `singlePage: true` in `guide_bundle_cache` (30d TTL).
 3. **Tavily Site Search** (`searchDiscoveryUrls`, up to 30 hits/query):
    - Base queries (`buildGamefaqsDiscoveryBaseQueries`): path-wide, part-, walkthrough,
      boss, faq, game name.
