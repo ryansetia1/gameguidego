@@ -25,7 +25,7 @@ function sumopodEmbedCost(inputTokens: number): number {
 }
 
 export function costFromSingleLlmCall(call: LlmCallCostInput): number | null {
-  if (["rewrite", "summarize", "censor"].includes(call.kind)) {
+  if (["rewrite", "summarize", "censor", "visual_query"].includes(call.kind)) {
     const input = call.input_tokens;
     const output = call.output_tokens;
     if (input == null || output == null) return null;
@@ -96,7 +96,7 @@ export function buildTraceEventCostMap(
 ): Map<number, number | null> {
   const map = new Map<number, number | null>();
   const replicateQueue = sortCalls(
-    llmCalls.filter((call) => ["rewrite", "summarize", "censor"].includes(call.kind)),
+    llmCalls.filter((call) => ["rewrite", "summarize", "censor", "visual_query"].includes(call.kind)),
   );
   const embedQueryQueue = sortCalls(
     llmCalls.filter((call) => call.kind === "embed_query" && !isCachedEmbedCall(call)),

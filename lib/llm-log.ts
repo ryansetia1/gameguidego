@@ -64,8 +64,8 @@ export function logLlmCall(entry: LlmLogEntry): void {
     })();
   }
 
-  // ponytail: topic_title/visual_query are file-log only until llm_calls kind check is extended.
-  if (entry.kind !== "topic_title" && entry.kind !== "visual_query") {
+  // ponytail: topic_title is file-log only until llm_calls kind check is extended.
+  if (entry.kind !== "topic_title") {
     const dbEntry: LlmDbLogEntry = {
       kind: entry.kind,
       model: entry.model,

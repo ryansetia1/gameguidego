@@ -422,6 +422,7 @@ do not sync to the cloud or use Storage uploads.
   `game`/`platform`/`user_id` are logged on every call (client sends `userId`;
   validated as a UUID in `/api/solve`). Kinds: `rewrite`, `summarize`, `censor`,
   `topic_title` (file log only until `llm_calls` kind check is extended),
+  `visual_query` (Serper image-query rewrite),
   plus `embed_index` / `embed_query` from `lib/embed-log.ts` (guide ingest batches
   and per-turn RAG query embeds, including cache hits). File tail in
   `llm-log.json` (dev / `LLM_LOG=1`, async writes to avoid blocking the event

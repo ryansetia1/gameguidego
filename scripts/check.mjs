@@ -1831,11 +1831,12 @@ assert.equal(countApiSpendFromTrace(traceSpendFixture).sumopod_embed, 1);
 assert.equal(
   countApiSpendFromLlm([
     { kind: "rewrite" },
+    { kind: "visual_query" },
     { kind: "summarize" },
     { kind: "censor" },
     { kind: "embed_query" },
   ]).replicate,
-  3,
+  4,
 );
 assert.equal(countApiSpendFromLlm([{ kind: "embed_index" }, { kind: "embed_query" }]).sumopod_embed, 2);
 const spendSummary = buildApiSpend(traceSpendFixture, [
