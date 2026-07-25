@@ -2,6 +2,7 @@
 
 import { ClearButton } from "@/app/clear-button";
 import { EditableNoteRow, EditedBadge } from "@/app/profile/player-memory-note-row";
+import { gameRoomKey } from "@/lib/game-room.js";
 import { MEMORY_GAME_NOTE_CAP } from "@/lib/player-memory.js";
 import { isGameNotePinned, isGameProgressPinned } from "@/lib/player-memory-pins.js";
 import type { PlayerStyleUserPins } from "@/lib/player-memory-pins.js";
@@ -25,10 +26,12 @@ type Props = {
   gameFilter: string;
   onGameFilterChange: (value: string) => void;
   userPins: PlayerStyleUserPins;
+  libraryRoomKeys: Set<string>;
   onSaveProgress: (gameKey: string, platform: string, progress: string) => void;
   onAddNote: (gameKey: string, platform: string) => void;
   onSaveNote: (gameKey: string, platform: string, index: number, text: string) => void;
   onRemoveNote: (gameKey: string, platform: string, index: number) => void;
+  onForgetGame: (gameKey: string, platform: string, title: string) => void;
 };
 
 export function PlayerMemoryGamesPanel({
@@ -37,10 +40,12 @@ export function PlayerMemoryGamesPanel({
   gameFilter,
   onGameFilterChange,
   userPins,
+  libraryRoomKeys,
   onSaveProgress,
   onAddNote,
   onSaveNote,
   onRemoveNote,
+  onForgetGame,
 }: Props) {
   return (
     <div
@@ -81,12 +86,16 @@ export function PlayerMemoryGamesPanel({
           const notes = row.notes ?? [];
           const title = `${formatGameKey(row.game_key)}${row.platform ? ` · ${row.platform}` : ""}`;
           const progressPinned = isGameProgressPinned(userPins, row.game_key, row.platform);
+          const notInLibrary = !libraryRoomKeys.has(gameRoomKey(row.game_key, row.platform));
           return (
             <details key={`${row.game_key}:${row.platform}`} className="player-memory-game">
               <summary className="player-memory-game-summary" aria-label={title}>
                 <span className="player-memory-game-summary-leading" aria-hidden="true" />
                 <span className="player-memory-game-summary-body">
                   <span className="player-memory-game-title">{title}</span>
+                  {notInLibrary ? (
+                    <span className="player-memory-not-in-library">Not in library</span>
+                  ) : null}
                 </span>
                 <span className="player-memory-game-count" aria-label={`${notes.length} notes`}>
                   {notes.length}
@@ -138,6 +147,15 @@ export function PlayerMemoryGamesPanel({
                 ) : (
                   <p className="player-memory-empty">No notes for this game yet.</p>
                 )}
+                <div className="player-memory-game-forget">
+                  <button
+                    type="button"
+                    className="player-memory-forget-btn"
+                    onClick={() => onForgetGame(row.game_key, row.platform, title)}
+                  >
+                    Forget this game
+                  </button>
+                </div>
               </div>
             </details>
           );

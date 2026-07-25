@@ -6174,6 +6174,52 @@ details.sources small {
   outline-offset: 1px;
 }
 
+.player-memory-not-in-library {
+  display: inline-block;
+  margin-left: 8px;
+  border: 1.5px solid var(--line);
+  padding: 1px 6px;
+  color: var(--text-subtle);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.player-memory-game-forget {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1.5px solid var(--line);
+}
+
+.player-memory-forget-btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  border: 1.5px solid var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--danger);
+  padding: 0 11px;
+  font-family: var(--font-sans);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    transform 120ms var(--ease-pop);
+}
+
+.player-memory-forget-btn:hover {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+.player-memory-forget-btn:active {
+  transform: scale(0.96);
+}
+
 .player-memory-danger-zone {
   margin-top: 8px;
   padding-top: 16px;
@@ -6690,6 +6736,25 @@ details.sources small {
 .prompt-input:focus {
   outline: 3px solid var(--signal);
   outline-offset: 0;
+}
+
+.confirm-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 18px;
+  color: var(--ink);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.confirm-checkbox input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--danger);
+  cursor: pointer;
 }
 
 .confirm-actions {

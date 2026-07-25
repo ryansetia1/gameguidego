@@ -31,6 +31,8 @@ import {
   writeStyleRecord,
 } from "@/lib/player-memory-pins.js";
 import type { PlayerStyleUserPins } from "@/lib/player-memory-pins.js";
+import { gameRoomKey } from "@/lib/game-room.js";
+import { forgetGameMemory } from "@/lib/player-memory-game.js";
 import { getSupabase } from "@/lib/supabase";
 
 type PlayerStyleShape = ReturnType<typeof coercePlayerStyle>;
@@ -124,6 +126,7 @@ export function PlayerMemorySection({ session, onToast }: Props) {
   const [enabled, setEnabled] = useState(false);
   const [state, setState] = useState<MemoryState | null>(null);
   const [games, setGames] = useState<GameMemoryRow[]>([]);
+  const [libraryRoomKeys, setLibraryRoomKeys] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -169,6 +172,14 @@ export function PlayerMemorySection({ session, onToast }: Props) {
         .select("game_key, platform, progress, notes")
         .order("updated_at", { ascending: false });
       if (gamesError) throw gamesError;
+
+      // Room keys of the saved library, to flag memory rows with no matching game.
+      const { data: chatRows } = await supabase.from("chats").select("game, platform");
+      setLibraryRoomKeys(
+        new Set(
+          (chatRows ?? []).map((row) => gameRoomKey(row.game ?? "", row.platform ?? "")),
+        ),
+      );
 
       setEnabled(true);
       setState(stateRow as MemoryState);
@@ -419,6 +430,28 @@ export function PlayerMemorySection({ session, onToast }: Props) {
     setGames((prev) =>
       prev.map((g) => (g.game_key === gameKey && g.platform === platform ? { ...g, notes } : g)),
     );
+  }
+
+  async function forgetGame(gameKey: string, platform: string, title: string) {
+    if (!session) return;
+    const ok = await askConfirm(
+      `Forget saved progress and notes for "${title}"? This cannot be undone.`,
+      "Forget",
+    );
+    if (!ok) return;
+    const supabase = getSupabase();
+    if (!supabase) return;
+    try {
+      await forgetGameMemory(supabase, session.user.id, gameKey, platform);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not forget this game.");
+      return;
+    }
+    setGames((prev) =>
+      prev.filter((g) => !(g.game_key === gameKey && g.platform === platform)),
+    );
+    await load();
+    onToast?.(`Forgot memory for ${title}.`);
   }
 
   async function addGameNote(
@@ -692,6 +725,10 @@ export function PlayerMemorySection({ session, onToast }: Props) {
               gameFilter={gameFilter}
               onGameFilterChange={setGameFilter}
               userPins={userPins}
+              libraryRoomKeys={libraryRoomKeys}
+              onForgetGame={(gameKey, platform, title) =>
+                void forgetGame(gameKey, platform, title)
+              }
               onSaveProgress={(gameKey, platform, progress) =>
                 void saveGameProgress(gameKey, platform, progress, userPins, style)
               }

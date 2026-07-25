@@ -73,6 +73,8 @@ import {
   titleFromMessages,
 } from "@/lib/topic-title.js";
 import { getSupabase, type Chat } from "@/lib/supabase";
+import { playerMemoryEnabledFromMetadata } from "@/lib/player-memory.js";
+import { forgetGameMemory } from "@/lib/player-memory-game.js";
 import {
   loadLocalGames,
   removeLocalGame,
@@ -229,7 +231,7 @@ export default function Home() {
   const [voiceListening, setVoiceListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [librarySearch, setLibrarySearch] = useState("");
-  const { confirmState, askConfirm, closeConfirm } = useConfirmDialog();
+  const { confirmState, askConfirm, askConfirmWithCheckbox, closeConfirm } = useConfirmDialog();
   const [toast, setToast] = useState("");
   const [lastLibrary, setLastLibrary] = useState<"saved" | "steam">("saved");
   const {
@@ -1862,14 +1864,25 @@ export default function Home() {
     setMenuOpenId(null);
     const roomTopics = topicsForRoom(chats, chat.game, chat.platform);
     const label = chat.game || "Untitled game";
-    if (
-      !(await askConfirm(
-        roomTopics.length > 1
-          ? `Delete "${label}" and all ${roomTopics.length} topics? This cannot be undone.`
-          : `Delete "${label}"? This cannot be undone.`,
-        "Delete game",
-      ))
-    ) {
+    const message =
+      roomTopics.length > 1
+        ? `Delete "${label}" and all ${roomTopics.length} topics? This cannot be undone.`
+        : `Delete "${label}"? This cannot be undone.`;
+    // ponytail: gate the forget-memory checkbox on the metadata flag, not a row-exists
+    // query. If enabled but no memory for this game, checking it deletes nothing (fine).
+    const memoryEnabled = Boolean(user && playerMemoryEnabledFromMetadata(user.user_metadata));
+    let forgetMemory = false;
+    if (memoryEnabled) {
+      const { confirmed, checked } = await askConfirmWithCheckbox(
+        `${message} Your saved progress and notes stay in Learn my style if you add this game again.`,
+        {
+          checkbox: { label: "Also forget saved memory for this game" },
+          confirmLabel: "Delete game",
+        },
+      );
+      if (!confirmed) return;
+      forgetMemory = checked;
+    } else if (!(await askConfirm(message, "Delete game"))) {
       return;
     }
     const supabase = getSupabase();
@@ -1909,6 +1922,13 @@ export default function Home() {
       }
     }
     await removeCoverStoragePaths(supabase, [...paths]);
+    if (forgetMemory && user) {
+      try {
+        await forgetGameMemory(supabase, user.id, normGameKey(chat.game), chat.platform || "");
+      } catch (memoryError) {
+        console.error("Failed to forget game memory:", memoryError);
+      }
+    }
     const roomIds = new Set(roomTopics.map((row) => row.id));
     setChats((prev) => prev.filter((row) => !roomIds.has(row.id)));
     const removedActive = activeChatId && roomTopics.some((row) => row.id === activeChatId);
@@ -2692,7 +2712,7 @@ export default function Home() {
         <ConfirmDialog
           state={confirmState}
           onCancel={() => closeConfirm(false)}
-          onConfirm={() => closeConfirm(true)}
+          onConfirm={(checked) => closeConfirm(true, checked)}
         />
       ) : null}
 

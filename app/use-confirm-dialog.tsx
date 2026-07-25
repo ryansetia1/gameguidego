@@ -6,7 +6,8 @@ type ConfirmState = {
   message: string;
   confirmLabel?: string;
   danger?: boolean;
-  resolve: (value: boolean) => void;
+  checkbox?: { label: string; defaultChecked?: boolean };
+  resolve: (confirmed: boolean, checked: boolean) => void;
 };
 
 export function useConfirmDialog() {
@@ -15,14 +16,31 @@ export function useConfirmDialog() {
   const askConfirm = useCallback(
     (message: string, confirmLabel?: string, danger = true) =>
       new Promise<boolean>((resolve) =>
-        setConfirmState({ message, confirmLabel, danger, resolve }),
+        setConfirmState({ message, confirmLabel, danger, resolve: (confirmed) => resolve(confirmed) }),
       ),
     [],
   );
 
-  const closeConfirm = useCallback((value: boolean) => {
+  const askConfirmWithCheckbox = useCallback(
+    (
+      message: string,
+      options: { checkbox: { label: string; defaultChecked?: boolean }; confirmLabel?: string; danger?: boolean },
+    ) =>
+      new Promise<{ confirmed: boolean; checked: boolean }>((resolve) =>
+        setConfirmState({
+          message,
+          confirmLabel: options.confirmLabel,
+          danger: options.danger ?? true,
+          checkbox: options.checkbox,
+          resolve: (confirmed, checked) => resolve({ confirmed, checked }),
+        }),
+      ),
+    [],
+  );
+
+  const closeConfirm = useCallback((confirmed: boolean, checked = false) => {
     setConfirmState((current) => {
-      current?.resolve(value);
+      current?.resolve(confirmed, checked);
       return null;
     });
   }, []);
@@ -36,7 +54,7 @@ export function useConfirmDialog() {
     return () => document.removeEventListener("keydown", onKey);
   }, [closeConfirm, confirmState]);
 
-  return { confirmState, askConfirm, closeConfirm };
+  return { confirmState, askConfirm, askConfirmWithCheckbox, closeConfirm };
 }
 
 export function ConfirmDialog({
@@ -46,8 +64,14 @@ export function ConfirmDialog({
 }: {
   state: ConfirmState | null;
   onCancel: () => void;
-  onConfirm: () => void;
+  onConfirm: (checked: boolean) => void;
 }) {
+  const [checked, setChecked] = useState(false);
+
+  useEffect(() => {
+    setChecked(state?.checkbox?.defaultChecked ?? false);
+  }, [state]);
+
   if (!state) return null;
 
   return (
@@ -61,6 +85,16 @@ export function ConfirmDialog({
         <p className="confirm-message" id="confirm-dialog-message">
           {state.message}
         </p>
+        {state.checkbox ? (
+          <label className="confirm-checkbox">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(event) => setChecked(event.target.checked)}
+            />
+            <span>{state.checkbox.label}</span>
+          </label>
+        ) : null}
         <div className="confirm-actions">
           <button type="button" className="confirm-cancel" onClick={onCancel}>
             Cancel
@@ -68,7 +102,7 @@ export function ConfirmDialog({
           <button
             type="button"
             className={state.danger === false ? "confirm-confirm" : "confirm-delete"}
-            onClick={onConfirm}
+            onClick={() => onConfirm(checked)}
           >
             {state.confirmLabel ?? "Delete"}
           </button>

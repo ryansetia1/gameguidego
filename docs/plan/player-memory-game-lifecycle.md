@@ -16,8 +16,17 @@ memory (`player_game_memory`). Today:
 - Memory keys are naive normalized strings (`normGameKey`); re-adding the same title
   with different punctuation does not reconnect saved memory.
 
-This doc records a **four-phase** rollout agreed in design discussion (July 2026).
-Phases are ordered by ROI and dependency; ship Phase 1 without waiting for Phase 4.
+This doc records a rollout agreed in design discussion (July 2026). Phases are ordered
+by ROI and dependency; ship Phase 1 without waiting for the rest.
+
+> **Revised scope (2026-07-25).** After a laziness pass the build order is:
+> **Phase 1 (full, badge included) → Phase 3 (catalog id) → Phase 2 (light normalize, no backfill script).**
+> **Phase 4 (fuzzy suggest link) is deferred, not scheduled** — it only helps free-text
+> re-adds that also miss normalize, and Phase 3's catalog id already covers autocomplete
+> picks. Build it only if real usage data shows manual-typo re-adds are common. The core
+> vision — *park a game (delete chat, keep memory) and pick it back up* — is fully served
+> by Phase 1 + Phase 3; nothing the user asked for is cut. See **Rollout order** for the
+> trade-offs behind each call.
 
 ---
 
@@ -190,7 +199,18 @@ Extend `normGameKey` in **one shared place** (`lib/player-memory.js`; re-export 
 | **B. One-time backfill script** | Clean DB | Needs `scripts/backfill-game-keys.mjs` |
 | **C. Dual lookup on solve** | No row rewrite | Slightly more read logic |
 
-**Recommendation:** **B** for signed-in users with few rows + **dual lookup** in `loadMemoryForSolve` during transition (try new key, fallback old key).
+**Recommendation (revised):** **C — dual lookup only.** In `loadMemoryForSolve` try the
+new key, fall back to the old key. Skip the backfill script (Option B): a park-deleted
+row self-heals the moment the user re-adds and summarizes the game, so a migration is
+maintenance for a problem that resolves on its own.
+
+> **Trade-off (be honest):** dual lookup is **permanent debt**, not a free cut. Old rows
+> keep the old normalization until a summarize rewrites them, and `loadMemoryForSolve`
+> carries the fallback branch forever. **Do not delete the dual-lookup branch without
+> first running a backfill** — removing it silently orphans pre-Phase-2 memory. Leave a
+> `ponytail:` comment on the fallback naming that constraint. If you'd rather keep the DB
+> clean than carry the branch, do Option B instead — that's a maintenance-taste call, not
+> a correctness one.
 
 ### Non-goals (Phase 2)
 
@@ -268,6 +288,14 @@ memory lookup stays `catalog_game_id` + platform.
 
 ## Phase 4 — "Found similar saved memory" prompt
 
+> **DEFERRED (2026-07-25) — do not build without data.** This is the most machinery
+> (fuzzy scoring, per-pair dismiss persistence, trace logging) for the thinnest slice:
+> a user who typed the game **manually** (no catalog id, so Phase 3 can't help) **and**
+> whose variant is far enough from the Phase 2 normalize to miss (`Zelda BOTW` vs
+> `Breath of the Wild`). If autocomplete adoption is high, this path is nearly empty.
+> **Build only when `trace_events` or feedback shows manual-typo re-adds are a real
+> frequency**, not on speculation. Kept here as a documented option, not a scheduled phase.
+
 **Goal:** Safety net when user re-adds a game without matching catalog id or normalized name.
 
 ### Trigger
@@ -319,7 +347,11 @@ Banner or confirm on setup:
 - **Option A:** `askConfirmWithOptions({ message, checkbox?: { label, defaultChecked } })` → `{ confirmed, checkboxChecked }`, or
 - **Option B:** dedicated `askDeleteGameConfirm({ game, platform, hasMemory })` in a small module.
 
-Prefer **Option A** if other flows may need checkboxes later; keep one modal component.
+**Prefer Option B (revised).** There is exactly one caller today; a generic checkbox
+modal is abstraction for a second caller that doesn't exist yet. Ship the dedicated
+helper. If a second checkbox-confirm flow appears later (e.g. "clear cover + delete from
+storage?"), generalizing to Option A is a ~10-minute refactor at that point, not a
+correctness risk — so defer it until the second caller is real.
 
 ### Shared helper (suggested)
 
@@ -346,17 +378,37 @@ Centralize pin cleanup copied from `removeGameNote` today.
 
 ## Rollout order
 
+**Revised build order (2026-07-25):**
+
 ```
-Phase 1 ──► Phase 2 ──► Phase 3 ──► Phase 4
-(delete UX)  (norm key)  (catalog id)  (suggest link)
+Phase 1 ──► Phase 3 ──► Phase 2 ──► (Phase 4 deferred)
+(delete UX   (catalog id   (light norm    (build only on
+ + badge)     = real fix)   + dual lookup)  usage data)
 ```
 
-| Phase | Ships independently? | Depends on |
-|-------|---------------------|------------|
-| 1 | Yes | — |
-| 2 | Yes | — (recommended before 3) |
-| 3 | Yes | Phase 2 recommended for rename edge cases |
-| 4 | Yes | Phase 2–3 reduce prompt noise |
+Phase 3 (catalog id) is the *real* identity fix and moves ahead of Phase 2, which
+becomes a cheap companion for free-text entries only. Phase 1 stays first and complete
+(badge included). Phase 4 is documented but unscheduled.
+
+| Phase | Ships independently? | Depends on | Notes |
+|-------|---------------------|------------|-------|
+| 1 | Yes | — | Full incl. "Not in library" badge — badge is part of the park-delete story, not optional |
+| 3 | Yes | — | Highest-value identity fix; do before Phase 2 |
+| 2 | Yes | — | Light normalize + dual lookup; no backfill script |
+| 4 | Yes | 2–3 reduce its need to ~zero | **Deferred**; build only on data |
+
+### What each cut costs (so nothing gets dropped blindly)
+
+| Cut | Risk vs the vision | Kept because |
+|-----|--------------------|--------------|
+| Generic confirm modal (Option A) → dedicated (Option B) | ~nil (later refactor only) | One caller today |
+| Backfill script → dual lookup | Low, but dual lookup is permanent debt (don't delete branch without backfilling) | Park-deleted rows self-heal on re-add |
+| Phase 4 not built now | Real but thin: free-text + far-variant re-adds miss the link | No data yet on manual-typo frequency; Phase 3 covers autocomplete picks |
+| "Not in library" badge | **Not cut** — park-delete feels half-done without it | Core to the park-game story |
+
+The park-game vision (delete chat, keep memory, pick it back up) is fully served by
+**Phase 1 + Phase 3**. Phase 2 is a low-cost add; Phase 4 is a safety net that waits for
+evidence it's needed.
 
 ---
 
