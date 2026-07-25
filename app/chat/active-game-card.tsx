@@ -1,7 +1,6 @@
 import type { MouseEvent, RefObject } from "react";
 import type { User } from "@supabase/supabase-js";
-import { BundleIndexPanel } from "../bundle-index-panel";
-import { GuideLinkField, type GuideBundleMeta } from "../guide-link-field";
+import { GuideLinkField, type GuideMeta } from "../guide-link-field";
 import { HltbRow } from "../hltb-row";
 import {
   IconAlert,
@@ -35,17 +34,11 @@ export type ActiveGameCardProps = {
   loading: boolean;
   menuOpenId: string | null;
   preferredUrls: string[];
-  guideBundleMeta: Record<string, GuideBundleMeta>;
-  bundleIndexStatus: Record<
-    string,
-    { pages: { slug: string; title: string; url: string; chunks: number }[] }
-  >;
-  bundlePanelLoad: Record<string, { meta: boolean; status: boolean }>;
+  guideMeta: Record<string, GuideMeta>;
   guideIndexState: GuideIndexState;
   showQuickAdd: boolean;
   guidePending: boolean;
-  retryingBundleUrl: string | null;
-  refreshingBundleUrl: string | null;
+  retryingUrl: string | null;
   isReindexingAll: boolean;
   gameSpoilerMajor: boolean;
   user: User | null;
@@ -60,7 +53,7 @@ export type ActiveGameCardProps = {
   onDeleteTopic?: () => void;
   onSetShowQuickAdd: (value: boolean) => void;
   onPreferredUrlsChange: (urls: string[]) => void;
-  onBundleMetaChange: (meta: Record<string, GuideBundleMeta>) => void;
+  onGuideMetaChange: (meta: Record<string, GuideMeta>) => void;
   onGuideCheckChange: (checking: boolean) => void;
   onGuidePendingChange: (pending: boolean) => void;
   onRequestConfirm: (opts: {
@@ -69,11 +62,7 @@ export type ActiveGameCardProps = {
     danger?: boolean;
   }) => Promise<boolean>;
   onSaveGameMeta: () => void;
-  onRetryBundleIngest: (url: string) => void;
-  onSkipBundlePage: (url: string, slug: string) => void;
-  onUnskipBundlePage: (url: string, slug: string) => void;
-  onSkipAllMissingBundlePages: (url: string, slugs: string[]) => void;
-  onRefreshBundleDiscovery: (url: string) => void;
+  onRetryGuideIngest: (url: string) => void;
   onReindexAllPending: () => void;
   onGameSpoilerChange: (value: boolean) => void;
   /** Thread: New topic / Clear chat / Delete topic. Topics list: Delete all topics / Delete game. */
@@ -98,14 +87,11 @@ export function ActiveGameCard({
   loading,
   menuOpenId,
   preferredUrls,
-  guideBundleMeta,
-  bundleIndexStatus,
-  bundlePanelLoad,
+  guideMeta,
   guideIndexState,
   showQuickAdd,
   guidePending,
-  retryingBundleUrl,
-  refreshingBundleUrl,
+  retryingUrl,
   isReindexingAll,
   gameSpoilerMajor,
   user,
@@ -119,16 +105,12 @@ export function ActiveGameCard({
   onDeleteTopic,
   onSetShowQuickAdd,
   onPreferredUrlsChange,
-  onBundleMetaChange,
+  onGuideMetaChange,
   onGuideCheckChange,
   onGuidePendingChange,
   onRequestConfirm,
   onSaveGameMeta,
-  onRetryBundleIngest,
-  onSkipBundlePage,
-  onUnskipBundlePage,
-  onSkipAllMissingBundlePages,
-  onRefreshBundleDiscovery,
+  onRetryGuideIngest,
   onReindexAllPending,
   onGameSpoilerChange,
   menuVariant = "thread",
@@ -139,7 +121,7 @@ export function ActiveGameCard({
   className,
 }: ActiveGameCardProps) {
   const hasBlocked = preferredUrls.some(
-    (url) => guideIndexState[url] === "blocked" || guideBundleMeta[url]?.isBlocked,
+    (url) => guideIndexState[url] === "blocked" || guideMeta[url]?.isBlocked,
   );
   const hasFailed = preferredUrls.some((url) => guideIndexState[url] === "failed");
   const isCollapsible = preferredUrls.length > 2;
@@ -186,8 +168,8 @@ export function ActiveGameCard({
           <GuideLinkField
             value={preferredUrls}
             onChange={onPreferredUrlsChange}
-            bundleMeta={guideBundleMeta}
-            onBundleMetaChange={onBundleMetaChange}
+            guideMeta={guideMeta}
+            onGuideMetaChange={onGuideMetaChange}
             onGuideCheckChange={onGuideCheckChange}
             onPendingChange={onGuidePendingChange}
             guideIndexState={guideIndexState}
@@ -227,13 +209,7 @@ export function ActiveGameCard({
   const renderGuideStack = (url: string, index: number) => {
     const isLastGuide = index === preferredUrls.length - 1;
     const showInlineAdd = !showQuickAdd && !isCollapsible && preferredUrls.length > 0 && isLastGuide;
-    const row = gameCardGuideRow(
-      url,
-      guideBundleMeta[url],
-      bundleIndexStatus[url],
-      bundlePanelLoad[url],
-      guideIndexState[url],
-    );
+    const row = gameCardGuideRow(url, guideMeta[url], guideIndexState[url]);
     return (
       <div key={guideUrlDedupeKey(url)} className="game-card-guide-stack">
         <div className="game-card-guide-row">
@@ -265,9 +241,9 @@ export function ActiveGameCard({
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    onRetryBundleIngest(url);
+                    onRetryGuideIngest(url);
                   }}
-                  disabled={retryingBundleUrl === url || isReindexingAll}
+                  disabled={retryingUrl === url || isReindexingAll}
                   style={{
                     background: "none",
                     border: "none",
@@ -276,12 +252,12 @@ export function ActiveGameCard({
                     display: "flex",
                     padding: "2px",
                     flexShrink: 0,
-                    opacity: retryingBundleUrl === url || isReindexingAll ? 0.5 : 1,
+                    opacity: retryingUrl === url || isReindexingAll ? 0.5 : 1,
                   }}
                   title="Reindex this guide"
                   aria-label="Reindex this guide"
                 >
-                  <IconRefresh size={14} className={retryingBundleUrl === url ? "spin" : ""} />
+                  <IconRefresh size={14} className={retryingUrl === url ? "spin" : ""} />
                 </button>
               )}
               <span style={{ flexShrink: 0, width: "20px", display: "flex" }} />
@@ -293,7 +269,7 @@ export function ActiveGameCard({
             href={url}
             target="_blank"
             rel="noreferrer"
-            aria-busy={row.bundle && row.panelLoading ? true : undefined}
+            aria-busy={row.state === "checking" ? true : undefined}
           >
             <span
               className="icon-inline"
@@ -320,9 +296,9 @@ export function ActiveGameCard({
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    onRetryBundleIngest(url);
+                    onRetryGuideIngest(url);
                   }}
-                  disabled={retryingBundleUrl === url || isReindexingAll}
+                  disabled={retryingUrl === url || isReindexingAll}
                   style={{
                     background: "none",
                     border: "none",
@@ -331,21 +307,14 @@ export function ActiveGameCard({
                     display: "flex",
                     padding: "2px",
                     flexShrink: 0,
-                    opacity: retryingBundleUrl === url || isReindexingAll ? 0.5 : 1,
+                    opacity: retryingUrl === url || isReindexingAll ? 0.5 : 1,
                   }}
                   title="Reindex this guide"
                   aria-label="Reindex this guide"
                 >
-                  <IconRefresh size={14} className={retryingBundleUrl === url ? "spin" : ""} />
+                  <IconRefresh size={14} className={retryingUrl === url ? "spin" : ""} />
                 </button>
               )}
-              {row.bundle && row.panelLoading ? (
-                <span
-                  className="game-card-bundle-spinner loader"
-                  aria-hidden="true"
-                  style={{ flexShrink: 0 }}
-                />
-              ) : null}
               <span style={{ flexShrink: 0, display: "flex" }}>
                 <IconArrowUpRight />
               </span>
@@ -355,26 +324,6 @@ export function ActiveGameCard({
           </div>
           {showInlineAdd ? renderAddGuideLink("game-card-quick-add-inline") : null}
         </div>
-        {row.bundle && !row.panelLoading && row.showPanel ? (
-          <BundleIndexPanel
-            discoveredPages={row.discoveredPages}
-            indexedPages={row.indexedPages}
-            missingPages={row.missingPages}
-            skippedSlugs={row.skippedSlugs}
-            selectionLocked={row.selectionLocked}
-            onSkipPage={(slug) => onSkipBundlePage(url, slug)}
-            onUnskipPage={(slug) => onUnskipBundlePage(url, slug)}
-            onSkipAllMissing={
-              row.missingPages.length
-                ? () => onSkipAllMissingBundlePages(url, row.missingPages.map((page) => page.slug))
-                : undefined
-            }
-            onRetryMissing={row.missingPages.length ? () => onRetryBundleIngest(url) : undefined}
-            onRefreshList={() => onRefreshBundleDiscovery(url)}
-            retrying={retryingBundleUrl === url}
-            refreshingList={refreshingBundleUrl === url}
-          />
-        ) : null}
       </div>
     );
   };

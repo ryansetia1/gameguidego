@@ -162,7 +162,6 @@ export default function Home() {
   const [generationStatus, setGenerationStatus] = useState<string | null>(null);
   const [showScrollFab, setShowScrollFab] = useState(false);
   const [indexingGuideCount, setIndexingGuideCount] = useState(0);
-  const [indexingIsBundlePages, setIndexingIsBundlePages] = useState(false);
   const [confirmFallbackModal, setConfirmFallbackModal] = useState<{
     hint: string;
     hasIndexedGuides: boolean;
@@ -389,31 +388,21 @@ export default function Home() {
   const coverEnabled = Boolean(user);
 
   const {
-    guideBundleMeta,
-    setGuideBundleMeta,
-    bundleIndexStatus,
-    bundlePanelLoad,
+    guideMeta,
+    setGuideMeta,
     guideIndexState,
     setGuideIndexState,
-    setBundleStatusRev,
+    setStatusRev,
     guideChecking,
     setGuideChecking,
     guidePending,
     setGuidePending,
-    retryingBundleUrl,
-    refreshingBundleUrl,
+    retryingUrl,
     isReindexingAll,
-    bundlePageTotal,
     applyIngestRowToMeta,
-    retryBundleIngest,
-    handleSkipBundlePage,
-    handleUnskipBundlePage,
-    handleSkipAllMissingBundlePages,
-    refreshBundleDiscovery,
+    retryGuideIngest,
     reindexAllPending,
-    resetGuideBundle,
-    startBundleIndexingPoll,
-    stopBundleIndexingPoll,
+    resetGuideMeta,
   } = useGuideBundle({
     preferredUrls,
     game,
@@ -1094,7 +1083,7 @@ export default function Home() {
     setGame("");
     setPlatform("");
     setPreferredUrls([]);
-    resetGuideBundle();
+    resetGuideMeta();
     if (cover.startsWith("blob:")) URL.revokeObjectURL(cover);
     setCover("");
     setPendingCover(null);
@@ -1575,7 +1564,7 @@ export default function Home() {
     setGame(game.name);
     setPlatform("PC");
     setPreferredUrls([]);
-    resetGuideBundle();
+    resetGuideMeta();
     if (cover.startsWith("blob:")) URL.revokeObjectURL(cover);
     setCover(coverEnabled ? game.cover : "");
     setPendingCover(null);
@@ -1976,8 +1965,7 @@ export default function Home() {
     input,
     editingIndex,
     loading,
-    guideBundleMeta,
-    bundleIndexStatus,
+    guideMeta,
     guideIndexState,
     guidePending,
     spoilerPrefs,
@@ -1991,11 +1979,10 @@ export default function Home() {
     setLoading,
     setGenerationStatus,
     setEditingIndex,
-    setIndexingIsBundlePages,
     setIndexingGuideCount,
     setGuideIndexState,
-    setGuideBundleMeta,
-    setBundleStatusRev,
+    setGuideMeta,
+    setStatusRev,
     setConfirmFallbackModal,
     setEditingGame,
     setNewGameOpen,
@@ -2019,8 +2006,6 @@ export default function Home() {
     deleteMessageImages,
     askConfirm,
     applyIngestRowToMeta,
-    startBundleIndexingPoll,
-    stopBundleIndexingPoll,
     normGameKey,
   });
 
@@ -2135,14 +2120,11 @@ export default function Home() {
       loading={loading}
       menuOpenId={menuOpenId}
       preferredUrls={preferredUrls}
-      guideBundleMeta={guideBundleMeta}
-      bundleIndexStatus={bundleIndexStatus}
-      bundlePanelLoad={bundlePanelLoad}
+      guideMeta={guideMeta}
       guideIndexState={guideIndexState}
       showQuickAdd={showQuickAdd}
       guidePending={guidePending}
-      retryingBundleUrl={retryingBundleUrl}
-      refreshingBundleUrl={refreshingBundleUrl}
+      retryingUrl={retryingUrl}
       isReindexingAll={isReindexingAll}
       gameSpoilerMajor={gameSpoilerMajor}
       user={user}
@@ -2166,18 +2148,12 @@ export default function Home() {
       onDeleteAllTopics={() => void deleteAllTopics()}
       onSetShowQuickAdd={setShowQuickAdd}
       onPreferredUrlsChange={setPreferredUrls}
-      onBundleMetaChange={setGuideBundleMeta}
+      onGuideMetaChange={setGuideMeta}
       onGuideCheckChange={setGuideChecking}
       onGuidePendingChange={setGuidePending}
       onRequestConfirm={(opts) => askConfirm(opts.message, opts.confirmLabel, opts.danger)}
       onSaveGameMeta={() => void saveGameMeta()}
-      onRetryBundleIngest={(url) => void retryBundleIngest(url)}
-      onSkipBundlePage={handleSkipBundlePage}
-      onUnskipBundlePage={handleUnskipBundlePage}
-      onSkipAllMissingBundlePages={(url, slugs) =>
-        handleSkipAllMissingBundlePages(url, slugs)
-      }
-      onRefreshBundleDiscovery={(url) => void refreshBundleDiscovery(url)}
+      onRetryGuideIngest={(url) => void retryGuideIngest(url)}
       onReindexAllPending={() => void reindexAllPending()}
       onGameSpoilerChange={updateGameSpoiler}
     />
@@ -2410,7 +2386,7 @@ export default function Home() {
         optPanel={optPanel}
         loading={loading}
         uploadingCover={uploadingCover}
-        guideBundleMeta={guideBundleMeta}
+        guideMeta={guideMeta}
         guideIndexState={guideIndexState}
         guidePending={guidePending}
         gameSpoilerMajor={gameSpoilerMajor}
@@ -2430,7 +2406,7 @@ export default function Home() {
         onSelectCover={selectCover}
         onClearCover={clearCover}
         onPreferredUrlsChange={setPreferredUrls}
-        onBundleMetaChange={setGuideBundleMeta}
+        onGuideMetaChange={setGuideMeta}
         onGuideCheckChange={setGuideChecking}
         onGuidePendingChange={setGuidePending}
         onRequestConfirm={(opts) => askConfirm(opts.message, opts.confirmLabel, opts.danger)}
@@ -2467,8 +2443,6 @@ export default function Home() {
           spoilerMajor={spoilerPrefs.major}
           generationStatus={generationStatus}
           indexingGuideCount={indexingGuideCount}
-          indexingIsBundlePages={indexingIsBundlePages}
-          bundlePageTotal={bundlePageTotal}
           preferredUrlCount={preferredUrls.length}
           lastUserIndex={lastUserIndex}
           lastGuideIndex={lastGuideIndex}

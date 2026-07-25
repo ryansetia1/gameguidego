@@ -5,7 +5,6 @@ import {
   cleanGuideUrl,
   normalizeGuideUrlList,
 } from "@/lib/guide-urls.js";
-import { coerceBundlePrefsFromBody } from "@/lib/bundle-prefs.js";
 import {
   ensureGuideIngested,
   isGuideIndexed,
@@ -76,8 +75,6 @@ export async function POST(request: Request) {
   const playerName =
     typeof record.playerName === "string" ? record.playerName.replace(/\s+/g, " ").trim().slice(0, 32) : "";
   const ingestCtx = { game, platform, userId, playerName: playerName || undefined };
-  const bundlePrefs = coerceBundlePrefsFromBody(record.bundlePrefs);
-  const retryFailed = record.retryFailed === true;
 
   if (!urls.length) {
     return NextResponse.json({ error: "Missing guide URL." }, { status: 400 });
@@ -108,14 +105,8 @@ export async function POST(request: Request) {
 
     for (const url of urls) {
       const start = Date.now();
-      const prefs = bundlePrefs[url];
       try {
-        const result = await ensureGuideIngested(url, request.signal, {
-          ...ingestCtx,
-          skipSlugs: prefs?.skippedSlugs,
-          includeSlugs: prefs?.selectedSlugs,
-          retryFailed,
-        });
+        const result = await ensureGuideIngested(url, request.signal, ingestCtx);
         results.push({ ...result, url });
         if (result.hubWarning) anyHubWarning = true;
 
@@ -130,7 +121,7 @@ export async function POST(request: Request) {
             url,
             latencyMs,
             status: "success",
-            pagesIndexed: result.pagesIndexed ?? (result.chunkCount > 0 ? 1 : 0),
+            pagesIndexed: result.chunkCount > 0 ? 1 : 0,
             hubWarning: result.hubWarning,
           });
           await logTraceEvent("ingest_url_complete", `Ingested URL: ${url}`, latencyMs, { result });

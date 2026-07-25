@@ -348,8 +348,6 @@ export type MessageListProps = {
   spoilerMajor: boolean;
   generationStatus: string | null;
   indexingGuideCount: number;
-  indexingIsBundlePages: boolean;
-  bundlePageTotal: number;
   preferredUrlCount: number;
   lastUserIndex: number;
   lastGuideIndex: number;
@@ -375,8 +373,6 @@ export function MessageList({
   spoilerMajor,
   generationStatus,
   indexingGuideCount,
-  indexingIsBundlePages,
-  bundlePageTotal,
   preferredUrlCount,
   lastUserIndex,
   lastGuideIndex,
@@ -577,13 +573,9 @@ export function MessageList({
           <span className="scan-line" aria-hidden="true" />
           <p>
             {indexingGuideCount
-              ? indexingIsBundlePages || bundlePageTotal > 1
-                ? indexingGuideCount > 0
-                  ? `Memorizing ${indexingGuideCount} pages for the first time. This might take a minute...`
-                  : "Wrapping up memorizing..."
-                : indexingGuideCount > 1
-                  ? `Memorizing ${indexingGuideCount} guides for the first time...`
-                  : "Memorizing your guide for the first time..."
+              ? indexingGuideCount > 1
+                ? `Memorizing ${indexingGuideCount} guides for the first time...`
+                : "Memorizing your guide for the first time..."
               : generationStatus ||
                 (preferredUrlCount
                   ? WRITING_ANSWER_PLACEHOLDER

@@ -1,7 +1,7 @@
 import type { RefObject } from "react";
 import type { User } from "@supabase/supabase-js";
 import { GameAutocomplete } from "../game-autocomplete";
-import { GuideLinkField, type GuideBundleMeta } from "../guide-link-field";
+import { GuideLinkField, type GuideMeta } from "../guide-link-field";
 import { PlatformSelect } from "../platform-select";
 import { IconGrid, IconPlus, IconX } from "../icons";
 import { guideUrlsSummary } from "@/lib/guide-urls.js";
@@ -32,7 +32,7 @@ export type HomeSetupProps = {
   optPanel: "guide" | "spoiler" | null;
   loading: boolean;
   uploadingCover: boolean;
-  guideBundleMeta: Record<string, GuideBundleMeta>;
+  guideMeta: Record<string, GuideMeta>;
   guideIndexState: GuideIndexState;
   guidePending: boolean;
   gameSpoilerMajor: boolean;
@@ -49,7 +49,7 @@ export type HomeSetupProps = {
   onSelectCover: (file: File) => void;
   onClearCover: () => void;
   onPreferredUrlsChange: (urls: string[]) => void;
-  onBundleMetaChange: (meta: Record<string, GuideBundleMeta>) => void;
+  onGuideMetaChange: (meta: Record<string, GuideMeta>) => void;
   onGuideCheckChange: (checking: boolean) => void;
   onGuidePendingChange: (pending: boolean) => void;
   onRequestConfirm: (opts: {
@@ -81,7 +81,7 @@ export function HomeSetup({
   optPanel,
   loading,
   uploadingCover,
-  guideBundleMeta,
+  guideMeta,
   guideIndexState,
   guidePending,
   gameSpoilerMajor,
@@ -98,7 +98,7 @@ export function HomeSetup({
   onSelectCover,
   onClearCover,
   onPreferredUrlsChange,
-  onBundleMetaChange,
+  onGuideMetaChange,
   onGuideCheckChange,
   onGuidePendingChange,
   onRequestConfirm,
@@ -301,8 +301,8 @@ export function HomeSetup({
                 <GuideLinkField
                   value={preferredUrls}
                   onChange={onPreferredUrlsChange}
-                  bundleMeta={guideBundleMeta}
-                  onBundleMetaChange={onBundleMetaChange}
+                  guideMeta={guideMeta}
+                  onGuideMetaChange={onGuideMetaChange}
                   onGuideCheckChange={onGuideCheckChange}
                   onPendingChange={onGuidePendingChange}
                   guideIndexState={guideIndexState}
@@ -324,7 +324,7 @@ export function HomeSetup({
               >
                 <span className="guide-cta-dot" aria-hidden="true" />
                 <span className="guide-cta-body">
-                  <strong>{guideUrlsSummary(preferredUrls, guideBundleMeta)}</strong>
+                  <strong>{guideUrlsSummary(preferredUrls)}</strong>
                   <small>Answers come straight from your guide.</small>
                 </span>
                 <span className="guide-cta-cue">Manage</span>

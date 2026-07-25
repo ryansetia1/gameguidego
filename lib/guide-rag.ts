@@ -7,11 +7,8 @@ import {
   isGuideRagAvailable,
   normalizeGuideUrl,
 } from "@/lib/guide-ingest";
-import { parseGamefaqsFaqUrl } from "@/lib/gamefaqs-bundle.js";
-import {
-  isGamefaqsBundleUrl,
-  normalizeGuideUrlList,
-} from "@/lib/guide-urls.js";
+import { canonicalGamefaqsBundleUrl } from "@/lib/gamefaqs-bundle.js";
+import { normalizeGuideUrlList } from "@/lib/guide-urls.js";
 import type { SearchResult } from "@/lib/tavily";
 import { cohereRerankChunks } from "@/lib/guide-rerank-cohere";
 import { logTraceEvent } from "@/lib/trace";
@@ -88,16 +85,12 @@ function hostLabel(guideUrl: string): string {
 
 function resolveRagTargets(urls: string[]) {
   const guideUrls: string[] = [];
-  const guideBundles: string[] = [];
   for (const raw of urls) {
-    const parsed = parseGamefaqsFaqUrl(raw);
-    if (parsed && isGamefaqsBundleUrl(raw)) {
-      if (!guideBundles.includes(parsed.bundleKey)) guideBundles.push(parsed.bundleKey);
-    } else {
-      guideUrls.push(normalizeGuideUrl(raw));
-    }
+    const canonical = canonicalGamefaqsBundleUrl(raw);
+    const key = normalizeGuideUrl(canonical ?? raw);
+    if (!guideUrls.includes(key)) guideUrls.push(key);
   }
-  return { guideUrls, guideBundles };
+  return guideUrls;
 }
 
 /**
@@ -112,7 +105,6 @@ export async function retrieveFromPreferredGuides(input: {
   game?: string;
   platform?: string;
   userId?: string | null;
-  bundlePrefs?: Record<string, { skippedSlugs?: string[]; selectedSlugs?: string[] }>;
 }): Promise<GuideRagResult | null> {
   const preferred = normalizeGuideUrlList(input.guideUrls);
   if (!preferred.length) return null;
@@ -126,16 +118,13 @@ export async function retrieveFromPreferredGuides(input: {
   }
 
   const ingestResults = await Promise.all(
-    preferred.map((guideUrl) => {
-      const prefs = input.bundlePrefs?.[guideUrl];
-      return ensureGuideIngested(guideUrl, input.signal, {
+    preferred.map((guideUrl) =>
+      ensureGuideIngested(guideUrl, input.signal, {
         game: input.game,
         platform: input.platform,
         userId: input.userId,
-        skipSlugs: prefs?.skippedSlugs,
-        includeSlugs: prefs?.selectedSlugs,
-      });
-    }),
+      }),
+    ),
   );
   const hubWarning = ingestResults.some((result) => result.hubWarning);
   const indexedCount = ingestResults.filter((result) => result.indexed).length;
@@ -152,7 +141,7 @@ export async function retrieveFromPreferredGuides(input: {
   }
 
   const indexedPreferred = preferred.filter((_, index) => ingestResults[index]?.indexed);
-  const { guideUrls, guideBundles } = resolveRagTargets(indexedPreferred);
+  const guideUrls = resolveRagTargets(indexedPreferred);
 
   const queryEmbedding = await embedQuery(input.query, input.signal, {
     purpose: "rag_query",
@@ -179,7 +168,7 @@ export async function retrieveFromPreferredGuides(input: {
     const start = Date.now();
     const { data, error } = await supabase.rpc("match_guide_chunks", {
       p_guide_urls: guideUrls,
-      p_guide_bundles: guideBundles,
+      p_guide_bundles: [],
       p_embedding: toVectorString(queryEmbedding),
       p_limit: RETRIEVE_FETCH,
     });

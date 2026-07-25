@@ -98,34 +98,16 @@ import {
   guideRetrievalModeToApi,
   toggleGuideRetrievalMode,
 } from "../lib/guide-retrieval-mode.js";
-import {
-  bundleHasPendingPages,
-  bundlePrefsAllFromUserMetadata,
-  coerceBundlePrefsFromBody,
-  filterBundlePanelPages,
-  mergeBundlePrefsAll,
-  skipAllMissingBundlePages,
-  targetBundleSlugs,
-} from "../lib/bundle-prefs.js";
 import { isReplicateRateLimit, parsePositiveInt } from "../lib/replicate-retry.js";
 import {
   canonicalGamefaqsBundleUrl,
-  buildGamefaqsDiscoveryBaseQueries,
-  buildGamefaqsPartDiscoveryQueries,
-  gamefaqsDiscoveryTerms,
   gamefaqsPrintExtractUrl,
+  gamefaqsExtractQuality,
+  isGamefaqsTocOnlyExtract,
+  MIN_GAMEFAQS_GUIDE_CHARS,
   parseGamefaqsFaqUrl,
-  parseGamefaqsTocFromHtml,
-  parseGamefaqsPagesFromUrls,
   parseGamefaqsGuideTitle,
-  isGenericGamefaqsBundleTitle,
-  isLikelySinglePageGamefaqsGuide,
-  pickGamefaqsBundleTitle,
-  titleFromGamefaqsSlug,
-  expandRootPrintBundleIndexPages,
-  parseGamefaqsTocLinks,
 } from "../lib/gamefaqs-bundle.js";
-import { coerceCachedBundleDiscovery, coercePageStatus } from "../lib/guide-bundle-cache.js";
 import {
   cleanGuideUrl,
   coerceGuideUrlsFromBody,
@@ -133,7 +115,7 @@ import {
   guideUrlsPayload,
   guideUrlsSummary,
   guideSourceLinkLabel,
-  isActiveGamefaqsBundle,
+  isGamefaqsFaqGuideUrl,
   isGamefaqsBundleUrl,
   MAX_GUIDE_URLS,
   normalizeGuideUrlList,
@@ -589,92 +571,14 @@ assert.equal(
   }),
   undefined,
 );
-assert.match(
-  guideIngestHintFromResponse({
-    available: true,
-    results: [{ bundle: true, pageCount: 12, pagesIndexed: 10, indexed: true }],
-  }) ?? "",
-  /10 of 12 bundle pages/i,
-);
-assert.match(
-  guideIngestHintFromResponse({
-    available: true,
-    results: [
-      {
-        bundle: true,
-        pageCount: 12,
-        pagesIndexed: 11,
-        indexed: true,
-        pagesMissing: [{ slug: "faq", title: "FAQ", url: "https://example.com/faq" }],
-      },
-    ],
-  }) ?? "",
-  /Couldn't add: FAQ/i,
-);
-
-assert.deepEqual(
-  targetBundleSlugs(
-    [{ slug: "a" }, { slug: "b" }, { slug: "c" }],
-    { skippedSlugs: ["b"], selectedSlugs: ["a", "b", "c"] },
-  ),
-  ["a", "c"],
-);
-assert.deepEqual(
-  filterBundlePanelPages(
-    [{ slug: "a" }, { slug: "b" }, { slug: "c" }],
-    ["a", "c"],
-  ),
-  [{ slug: "a" }, { slug: "c" }],
-);
-assert.deepEqual(
-  skipAllMissingBundlePages("https://gamefaqs.gamespot.com/faqs/1", ["faq", "part-2"]).skippedSlugs,
-  ["faq", "part-2"],
-);
 assert.equal(
-  bundleHasPendingPages(
-    [{ slug: "a" }, { slug: "b" }],
-    ["a"],
-    { skippedSlugs: ["b"] },
-  ),
-  false,
-);
-assert.deepEqual(
-  coerceBundlePrefsFromBody({
-    "https://gamefaqs.gamespot.com/faqs/1": {
-      skipSlugs: ["faq"],
-      includeSlugs: ["part-1"],
-    },
-  })["https://gamefaqs.gamespot.com/faqs/1"],
-  { skippedSlugs: ["faq"], selectedSlugs: ["part-1"] },
-);
-
-assert.deepEqual(
-  mergeBundlePrefsAll(
-    { "https://gamefaqs.gamespot.com/faqs/1": { skippedSlugs: ["a"], selectedSlugs: ["x"] } },
-    { "https://gamefaqs.gamespot.com/faqs/1": { skippedSlugs: ["b"], selectedSlugs: ["y"] } },
-  )["https://gamefaqs.gamespot.com/faqs/1"],
-  { skippedSlugs: ["a", "b"], selectedSlugs: ["y"] },
-);
-assert.deepEqual(
-  bundlePrefsAllFromUserMetadata({
-    bundle_prefs: {
-      "https://gamefaqs.gamespot.com/faqs/1": { skipSlugs: ["faq"] },
-    },
+  guideIngestHintFromResponse({
+    available: true,
+    results: [{ indexed: false }],
+    total: 1,
+    indexedCount: 0,
   }),
-  { "https://gamefaqs.gamespot.com/faqs/1": { skippedSlugs: ["faq"] } },
-);
-assert.deepEqual(
-  mergeBundlePrefsAll(
-    {
-      "https://www.gamefaqs.gamespot.com/faqs/1": { skippedSlugs: ["a"], selectedSlugs: ["x"] },
-    },
-    {
-      "https://gamefaqs.gamespot.com/faqs/1": { skippedSlugs: ["b"], selectedSlugs: ["y"] },
-    },
-  ),
-  {
-    "https://gamefaqs.gamespot.com/faqs/1": { skippedSlugs: ["a", "b"], selectedSlugs: ["y"] },
-  },
+  "Couldn't read that guide. Try a different link or source.",
 );
 
 assert.equal(MAX_GUIDE_URLS, 5);
@@ -714,7 +618,7 @@ assert.deepEqual(
 assert.equal(guideUrlsSummary(["https://www.ign.com/walkthroughs/foo"]), "ign.com");
 assert.equal(
   guideSourceLinkLabel("https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674"),
-  "GameFAQs bundle",
+  "GameFAQs guide",
 );
 assert.equal(guideSourceLinkLabel("https://www.ign.com/walkthroughs/foo"), "ign.com");
 const uploadKey =
@@ -759,77 +663,31 @@ assert.equal(
 );
 assert.equal(gamefaqsPrintExtractUrl("https://example.com/guide"), null);
 assert.equal(normalizePreferredGuideUrl(suikodenIntro), suikodenBundle);
+assert.equal(isGamefaqsFaqGuideUrl(suikodenBundle), true);
+assert.equal(isGamefaqsFaqGuideUrl(suikodenIntro), true);
 assert.equal(isGamefaqsBundleUrl(suikodenBundle), true);
-assert.equal(isGamefaqsBundleUrl(suikodenIntro), false);
-assert.equal(isActiveGamefaqsBundle(suikodenBundle, { pageCount: 18 }), true);
-assert.equal(isActiveGamefaqsBundle(suikodenBundle, undefined), false);
+const suikodenTocExtract =
+  "* Home * Boards * News * Q&A * Community * Contribute * Games * 3DS * Android\n" +
+  "Part 11: The Great Imperial Generals 12. Part 12: 108 Stars Under a Moonlit Night\n" +
+  "3. Boss Guides 4. The 108 Stars of Destiny 5. Introduction\n" +
+  "It is then that the boy realizes his place in the Empire.";
+assert.equal(isGamefaqsTocOnlyExtract(suikodenTocExtract), true);
+assert.equal(gamefaqsExtractQuality(suikodenTocExtract).reason, "toc_only");
 assert.equal(
-  guideUrlsSummary([suikodenBundle], { [suikodenBundle]: { pageCount: 18 } }),
-  "GameFAQs bundle",
+  gamefaqsExtractQuality("x".repeat(MIN_GAMEFAQS_GUIDE_CHARS)).insufficient,
+  false,
 );
-assert.equal(guideUrlsSummary([suikodenBundle]), "gamefaqs.gamespot.com");
-
-const sampleTocHtml =
-  '<a href="/ps/198843-suikoden/faqs/80674/introduction">Intro</a>' +
-  '<a href="/ps/198843-suikoden/faqs/80674/walkthrough-part-1">Part 1</a>' +
-  '<a href="/ps/198843-suikoden/faqs/80674/walkthrough-part-2">Part 2</a>' +
-  '<a href="/ps/198843-suikoden/faqs/80674/boards">Boards</a>';
-const tocPages = parseGamefaqsTocFromHtml(sampleTocHtml, {
-  faqId: "80674",
-  canonicalUrl: suikodenBundle,
-});
-assert.equal(tocPages.length, 3, "TOC skips boards link");
-assert.ok(tocPages.some((page) => page.slug === "walkthrough-part-1"));
-assert.equal(titleFromGamefaqsSlug("walkthrough-part-5"), "Walkthrough Part 5");
-
-const searchPages = parseGamefaqsPagesFromUrls(
-  [
-    "https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674/introduction",
-    "https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674/walkthrough-part-1",
-    "https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674/walkthrough-part-2",
-    "https://gamefaqs.gamespot.com/boards/198843-suikoden",
-  ],
-  { faqId: "80674", canonicalUrl: suikodenBundle },
+assert.equal(
+  gamefaqsExtractQuality("x".repeat(MIN_GAMEFAQS_GUIDE_CHARS - 1)).reason,
+  "too_short",
 );
-assert.equal(searchPages.length, 3);
-assert.equal(searchPages[0].slug, "introduction");
+assert.equal(
+  guideUrlsSummary([suikodenBundle]),
+  "GameFAQs guide",
+);
 
 const parsed80674 = parseGamefaqsFaqUrl(suikodenBundle);
 assert.ok(parsed80674);
-
-// Discovery must parse the TOC from RAW extract markdown, not cleanSnippet output.
-// Tavily returns the sidebar TOC as [label](…/faqs/id/slug) links; cleanSnippet
-// strips every URL, so parsing cleaned text silently finds nothing (the "hit or
-// miss" root cause). This guards that regression.
-const mdToc =
-  "Table of Contents\n" +
-  `- [Introduction](${suikodenBundle}/introduction)\n` +
-  `- [Walkthrough Part 1](${suikodenBundle}/walkthrough-part-1)\n` +
-  `- [Walkthrough Part 2](${suikodenBundle}/walkthrough-part-2)\n`;
-const rawTocPages = parseGamefaqsTocFromHtml(mdToc, parsed80674);
-const cleanedTocPages = parseGamefaqsTocFromHtml(cleanSnippet(mdToc), parsed80674);
-assert.ok(rawTocPages.length >= 3, "TOC parse from RAW markdown finds every page");
-assert.ok(
-  cleanedTocPages.length < rawTocPages.length,
-  "cleanSnippet strips TOC URLs — discovery must parse RAW extract, not cleaned text",
-);
-
-{
-  // Relative-link TOC (the real faqs/80674 shape): [Title](relative-slug). The absolute
-  // parseGamefaqsTocFromHtml regex misses these; parseGamefaqsTocLinks recovers them.
-  const relToc =
-    "Table of Contents [Home](/) [Boards](/boards) " +
-    "[Introduction](introduction) 1. [Frequently Asked Questions](frequently-asked-questions) " +
-    "1. [Part 1: The First Steps](part-1-the-first-steps) 2. [Part 2: Imperial Guards](part-2-imperial-guards)";
-  const pages = parseGamefaqsTocLinks(relToc, parsed80674);
-  const slugs = pages.map((p) => p.slug);
-  assert.ok(slugs.includes("part-1-the-first-steps"), "recovers relative part links");
-  assert.ok(slugs.includes("part-2-imperial-guards"));
-  assert.ok(!slugs.includes("boards"), "absolute /boards nav link excluded");
-  assert.ok(!slugs.some((s) => s.startsWith("/")), "no absolute paths");
-  assert.equal(parseGamefaqsTocFromHtml(relToc, parsed80674).length, 0, "absolute regex finds nothing here");
-  assert.equal(parseGamefaqsTocLinks("", parsed80674).length, 0);
-}
 assert.equal(
   parseGamefaqsGuideTitle(
     "Guide and Walkthrough (PS) by [Cyril](https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674/credit)",
@@ -844,111 +702,6 @@ assert.equal(
   ),
   "Suikoden — Guide and Walkthrough (PS) by Cyril",
 );
-assert.equal(
-  parseGamefaqsGuideTitle(
-    "Introduction - Suikoden — Guide and Walkthrough (PS) by Cyril",
-    parsed80674,
-  ),
-  "Suikoden — Guide and Walkthrough (PS) by Cyril",
-);
-assert.equal(
-  parseGamefaqsGuideTitle(
-    "<title>Introduction - Suikoden — Guide and Walkthrough (PS) - GameFAQs</title>",
-    parsed80674,
-  ),
-  "Suikoden — Guide and Walkthrough (PS)",
-);
-assert.equal(isGenericGamefaqsBundleTitle("GameFAQs guide"), true);
-assert.equal(isGenericGamefaqsBundleTitle("Suikoden — Guide and Walkthrough (PS) by Cyril"), false);
-assert.equal(
-  pickGamefaqsBundleTitle("GameFAQs guide", "Suikoden — Guide and Walkthrough (PS) by Cyril"),
-  "Suikoden — Guide and Walkthrough (PS) by Cyril",
-);
-const baseQueries = buildGamefaqsDiscoveryBaseQueries(parsed80674);
-assert.ok(baseQueries.some((query) => query.includes("/part-")));
-assert.ok(baseQueries.every((query) => !/^site:\S+$/i.test(query.trim())));
-assert.ok(baseQueries.every((query) => /\b(walkthrough|faq)\b/i.test(query)));
-const partQueries = buildGamefaqsPartDiscoveryQueries(parsed80674, 3);
-assert.ok(partQueries.some((query) => query.includes("/part-1")));
-assert.ok(partQueries.some((query) => query.includes("/part-3")));
-assert.ok(partQueries.some((query) => query.includes("/introduction")));
-// Bounded fan-out: no per-part /walkthrough-part-N duplication (was ~50 advanced
-// Tavily calls on a cold refresh; the TOC-extract path covers whole sections).
-assert.ok(!partQueries.some((query) => query.includes("/walkthrough-part-")));
-assert.ok(partQueries.length <= 8, "part discovery queries must stay bounded");
-assert.equal(gamefaqsDiscoveryTerms(parsed80674), "suikoden faq 80674");
-assert.deepEqual(
-  coerceCachedBundleDiscovery({
-    title: "Guide",
-    pages: [{ slug: "part-1", title: "Part 1", url: `${suikodenBundle}/part-1` }],
-  })?.pages[0]?.slug,
-  "part-1",
-);
-assert.equal(
-  coerceCachedBundleDiscovery({
-    singlePage: true,
-    title: "Binding of Isaac FAQ",
-    canonicalUrl: suikodenBundle,
-  })?.singlePage,
-  true,
-);
-assert.equal(
-  coerceCachedBundleDiscovery({
-    singlePage: true,
-    title: "Binding of Isaac FAQ",
-  })?.pages.length,
-  0,
-);
-assert.equal(
-  coerceCachedBundleDiscovery({
-    isBlocked: true,
-    pages: [{ slug: "disc-1", title: "Disc 1", url: `${suikodenBundle}/disc-1` }],
-  })?.pages[0]?.slug,
-  "disc-1",
-  "cached pages win over stale isBlocked",
-);
-assert.equal(
-  coerceCachedBundleDiscovery({ isBlocked: true, pages: [] })?.isBlocked,
-  true,
-);
-const ff8Root = "https://gamefaqs.gamespot.com/ps4/266152-final-fantasy-viii-remastered/faqs/78107";
-const ff8Discovery = [
-  { slug: "introduction", title: "Introduction", url: `${ff8Root}/introduction` },
-  { slug: "disc-1", title: "Disc 1", url: `${ff8Root}/disc-1` },
-];
-const printExpanded = expandRootPrintBundleIndexPages(
-  ff8Discovery,
-  new Map([[ff8Root, 370]]),
-  ff8Root,
-  "78107",
-);
-assert.equal(printExpanded?.length, 2);
-assert.equal(printExpanded?.[0]?.slug, "introduction");
-assert.equal(printExpanded?.[0]?.indexed, true);
-assert.equal(
-  expandRootPrintBundleIndexPages(
-    ff8Discovery,
-    new Map([
-      [`${ff8Root}/disc-1`, 40],
-      [`${ff8Root}/introduction`, 30],
-    ]),
-    ff8Root,
-    "78107",
-  ),
-  null,
-  "per-slug chunks are not expanded from root print view",
-);
-assert.equal(
-  isLikelySinglePageGamefaqsGuide("x".repeat(500), parsed80674),
-  true,
-  "long root extract without sibling TOC is single-page",
-);
-assert.equal(
-  isLikelySinglePageGamefaqsGuide(sampleTocHtml + "x".repeat(500), parsed80674),
-  false,
-  "multi-section TOC is not single-page",
-);
-assert.equal(isLikelySinglePageGamefaqsGuide("short", parsed80674), false);
 
 assert.equal(isReplicateRateLimit(new Error("429 Too Many Requests")), true);
 assert.equal(isReplicateRateLimit(new Error("network down")), false);
@@ -1788,7 +1541,7 @@ assert.equal(
     { title: "guide.pdf", url: "upload://u/guide.pdf" },
     { title: "FAQ", url: "https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674" },
   ]),
-  "PDF guide + GameFAQs bundle",
+  "PDF guide + GameFAQs guide",
 );
 assert.equal(
   mixedPreferredGuideLabel("PDF guide", ["ign.com", "gamefaqs.gamespot.com"]),
@@ -2294,35 +2047,6 @@ assert.match(
     ],
   );
   assert.equal(merged[1].illustration?.alt, "Sprite");
-}
-
-// Bundle page-failure tracking: a page tried-and-failed is "settled" (won't retry),
-// so a partially-indexed bundle stops nagging "memorizing" every turn.
-{
-  // coercePageStatus validates the persisted { slug: reason } map.
-  assert.equal(coercePageStatus({ a: "blocked", b: "not_found" }).a, "blocked");
-  assert.equal(coercePageStatus({ a: "blocked", b: "bogus" }).b, undefined);
-  assert.equal(coercePageStatus({ x: "nonsense" }), undefined);
-  assert.equal(coercePageStatus(null), undefined);
-  // coerceCachedBundleDiscovery preserves pageStatus even with no pages.
-  const cached = coerceCachedBundleDiscovery({ pages: [], pageStatus: { toran: "blocked" } });
-  assert.equal(cached?.pageStatus?.toran, "blocked");
-
-  // The core loop-stopper: fold failed slugs into the "settled" set passed to
-  // bundleHasPendingPages (what guideUrlNeedsIngest does via settledBundleSlugs).
-  const discovered = [
-    { slug: "intro" },
-    { slug: "toran" },
-    { slug: "future" },
-  ];
-  const prefs = { selectedSlugs: ["intro", "toran", "future"], skippedSlugs: [] };
-  // indexed only "intro" → 2 pending (nags every turn).
-  assert.equal(bundleHasPendingPages(discovered, ["intro"], prefs), true);
-  // indexed "intro" + failed "toran","future" folded in → nothing pending → no nag.
-  assert.equal(
-    bundleHasPendingPages(discovered, ["intro", "toran", "future"], prefs),
-    false,
-  );
 }
 
 console.log("Self-check passed.");

@@ -2,7 +2,6 @@
 
 import type { User } from "@supabase/supabase-js";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { clearBundlePrefs } from "@/lib/bundle-prefs.js";
 import { getSupabase } from "@/lib/supabase";
 import { steamIdFromMetadata } from "@/lib/steam.js";
 
@@ -243,7 +242,6 @@ export function useHomeSession({
       () => {},
     );
     setSteamId(null);
-    clearBundlePrefs();
     try {
       window.localStorage.removeItem("gg:recent-chats-cache");
     } catch {}

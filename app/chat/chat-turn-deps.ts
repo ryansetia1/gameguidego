@@ -1,7 +1,7 @@
 import type { User } from "@supabase/supabase-js";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { Chat } from "@/lib/supabase";
-import type { GuideBundleMeta } from "../guide-link-field";
+import type { GuideMeta } from "../guide-link-field";
 import type { GuideIndexState } from "@/lib/guide-index-state";
 import type { Message } from "./types";
 import type { SpoilerPrefs } from "@/lib/spoiler-prefs.js";
@@ -19,14 +19,7 @@ export type ChatTurnDeps = {
   input: string;
   editingIndex: number | null;
   loading: boolean;
-  guideBundleMeta: Record<string, GuideBundleMeta>;
-  bundleIndexStatus: Record<
-    string,
-    {
-      pages: { slug: string }[];
-      failedPages?: { slug: string; title: string; url: string; reason: string }[];
-    }
-  >;
+  guideMeta: Record<string, GuideMeta>;
   guideIndexState: GuideIndexState;
   spoilerPrefs: SpoilerPrefs;
   /** Per-topic toggle stored on the chats row (not the global OR effective value). */
@@ -41,11 +34,10 @@ export type ChatTurnDeps = {
   setLoading: (value: boolean) => void;
   setGenerationStatus: (value: string | null) => void;
   setEditingIndex: (value: number | null) => void;
-  setIndexingIsBundlePages: (value: boolean) => void;
   setIndexingGuideCount: (value: number) => void;
   setGuideIndexState: Dispatch<SetStateAction<GuideIndexState>>;
-  setGuideBundleMeta: Dispatch<SetStateAction<Record<string, GuideBundleMeta>>>;
-  setBundleStatusRev: Dispatch<SetStateAction<number>>;
+  setGuideMeta: Dispatch<SetStateAction<Record<string, GuideMeta>>>;
+  setStatusRev: Dispatch<SetStateAction<number>>;
   setConfirmFallbackModal: (value: {
     hint: string;
     hasIndexedGuides: boolean;
@@ -75,14 +67,12 @@ export type ChatTurnDeps = {
   clearPendingImages: () => void;
   deleteMessageImages: (messages: Message[]) => Promise<void>;
   askConfirm: (message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
-  /** A guide file/bundle is staged in the picker but not yet added — guard sending without it. */
+  /** A guide file/URL is staged in the picker but not yet added — guard sending without it. */
   guidePending: boolean;
   applyIngestRowToMeta: (
     url: string,
     row: Record<string, unknown>,
-    existing?: GuideBundleMeta,
-  ) => GuideBundleMeta | undefined;
-  startBundleIndexingPoll: (url: string, targets: string[]) => void;
-  stopBundleIndexingPoll: () => void;
+    existing?: GuideMeta,
+  ) => GuideMeta | undefined;
   normGameKey: (value: string) => string;
 };

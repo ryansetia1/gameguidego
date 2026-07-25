@@ -12,7 +12,6 @@ import {
 } from "@/lib/chat-messages.js";
 import { solveTurnToast } from "@/lib/guide-hints.js";
 import { guideRetrievalModeToApi } from "@/lib/guide-retrieval-mode.js";
-import { buildBundlePrefsBody } from "@/lib/guide-card-ui.js";
 import { coerceHighlights, coerceSpoilers } from "@/lib/highlights.js";
 import { coerceIllustration } from "@/lib/chat-messages.js";
 import { proxifyIllustration } from "@/lib/visual-image-proxy.js";
@@ -219,7 +218,6 @@ export async function executeChatTurn({
           ? displayNameFromMetadata(d.user.user_metadata) || d.user.email?.split("@")[0] || ""
           : "",
         userId: d.user?.id ?? null,
-        bundlePrefs: buildBundlePrefsBody(guideUrls, d.guideBundleMeta),
         ...guideRetrievalModeToApi(d.guideRetrievalMode),
         retryContext,
       }),

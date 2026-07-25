@@ -7,7 +7,7 @@ import {
   MAX_GUIDE_URLS,
   cleanGuideUrl,
   guideUrlDedupeKey,
-  isActiveGamefaqsBundle,
+  isGamefaqsFaqGuideUrl,
   isUploadedGuideUrl,
   isSamePreferredGuide,
   normalizeGuideUrlList,
@@ -16,7 +16,6 @@ import {
   uploadedGuideFileTypeLabel,
 } from "@/lib/guide-urls.js";
 import { parseGamefaqsFaqUrl } from "@/lib/gamefaqs-bundle.js";
-import { setBundlePrefs } from "@/lib/bundle-prefs.js";
 import type { GuideIndexState } from "@/lib/guide-index-state";
 import { resolveGuideDisplayState } from "@/lib/guide-index-state";
 import { IconX, IconClipboard } from "./icons";
@@ -25,22 +24,13 @@ import { GuideStatusChip } from "./chat/guide-status-chip";
 
 type GuideHit = { title: string; url: string; snippet: string };
 
-export type GuideBundleMeta = {
-  title: string;
-  pageCount: number;
-  pages?: { slug: string; title: string; url: string }[];
-  missingPages?: { slug: string; title: string; url: string; reason?: string }[];
-  selectedSlugs?: string[];
-  skippedSlugs?: string[];
+export type GuideMeta = {
+  title?: string;
   isBlocked?: boolean;
 };
 
-type BundlePreview = {
-  canonicalUrl: string;
-  title: string;
-  pageCount: number;
-  pages: { slug: string; title: string; url: string }[];
-};
+/** @deprecated use GuideMeta */
+export type GuideBundleMeta = GuideMeta;
 
 type Props = {
   value: string[];
@@ -49,8 +39,8 @@ type Props = {
   platform: string;
   disabled?: boolean;
   userId?: string | null;
-  bundleMeta?: Record<string, GuideBundleMeta>;
-  onBundleMetaChange?: (meta: Record<string, GuideBundleMeta>) => void;
+  guideMeta?: Record<string, GuideMeta>;
+  onGuideMetaChange?: (meta: Record<string, GuideMeta>) => void;
   onGuideCheckChange?: (checking: boolean) => void;
   onPendingChange?: (pending: boolean) => void;
   guideIndexState?: GuideIndexState;
@@ -77,8 +67,8 @@ export function GuideLinkField({
   platform,
   disabled,
   userId,
-  bundleMeta = {},
-  onBundleMetaChange,
+  guideMeta = {},
+  onGuideMetaChange,
   onGuideCheckChange,
   onPendingChange,
   guideIndexState = {},
@@ -91,9 +81,6 @@ export function GuideLinkField({
   useEffect(() => { setMounted(true) }, []);
   const [draftUrl, setDraftUrl] = useState("");
   const [addError, setAddError] = useState("");
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [bundlePreview, setBundlePreview] = useState<BundlePreview | null>(null);
-  const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<GuideHit[]>([]);
   const [searching, setSearching] = useState(false);
@@ -117,7 +104,6 @@ export function GuideLinkField({
       if (text) {
         setDraftUrl(text);
         if (addError) setAddError("");
-        if (bundlePreview) setBundlePreview(null);
       }
     } catch (err) {
       console.error("Failed to read clipboard:", err);
@@ -125,7 +111,7 @@ export function GuideLinkField({
   };
 
   const commitAddUrl = useCallback(
-    (raw: string, meta?: GuideBundleMeta) => {
+    (raw: string, meta?: GuideMeta) => {
       const cleaned = normalizePreferredGuideUrl(raw);
       if (!cleaned) {
         setAddError("Paste a full http or https link.");
@@ -141,123 +127,46 @@ export function GuideLinkField({
         return false;
       }
       onChange(next);
-      if (meta && onBundleMetaChange) {
-        onBundleMetaChange({ ...bundleMeta, [cleaned]: meta });
+      if (meta && onGuideMetaChange) {
+        onGuideMetaChange({ ...guideMeta, [cleaned]: meta });
       }
       setDraftUrl("");
       setAddError("");
-      setBundlePreview(null);
       setHideSearchResults(true);
       return true;
     },
-    [bundleMeta, onBundleMetaChange, onChange, value],
+    [guideMeta, onGuideMetaChange, onChange, value],
   );
 
-  const previewGuideUrl = useCallback(async (raw: string) => {
-    const cleaned = cleanGuideUrl(raw);
-    if (!cleaned) {
-      setAddError("Paste a full http or https link.");
-      return;
-    }
-    if (value.some((entry) => isSamePreferredGuide(entry, cleaned))) {
-      setAddError("That guide is already in your list.");
-      return;
-    }
+  const previewGuideUrl = useCallback(
+    (raw: string) => {
+      const cleaned = cleanGuideUrl(raw);
+      if (!cleaned) {
+        setAddError("Paste a full http or https link.");
+        return;
+      }
+      if (value.some((entry) => isSamePreferredGuide(entry, cleaned))) {
+        setAddError("That guide is already in your list.");
+        return;
+      }
 
-    const parsed = parseGamefaqsFaqUrl(cleaned);
-    const bundleUrl = parsed?.canonicalUrl ?? "";
-
-    if (!parsed) {
+      const parsed = parseGamefaqsFaqUrl(cleaned);
+      if (parsed) {
+        commitAddUrl(parsed.canonicalUrl);
+        return;
+      }
       commitAddUrl(cleaned);
-      return;
-    }
-
-    // Both the FAQ root and a section URL run discovery — the guide's natural URL is
-    // the root, and it's still a multi-page bundle. Falls through to single-page below
-    // when discovery genuinely finds ≤1 page.
-    setPreviewLoading(true);
-    setAddError("");
-    setBundlePreview(null);
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 45_000);
-    try {
-      const response = await fetch(
-        `/api/guide-bundle?url=${encodeURIComponent(cleaned)}&refresh=1`,
-        { signal: controller.signal },
-      );
-      const payload: {
-        bundle?: boolean;
-        canonicalUrl?: string;
-        title?: string;
-        pageCount?: number;
-        pages?: { slug?: string; title: string; url: string }[];
-        error?: string;
-        isBlocked?: boolean;
-      } = await response.json();
-
-      if (!response.ok) {
-        setAddError(payload.error ?? "Couldn't check that link. Try again.");
-        return;
-      }
-
-      if (
-        payload.bundle &&
-        payload.canonicalUrl &&
-        typeof payload.pageCount === "number" &&
-        payload.pageCount > 1 &&
-        Array.isArray(payload.pages)
-      ) {
-        setBundlePreview({
-          canonicalUrl: payload.canonicalUrl,
-          title: payload.title ?? "GameFAQs guide",
-          pageCount: payload.pageCount,
-          pages: payload.pages.map((page) => ({
-            slug:
-              typeof page.slug === "string" && page.slug
-                ? page.slug
-                : page.url.split("/").pop() ?? "",
-            title: page.title,
-            url: page.url,
-          })),
-        });
-        setSelectedSlugs(
-          new Set(
-            payload.pages.map((page) =>
-              typeof page.slug === "string" && page.slug
-                ? page.slug
-                : page.url.split("/").pop() ?? "",
-            ),
-          ),
-        );
-        return;
-      }
-
-      commitAddUrl(
-        bundleUrl,
-        payload.isBlocked
-          ? { title: "Blocked GameFAQs guide", pageCount: 1, isBlocked: true }
-          : undefined,
-      );
-    } catch (error) {
-      const timedOut = error instanceof Error && error.name === "AbortError";
-      setAddError(
-        timedOut
-          ? "That took too long. Try again or paste a chapter link from the bundle."
-          : "Couldn't check that link. Try again.",
-      );
-    } finally {
-      window.clearTimeout(timeout);
-      setPreviewLoading(false);
-    }
-  }, [commitAddUrl, value]);
+    },
+    [commitAddUrl, value],
+  );
 
   const removeUrl = useCallback(
     (url: string) => {
       onChange(value.filter((entry) => entry !== url));
-      if (onBundleMetaChange && bundleMeta[url]) {
-        const next = { ...bundleMeta };
+      if (onGuideMetaChange && guideMeta[url]) {
+        const next = { ...guideMeta };
         delete next[url];
-        onBundleMetaChange(next);
+        onGuideMetaChange(next);
       }
 
       if (url.startsWith("upload://") && userId) {
@@ -270,17 +179,17 @@ export function GuideLinkField({
 
       setAddError("");
     },
-    [bundleMeta, onBundleMetaChange, onChange, value, userId],
+    [guideMeta, onGuideMetaChange, onChange, value, userId],
   );
 
   const confirmRemoveUrl = useCallback(
     async (url: string) => {
-      const meta = bundleMeta[url];
+      const meta = guideMeta[url];
       const uploaded = isUploadedGuideUrl(url);
-      const bundle = isActiveGamefaqsBundle(url, meta);
+      const gamefaqs = isGamefaqsFaqGuideUrl(url);
       const label = uploaded
         ? uploadedGuideFilename(url)
-        : bundle && meta?.title
+        : gamefaqs && meta?.title
           ? meta.title
           : hostLabel(url);
 
@@ -295,7 +204,7 @@ export function GuideLinkField({
 
       removeUrl(url);
     },
-    [bundleMeta, onRequestConfirm, removeUrl],
+    [guideMeta, onRequestConfirm, removeUrl],
   );
 
   const runSearch = useCallback(async () => {
@@ -334,14 +243,9 @@ export function GuideLinkField({
   }, [trimmedGame, platform, query]);
 
   useEffect(() => {
-    onGuideCheckChange?.(previewLoading || Boolean(bundlePreview));
-    return () => onGuideCheckChange?.(false);
-  }, [previewLoading, bundlePreview, onGuideCheckChange]);
-
-  useEffect(() => {
-    onPendingChange?.(Boolean(uploadFile) || Boolean(bundlePreview));
+    onPendingChange?.(Boolean(uploadFile));
     return () => onPendingChange?.(false);
-  }, [uploadFile, bundlePreview, onPendingChange]);
+  }, [uploadFile, onPendingChange]);
 
   useEffect(() => {
     if (canSearch) return;
@@ -361,7 +265,7 @@ export function GuideLinkField({
 
   function onAddSubmit(event: FormEvent) {
     event.preventDefault();
-    void previewGuideUrl(draftUrl);
+    previewGuideUrl(draftUrl);
   }
 
   /** Paste link and Search web both route through previewGuideUrl. */
@@ -370,44 +274,12 @@ export function GuideLinkField({
       setSearchError(`You can add up to ${MAX_GUIDE_URLS} guides.`);
       return;
     }
-    void previewGuideUrl(url);
+    previewGuideUrl(url);
   }
 
   function onSearchSubmit(event: FormEvent) {
     event.preventDefault();
     void runSearch();
-  }
-
-  function confirmBundle() {
-    if (!bundlePreview) return;
-    const slugs = [...selectedSlugs];
-    if (!slugs.length) {
-      setAddError("Pick at least one page to index.");
-      return;
-    }
-    const selectedPages = bundlePreview.pages.filter((page) =>
-      selectedSlugs.has(page.slug),
-    );
-    setBundlePrefs(bundlePreview.canonicalUrl, {
-      skippedSlugs: [],
-      selectedSlugs: slugs,
-    });
-    commitAddUrl(bundlePreview.canonicalUrl, {
-      title: bundlePreview.title,
-      pageCount: selectedPages.length,
-      pages: selectedPages,
-      selectedSlugs: slugs,
-      skippedSlugs: [],
-    });
-  }
-
-  function toggleBundlePage(slug: string) {
-    setSelectedSlugs((prev) => {
-      const next = new Set(prev);
-      if (next.has(slug)) next.delete(slug);
-      else next.add(slug);
-      return next;
-    });
   }
 
   const urlInList = (url: string) => {
@@ -519,8 +391,8 @@ export function GuideLinkField({
       {value.length > 0 && (
         <ul className="guide-url-list" aria-label="Added guides">
           {value.map((url) => {
-            const meta = bundleMeta[url];
-            const bundle = isActiveGamefaqsBundle(url, meta);
+            const meta = guideMeta[url];
+            const gamefaqs = isGamefaqsFaqGuideUrl(url);
             const uploaded = isUploadedGuideUrl(url);
             return (
               <li key={guideUrlDedupeKey(url)} className="guide-url-row">
@@ -532,7 +404,7 @@ export function GuideLinkField({
                       </span>
                     ) : (
                       <a href={url} target="_blank" rel="noreferrer" className="guide-url-host" style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {bundle ? "GameFAQs bundle" : hostLabel(url)}
+                        {gamefaqs ? "GameFAQs guide" : hostLabel(url)}
                       </a>
                     )}
                     {(() => {
@@ -543,16 +415,14 @@ export function GuideLinkField({
                   <span className="guide-url-path">
                     {uploaded
                       ? uploadedGuideFilename(url)
-                      : bundle && meta
-                        ? `${meta.title} · ${meta.pageCount} pages`
-                        : url}
+                      : meta?.title ?? url}
                   </span>
                 </div>
                 <button
                   type="button"
                   className="guide-url-remove"
                   disabled={disabled}
-                  aria-label={`Remove ${uploaded ? uploadedGuideFilename(url) : bundle ? "bundle" : hostLabel(url)}`}
+                  aria-label={`Remove ${uploaded ? uploadedGuideFilename(url) : gamefaqs ? "GameFAQs guide" : hostLabel(url)}`}
                   onClick={() => void confirmRemoveUrl(url)}
                 >
                   <IconX size={14} />
@@ -563,63 +433,6 @@ export function GuideLinkField({
         </ul>
       )}
 
-      {bundlePreview && (
-        <div className="guide-bundle-preview" role="status" aria-live="polite">
-          <p className="guide-bundle-preview-eyebrow">Multi-page GameFAQs guide</p>
-          <h4 className="guide-bundle-preview-title">{bundlePreview.title}</h4>
-          <p className="guide-bundle-preview-copy">
-            Pick which pages to index. We&apos;ll fetch them the first time you ask
-            a question. Large guides can take a few minutes.
-          </p>
-          <div className="guide-bundle-preview-select">
-            <button
-              type="button"
-              onClick={() =>
-                setSelectedSlugs(new Set(bundlePreview.pages.map((page) => page.slug)))
-              }
-            >
-              Select all
-            </button>
-            <button type="button" onClick={() => setSelectedSlugs(new Set())}>
-              Clear
-            </button>
-          </div>
-          <ul className="guide-bundle-preview-pages">
-            {bundlePreview.pages.map((page) => (
-              <li key={page.url} className="guide-bundle-preview-page-row">
-                <input
-                  id={`bundle-page-${page.slug}`}
-                  type="checkbox"
-                  checked={selectedSlugs.has(page.slug)}
-                  onChange={() => toggleBundlePage(page.slug)}
-                />
-                <label htmlFor={`bundle-page-${page.slug}`}>{page.title}</label>
-              </li>
-            ))}
-          </ul>
-          <div className="guide-bundle-preview-actions">
-            <button
-              type="button"
-              className="nav-button"
-              disabled={disabled}
-              onClick={() => {
-                setBundlePreview(null);
-                setSelectedSlugs(new Set());
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="nav-button guide-bundle-preview-add"
-              disabled={disabled || selectedSlugs.size === 0}
-              onClick={confirmBundle}
-            >
-              Add bundle ({selectedSlugs.size} pages)
-            </button>
-          </div>
-        </div>
-      )}
 
       {!atMax && mode === "link" && (
         <form className="guide-url-add-form" onSubmit={onAddSubmit} role="tabpanel">
@@ -633,7 +446,6 @@ export function GuideLinkField({
               onChange={(event) => {
                 setDraftUrl(event.target.value);
                 if (addError) setAddError("");
-                if (bundlePreview) setBundlePreview(null);
               }}
               placeholder={
                 atMax
@@ -642,7 +454,7 @@ export function GuideLinkField({
               }
               maxLength={300}
               autoComplete="off"
-              disabled={disabled || atMax || previewLoading}
+              disabled={disabled || atMax}
             />
             <button
               type="button"
@@ -666,9 +478,9 @@ export function GuideLinkField({
           <button
             type="submit"
             className="nav-button"
-            disabled={disabled || atMax || previewLoading || !draftUrl.trim()}
+            disabled={disabled || atMax || !draftUrl.trim()}
           >
-            {previewLoading ? "Checking…" : "Add"}
+            Add
           </button>
         </form>
       )}
@@ -709,7 +521,7 @@ export function GuideLinkField({
                     maxLength={120}
                     autoComplete="off"
                     readOnly={!canSearch}
-                    disabled={disabled || searching || previewLoading || Boolean(bundlePreview)}
+                    disabled={disabled || searching}
                     tabIndex={canSearch ? undefined : -1}
                   />
                   <ClearButton
@@ -760,10 +572,10 @@ export function GuideLinkField({
                         <button
                           type="button"
                           className="guide-search-use"
-                          disabled={disabled || added || atMax || previewLoading}
+                          disabled={disabled || added || atMax}
                           onClick={() => pickGuide(hit.url)}
                         >
-                          {added ? "Added" : previewLoading ? "Checking…" : "Add"}
+                          {added ? "Added" : "Add"}
                         </button>
                       </li>
                     );
