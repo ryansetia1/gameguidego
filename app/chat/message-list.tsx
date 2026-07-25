@@ -473,9 +473,12 @@ export function MessageList({
                     loading="lazy"
                     referrerPolicy="no-referrer"
                     onError={(event) => {
-                      // CloudFlare/captcha/dead host: drop the whole figure so no
+                      // CloudFlare/captcha/dead host: hide the whole figure so no
                       // broken icon or dangling "Reference image" caption shows.
-                      event.currentTarget.closest("figure")?.remove();
+                      // Hide (not .remove()) — React owns this node; removing it
+                      // crashes reconciliation when the message re-renders.
+                      const fig = event.currentTarget.closest("figure");
+                      if (fig) fig.style.display = "none";
                     }}
                     onClick={() =>
                       onOpenLightbox([visualImageProxyUrl(message.illustration!.url)], 0)

@@ -1377,6 +1377,18 @@ export default function Home() {
     setCover(URL.createObjectURL(file));
   }
 
+  // Pick a TheGamesDB (or other CDN) cover URL. Mirrors selectCover's replace
+  // bookkeeping (mark a prior uploaded cover for deletion, revoke a blob preview)
+  // but stores a hotlinked URL, so no pending upload and no Storage cost.
+  function pickCoverUrl(url: string) {
+    if (!coverEnabled || !url) return;
+    const oldPath = coverStoragePath(cover);
+    if (oldPath) replacedCoverRef.current = oldPath;
+    if (cover.startsWith("blob:")) URL.revokeObjectURL(cover);
+    setPendingCover(null);
+    setCover(url);
+  }
+
   // Resolve the cover_url to persist: upload a pending file now, keep an existing
   // real URL, or "" — never persists a local blob: preview. Best-effort.
   async function resolveCoverUrl(): Promise<string> {
@@ -2438,6 +2450,7 @@ export default function Home() {
         onPickGame={pickGame}
         onPlatformChange={setPlatform}
         onSelectCover={selectCover}
+        onPickCoverUrl={pickCoverUrl}
         onClearCover={clearCover}
         onPreferredUrlsChange={setPreferredUrls}
         onGuideMetaChange={setGuideMeta}

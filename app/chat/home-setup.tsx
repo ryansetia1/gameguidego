@@ -1,5 +1,8 @@
-import type { RefObject } from "react";
+"use client";
+
+import { useState, type RefObject } from "react";
 import type { User } from "@supabase/supabase-js";
+import { CoverPicker } from "../cover-picker";
 import { GameAutocomplete } from "../game-autocomplete";
 import { GuideLinkField, type GuideMeta } from "../guide-link-field";
 import { PlatformSelect } from "../platform-select";
@@ -47,6 +50,7 @@ export type HomeSetupProps = {
   onPickGame: (picked: { name: string; year: string; cover: string; platform: string }) => void;
   onPlatformChange: (value: string) => void;
   onSelectCover: (file: File) => void;
+  onPickCoverUrl: (url: string) => void;
   onClearCover: () => void;
   onPreferredUrlsChange: (urls: string[]) => void;
   onGuideMetaChange: (meta: Record<string, GuideMeta>) => void;
@@ -97,6 +101,7 @@ export function HomeSetup({
   onPickGame,
   onPlatformChange,
   onSelectCover,
+  onPickCoverUrl,
   onClearCover,
   onPreferredUrlsChange,
   onGuideMetaChange,
@@ -107,6 +112,7 @@ export function HomeSetup({
   onSaveGameMeta,
   onSaveNewGame,
 }: HomeSetupProps) {
+  const [coverPickerOpen, setCoverPickerOpen] = useState(false);
   return (
     <>
       {showHero && (
@@ -243,20 +249,14 @@ export function HomeSetup({
                 <div className="field-head">
                   <label htmlFor="game">Game name</label>
                   {coverEnabled && !cover && (
-                    <label className="cover-add-btn icon-inline">
+                    <button
+                      type="button"
+                      className="cover-add-btn icon-inline"
+                      disabled={uploadingCover || loading}
+                      onClick={() => setCoverPickerOpen(true)}
+                    >
                       <IconPlus /> Add cover
-                      <input
-                        type="file"
-                        accept="image/*"
-                        hidden
-                        disabled={uploadingCover || loading}
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          event.target.value = "";
-                          if (file) onSelectCover(file);
-                        }}
-                      />
-                    </label>
+                    </button>
                   )}
                 </div>
                 <GameAutocomplete
@@ -409,6 +409,14 @@ export function HomeSetup({
           )}
         </section>
       ) : null}
+      {coverPickerOpen && (
+        <CoverPicker
+          initialQuery={game}
+          onPick={onPickCoverUrl}
+          onUpload={onSelectCover}
+          onClose={() => setCoverPickerOpen(false)}
+        />
+      )}
     </>
   );
 }
