@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import type { User } from "@supabase/supabase-js";
+import { ClearButton } from "../clear-button";
 import { CoverPicker } from "../cover-picker";
 import { GameAutocomplete } from "../game-autocomplete";
 import { GuideLinkField, type GuideMeta } from "../guide-link-field";
@@ -127,9 +128,16 @@ export function HomeSetup({
   onSaveNewGame,
 }: HomeSetupProps) {
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
+  const [quickSearch, setQuickSearch] = useState("");
+  const quickSearchRef = useRef<HTMLInputElement>(null);
   const quickLimit = useQuickHomeLimit();
-  const recentGames = savedGames.slice(0, quickLimit);
-  const moreGamesCount = savedGames.length - recentGames.length;
+  const term = quickSearch.trim().toLowerCase();
+  const isSearching = term.length > 0;
+  const filteredGames = isSearching
+    ? savedGames.filter((chat) => (chat.game || "").toLowerCase().includes(term))
+    : savedGames;
+  const recentGames = isSearching ? filteredGames : savedGames.slice(0, quickLimit);
+  const moreGamesCount = isSearching ? 0 : savedGames.length - recentGames.length;
   return (
     <>
       {showHero && (
@@ -160,6 +168,29 @@ export function HomeSetup({
           <div className="quick-head">
             <h2>Jump back in</h2>
           </div>
+          <div className="library-search-wrap field-clear-wrap quick-search-wrap">
+            <input
+              ref={quickSearchRef}
+              type="search"
+              className="library-search"
+              placeholder="Search saved games…"
+              value={quickSearch}
+              onChange={(event) => setQuickSearch(event.target.value)}
+              autoComplete="off"
+              aria-label="Search saved games"
+            />
+            <ClearButton
+              show={quickSearch.length > 0}
+              onClear={() => {
+                setQuickSearch("");
+                quickSearchRef.current?.focus();
+              }}
+              label="Clear search"
+            />
+          </div>
+          {isSearching && recentGames.length === 0 ? (
+            <p className="quick-search-empty">No games match &ldquo;{quickSearch.trim()}&rdquo;.</p>
+          ) : (
           <div className="quick-rail">
             {recentGames.map((chat) => (
               <button key={chat.id} type="button" className="quick-card" onClick={() => onOpenChat(chat)}>
@@ -191,6 +222,7 @@ export function HomeSetup({
               </button>
             )}
           </div>
+          )}
           {!newGameOpen ? (
             <>
               <button type="button" className="quick-new icon-inline" onClick={onStartNewGame}>

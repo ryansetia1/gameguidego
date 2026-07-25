@@ -3388,6 +3388,18 @@ details.sources small {
   letter-spacing: -0.01em;
 }
 
+.quick-search-wrap {
+  padding: 0;
+  margin: 0 0 4px;
+}
+
+.quick-search-empty {
+  margin: 0;
+  padding: 8px 4px 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 /* Native horizontal carousel: scroll-snap, no JS. Cards are fixed-width so a
    wide screen fits ~4 and narrower screens scroll. */
 .quick-rail {
