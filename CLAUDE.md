@@ -759,6 +759,9 @@ large chat or persistence work:
 - [`docs/plan/answer-satisfaction-signals.md`](docs/plan/answer-satisfaction-signals.md):
   **Future experiment:** retry / thumbs-down as answer-quality signals — Phase A
   regenerate-aware prompt first, explicit feedback second, opt-in memory aggregate last.
+- [`docs/plan/topic-title-in-summarize.md`](docs/plan/topic-title-in-summarize.md):
+  **Planned** — fold first-turn `topicTitle` into `summarize` JSON (3 → 2 Gemini
+  calls on turn 1); revert steps in plan.
 
 ## Working conventions
 
