@@ -10,10 +10,16 @@
   add"). Kills the 25× duplication and gives print-once for free.
 - **Retrieval dedup:** `lib/guide-rag.ts` over-fetches `RETRIEVE_K*4` then collapses
   identical chunk text to K distinct — fixes diversity for legacy 25×-data too.
-- **Phase 1 (TOC titles):** `slugFromGamefaqsTitle` + `parseGamefaqsTocByTitles`
-  (`lib/gamefaqs-bundle.js`), wired into `discoverGamefaqsBundleViaExtract` as a
-  fallback when the href-regex TOC finds ≤1. Best-effort; candidates that don't resolve
-  self-clean via failed-page tracking.
+- **Phase 1 (relative TOC links) — the actual root cause:** Tavily emits the TOC as
+  markdown links with **relative** hrefs (`[Part 1: The First Steps](part-1-the-first-steps)`)
+  for some guides (faqs/80674), so the absolute-path regex in `parseGamefaqsTocFromHtml`
+  found 1 of 25. `parseGamefaqsTocLinks` (`lib/gamefaqs-bundle.js`) parses the relative
+  links — the href IS the exact slug — and `discoverGamefaqsBundleViaExtract` now unions
+  both shapes. Verified live: faqs/80674 root discovery went from `{bundle:false,
+  singlePage:true}` to `bundle:true, pageCount:29`. (The earlier title-guessing
+  `parseGamefaqsTocByTitles` was wrong — the titles sit inside `[…](slug)` so a
+  whitespace-boundary regex found 0; using the link href is exact. A few TOC entries are
+  category headers, not pages — they fail ingest and self-clean via failed-page tracking.)
 - **Phase 3 (root URL):** `previewGuideUrl` runs discovery (`?refresh=1`) for FAQ root
   URLs too, not just section URLs.
 

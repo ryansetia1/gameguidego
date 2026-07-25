@@ -637,8 +637,10 @@ Panel when loaded:
   [`docs/plan/gamefaqs-toc-discovery.md`](docs/plan/gamefaqs-toc-discovery.md) for the
   matching ingest-side content-hash dedup (first page stored, later identical pages
   marked `duplicate` in `pageStatus` — settled, counted as covered, hidden from
-  "couldn't add"), the TOC-title fallback discovery (`parseGamefaqsTocByTitles`), and
-  root-URL bundle detection.
+  "couldn't add"), the relative-link TOC discovery (`parseGamefaqsTocLinks` — Tavily
+  emits some guides' TOC as relative markdown links `[Title](slug)` that the
+  absolute-path regex misses; discovery unions both shapes), and root-URL bundle
+  detection.
 - **DO NOT add an ANN index (ivfflat/hnsw) on `guide_chunks.embedding`.**
   Retrieval always filters by `guide_url`/`guide_bundle` first (btree), then does an
   EXACT cosine sort on that ≤~dozens-of-rows subset — fast + 100% recall. A prior

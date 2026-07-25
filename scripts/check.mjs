@@ -123,8 +123,7 @@ import {
   pickGamefaqsBundleTitle,
   titleFromGamefaqsSlug,
   expandRootPrintBundleIndexPages,
-  slugFromGamefaqsTitle,
-  parseGamefaqsTocByTitles,
+  parseGamefaqsTocLinks,
 } from "../lib/gamefaqs-bundle.js";
 import { coerceCachedBundleDiscovery, coercePageStatus } from "../lib/guide-bundle-cache.js";
 import {
@@ -815,26 +814,21 @@ assert.ok(
   "cleanSnippet strips TOC URLs — discovery must parse RAW extract, not cleaned text",
 );
 
-// Title -> slug (GameFAQs convention) + fallback TOC discovery from flattened titles.
-assert.equal(slugFromGamefaqsTitle("Part 1: The First Steps"), "part-1-the-first-steps");
-assert.equal(slugFromGamefaqsTitle("Legalities & Credit"), "legalities-and-credit");
-assert.equal(slugFromGamefaqsTitle("108 Stars of Destiny"), "108-stars-of-destiny");
 {
-  // Flattened TOC text (no hrefs) — the failure mode that broke faqs/80674. Each part
-  // is bounded by the next "Part N:" marker, so their slugs reconstruct exactly.
-  const flat =
-    "Table of Contents Introduction Part 1: The First Steps Part 2: Imperial Guards " +
-    "Part 3: Vagabond";
-  const pages = parseGamefaqsTocByTitles(flat, parsed80674);
+  // Relative-link TOC (the real faqs/80674 shape): [Title](relative-slug). The absolute
+  // parseGamefaqsTocFromHtml regex misses these; parseGamefaqsTocLinks recovers them.
+  const relToc =
+    "Table of Contents [Home](/) [Boards](/boards) " +
+    "[Introduction](introduction) 1. [Frequently Asked Questions](frequently-asked-questions) " +
+    "1. [Part 1: The First Steps](part-1-the-first-steps) 2. [Part 2: Imperial Guards](part-2-imperial-guards)";
+  const pages = parseGamefaqsTocLinks(relToc, parsed80674);
   const slugs = pages.map((p) => p.slug);
-  assert.deepEqual(slugs, [
-    "part-1-the-first-steps",
-    "part-2-imperial-guards",
-    "part-3-vagabond",
-  ]);
-  // Best-effort: the LAST part (no following marker) may over-capture trailing text;
-  // that candidate simply fails ingest and is recorded — see failed-page tracking.
-  assert.equal(parseGamefaqsTocByTitles("", parsed80674).length, 0);
+  assert.ok(slugs.includes("part-1-the-first-steps"), "recovers relative part links");
+  assert.ok(slugs.includes("part-2-imperial-guards"));
+  assert.ok(!slugs.includes("boards"), "absolute /boards nav link excluded");
+  assert.ok(!slugs.some((s) => s.startsWith("/")), "no absolute paths");
+  assert.equal(parseGamefaqsTocFromHtml(relToc, parsed80674).length, 0, "absolute regex finds nothing here");
+  assert.equal(parseGamefaqsTocLinks("", parsed80674).length, 0);
 }
 assert.equal(
   parseGamefaqsGuideTitle(

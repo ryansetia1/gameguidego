@@ -8,7 +8,7 @@ import {
   parseGamefaqsFaqUrl,
   parseGamefaqsGuideTitle,
   parseGamefaqsPagesFromUrls,
-  parseGamefaqsTocByTitles,
+  parseGamefaqsTocLinks,
   parseGamefaqsTocFromHtml,
   pickGamefaqsBundleTitle,
 } from "@/lib/gamefaqs-bundle.js";
@@ -253,19 +253,15 @@ async function discoverGamefaqsBundleViaExtract(
     const title = parseGamefaqsGuideTitle(extracted.content, parsed);
     if (!isGenericGamefaqsBundleTitle(title)) bestTitle = title;
 
+    // Union both TOC shapes: absolute-path hrefs (parseGamefaqsTocFromHtml) AND
+    // relative markdown links (parseGamefaqsTocLinks). Tavily emits one or the other
+    // depending on the guide, so relying on a single shape misses pages (faqs/80674
+    // only has relative links → the absolute regex found 1 of 25).
     const fromToc = parseGamefaqsTocFromHtml(extracted.content, parsed);
-    let merged = mergeGamefaqsBundlePages([...seedPages, ...fromToc]);
-
-    // Fallback: Tavily sometimes flattens the sidebar TOC to plain text (no hrefs), so
-    // the href regex finds nothing. Rebuild "Part N: Title" sections from the text.
-    if (merged.length <= 1) {
-      const fromTitles = parseGamefaqsTocByTitles(extracted.content, parsed);
-      if (fromTitles.length) {
-        merged = mergeGamefaqsBundlePages([...seedPages, ...fromToc, ...fromTitles]);
-        if (merged.length > 1) {
-          void logTraceEvent("discovery_toc_titles", `Rebuilt ${merged.length} pages from TOC titles on ${url}`, undefined, { bundleKey: parsed.bundleKey, fromTitles: fromTitles.length });
-        }
-      }
+    const fromLinks = parseGamefaqsTocLinks(extracted.content, parsed);
+    const merged = mergeGamefaqsBundlePages([...seedPages, ...fromToc, ...fromLinks]);
+    if (fromLinks.length && fromToc.length <= 1) {
+      void logTraceEvent("discovery_toc_relative", `Recovered ${fromLinks.length} pages from relative TOC links on ${url}`, undefined, { bundleKey: parsed.bundleKey, fromLinks: fromLinks.length });
     }
 
     if (merged.length > 1) {
