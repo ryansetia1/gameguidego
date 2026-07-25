@@ -739,10 +739,15 @@ assert.equal(
   gamefaqsExtractQuality("x".repeat(MIN_GAMEFAQS_GUIDE_CHARS)).insufficient,
   false,
 );
+// Softened length gate: a genuinely small non-TOC guide is indexable; only
+// near-empty (< MIN_GUIDE_BODY_CHARS) is too_short.
 assert.equal(
-  gamefaqsExtractQuality("x".repeat(MIN_GAMEFAQS_GUIDE_CHARS - 1)).reason,
-  "too_short",
+  gamefaqsExtractQuality("The boss is weak to fire. Hit its tail. ".repeat(130))
+    .insufficient,
+  false,
+  "5k non-TOC body should be acceptable",
 );
+assert.equal(gamefaqsExtractQuality("a".repeat(300)).reason, "too_short");
 assert.equal(
   guideUrlsSummary([suikodenBundle]),
   "GameFAQs guide",

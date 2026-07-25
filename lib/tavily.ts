@@ -548,6 +548,11 @@ async function extractWithAdvancedFallback(
         Boolean(pair.print && pair.print !== pair.original),
     );
 
+  // Tavily normalizes the URL, so a single-URL extract can land under a slightly
+  // different key; fall back to the sole value in that case.
+  const pickExtracted = (map: Map<string, string>, key: string) =>
+    map.get(key) ?? (map.size === 1 ? map.values().next().value : undefined);
+
   if (printPairs.length) {
     void logTraceEvent(
       "tavily_gamefaqs_print",
@@ -561,11 +566,24 @@ async function extractWithAdvancedFallback(
       signal,
       raw,
     );
+    // ponytail: GameFAQs/Tavily ?print=1 intermittently returns empty (observed on
+    // faqs/80674: 0 chars once, 443k another). One immediate retry recovers most
+    // transient misses before we fall through to the paginated page.
+    const printMisses = printPairs.filter(
+      (pair) =>
+        !sufficientGuideExtractContent(pickExtracted(printFetched, pair.print), pair.original),
+    );
+    if (printMisses.length && !signal?.aborted) {
+      const retried = await extractBasicAdvanced(
+        printMisses.map((pair) => pair.print),
+        apiKey,
+        signal,
+        raw,
+      );
+      for (const [key, content] of retried) printFetched.set(key, content);
+    }
     for (const { original, print } of printPairs) {
-      let content = printFetched.get(print);
-      if (!content && printFetched.size === 1) {
-        content = printFetched.values().next().value;
-      }
+      const content = pickExtracted(printFetched, print);
       if (sufficientGuideExtractContent(content, original)) out.set(original, content);
     }
   }

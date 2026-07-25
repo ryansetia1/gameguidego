@@ -8,7 +8,6 @@ import { cleanSnippet } from "@/lib/clean.js";
 import {
   canonicalGamefaqsBundleUrl,
   gamefaqsExtractQuality,
-  MIN_GAMEFAQS_GUIDE_CHARS,
   parseGamefaqsFaqUrl,
   parseGamefaqsGuideTitle,
 } from "@/lib/gamefaqs-bundle.js";
@@ -165,16 +164,17 @@ export async function isGuideIndexed(guideUrl: string): Promise<boolean> {
   }
 }
 
-async function guideChunkCharTotal(
+async function guideChunkText(
   supabase: SupabaseClient,
   guideUrl: string,
-): Promise<number> {
+): Promise<string> {
   const { data, error } = await supabase
     .from("guide_chunks")
     .select("chunk_text")
-    .eq("guide_url", guideUrl);
-  if (error || !data) return 0;
-  return data.reduce((sum, row) => sum + String(row.chunk_text ?? "").length, 0);
+    .eq("guide_url", guideUrl)
+    .order("chunk_index");
+  if (error || !data) return "";
+  return data.map((row) => String(row.chunk_text ?? "")).join("\n");
 }
 
 async function deleteGuideChunks(
@@ -312,13 +312,15 @@ async function ingestGuidePage(
   if (await isGuideIndexed(guideUrl)) {
     const isGamefaqs = Boolean(parseGamefaqsFaqUrl(guideUrl));
     if (isGamefaqs) {
-      const totalChars = await guideChunkCharTotal(supabase, guideUrl);
-      if (totalChars < MIN_GAMEFAQS_GUIDE_CHARS) {
+      // Purge only genuinely bad stored content (TOC-only / near-empty), not
+      // merely-short guides — else a small real guide re-embeds every turn.
+      const storedText = await guideChunkText(supabase, guideUrl);
+      if (gamefaqsExtractQuality(storedText).insufficient) {
         void logTraceEvent(
           "ingest_stale_purge",
-          `Purging short GameFAQs chunks (${totalChars} chars) for re-ingest: ${guideUrl}`,
+          `Purging insufficient GameFAQs chunks (${storedText.length} chars) for re-ingest: ${guideUrl}`,
           undefined,
-          { guideUrl, totalChars },
+          { guideUrl, totalChars: storedText.length },
         );
         await deleteGuideChunks(supabase, guideUrl);
       } else {
