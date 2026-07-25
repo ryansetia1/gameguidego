@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import type { User } from "@supabase/supabase-js";
 import { CoverPicker } from "../cover-picker";
 import { GameAutocomplete } from "../game-autocomplete";
@@ -15,6 +15,22 @@ import { SpoilerToggle } from "./spoiler-toggle";
 
 import type { GuideIndexState } from "@/lib/guide-index-state";
 
+const QUICK_HOME_LIMIT_MOBILE = 4;
+const QUICK_HOME_LIMIT_DESKTOP = 7;
+const QUICK_HOME_DESKTOP_MQ = "(min-width: 768px)";
+
+function useQuickHomeLimit() {
+  const [limit, setLimit] = useState(QUICK_HOME_LIMIT_MOBILE);
+  useEffect(() => {
+    const mq = window.matchMedia(QUICK_HOME_DESKTOP_MQ);
+    const sync = () => setLimit(mq.matches ? QUICK_HOME_LIMIT_DESKTOP : QUICK_HOME_LIMIT_MOBILE);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+  return limit;
+}
+
 export type HomeSetupProps = {
   showHero: boolean;
   showCarousel: boolean;
@@ -23,8 +39,7 @@ export type HomeSetupProps = {
   newGameOpen: boolean;
   editingGame: boolean;
   topRef: RefObject<HTMLElement | null>;
-  recentGames: Chat[];
-  moreGamesCount: number;
+  savedGames: Chat[];
   steamConnected: boolean;
   coverEnabled: boolean;
   cover: string;
@@ -74,8 +89,7 @@ export function HomeSetup({
   newGameOpen,
   editingGame,
   topRef,
-  recentGames,
-  moreGamesCount,
+  savedGames,
   steamConnected,
   coverEnabled,
   cover,
@@ -113,6 +127,9 @@ export function HomeSetup({
   onSaveNewGame,
 }: HomeSetupProps) {
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
+  const quickLimit = useQuickHomeLimit();
+  const recentGames = savedGames.slice(0, quickLimit);
+  const moreGamesCount = savedGames.length - recentGames.length;
   return (
     <>
       {showHero && (

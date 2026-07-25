@@ -2133,9 +2133,6 @@ export default function Home() {
   const showHero = isMounted && homeMode;
   const showSetupForm =
     (isMounted && homeMode && (!hasRecent || newGameOpen)) || (started && editingGame);
-  const QUICK_LIMIT = 7;
-  const recentGames = gameRooms.slice(0, QUICK_LIMIT).map((room) => room.representative);
-  const moreGamesCount = gameRooms.length - recentGames.length;
   const lastUserIndex = messages.map((m) => m.role).lastIndexOf("user");
   const lastGuideIndex = messages.map((m) => m.role).lastIndexOf("assistant");
 
@@ -2427,8 +2424,7 @@ export default function Home() {
         newGameOpen={newGameOpen}
         editingGame={editingGame}
         topRef={topRef}
-        recentGames={recentGames}
-        moreGamesCount={moreGamesCount}
+        savedGames={gameRooms.map((room) => room.representative)}
         steamConnected={steamConnected}
         coverEnabled={coverEnabled}
         cover={cover}
