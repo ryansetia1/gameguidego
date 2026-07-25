@@ -165,7 +165,7 @@ import {
   tailTurnIndexFromMessages,
 } from "../lib/chat-thread-persist.js";
 import { compareThreadSources } from "../lib/chat-thread-audit.js";
-import { answerModeInfo, mixedPreferredGuideLabel, pipelineSourceLabel, sourceHostname } from "../lib/chat-message-ui.js";
+import { answerModeInfo, enrichMessageSources, mixedPreferredGuideLabel, pipelineSourceLabel, resolveSourceTitle, sourceHostname } from "../lib/chat-message-ui.js";
 import {
   CHAT_QUERY_PARAM,
   coerceSessionDraft,
@@ -690,6 +690,13 @@ const parsed80674 = parseGamefaqsFaqUrl(suikodenBundle);
 assert.ok(parsed80674);
 assert.equal(
   parseGamefaqsGuideTitle(
+    "# Suikoden Guide and Walkthrough by Cyril ### Version 1.1, Last Updated 2025-03-09",
+    parsed80674,
+  ),
+  "Suikoden Guide and Walkthrough by Cyril",
+);
+assert.equal(
+  parseGamefaqsGuideTitle(
     "Guide and Walkthrough (PS) by [Cyril](https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674/credit)",
     parsed80674,
   ),
@@ -701,6 +708,22 @@ assert.equal(
     parsed80674,
   ),
   "Suikoden — Guide and Walkthrough (PS) by Cyril",
+);
+
+assert.equal(sourceHostname("https://www.ign.com/foo"), "ign.com");
+assert.equal(
+  resolveSourceTitle(
+    { title: "gamefaqs.gamespot.com", url: suikodenBundle },
+    { [suikodenBundle]: { title: "Suikoden Guide and Walkthrough by Cyril" } },
+  ),
+  "Suikoden Guide and Walkthrough by Cyril",
+);
+assert.equal(
+  enrichMessageSources(
+    [{ title: "gamefaqs.gamespot.com", url: suikodenBundle }],
+    { [suikodenBundle]: { title: "Suikoden Guide and Walkthrough by Cyril" } },
+  )[0].title,
+  "Suikoden Guide and Walkthrough by Cyril",
 );
 
 assert.equal(isReplicateRateLimit(new Error("429 Too Many Requests")), true);
@@ -1534,14 +1557,17 @@ assert.equal(
     { title: "guide.pdf", url: "upload://u/guide.pdf" },
     { title: "IGN walkthrough", url: "https://www.ign.com/walkthroughs/foo" },
   ]),
-  "PDF guide + ign.com",
+  "PDF guide + IGN walkthrough",
 );
 assert.equal(
   pipelineSourceLabel("rag", [
     { title: "guide.pdf", url: "upload://u/guide.pdf" },
-    { title: "FAQ", url: "https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674" },
+    {
+      title: "Suikoden — Guide and Walkthrough (PS) by Cyril",
+      url: "https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674",
+    },
   ]),
-  "PDF guide + GameFAQs guide",
+  "PDF guide + Suikoden — Guide and Walkthrough (PS) by Cyril",
 );
 assert.equal(
   mixedPreferredGuideLabel("PDF guide", ["ign.com", "gamefaqs.gamespot.com"]),

@@ -2444,6 +2444,7 @@ export default function Home() {
           generationStatus={generationStatus}
           indexingGuideCount={indexingGuideCount}
           preferredUrlCount={preferredUrls.length}
+          guideMeta={guideMeta}
           lastUserIndex={lastUserIndex}
           lastGuideIndex={lastGuideIndex}
           lastUserRef={lastUserRef}

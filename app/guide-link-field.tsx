@@ -394,6 +394,8 @@ export function GuideLinkField({
             const meta = guideMeta[url];
             const gamefaqs = isGamefaqsFaqGuideUrl(url);
             const uploaded = isUploadedGuideUrl(url);
+            const displayLabel =
+              meta?.title?.trim() || (gamefaqs ? "GameFAQs guide" : hostLabel(url));
             return (
               <li key={guideUrlDedupeKey(url)} className="guide-url-row">
                 <div className="guide-url-row-body">
@@ -404,7 +406,7 @@ export function GuideLinkField({
                       </span>
                     ) : (
                       <a href={url} target="_blank" rel="noreferrer" className="guide-url-host" style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {gamefaqs ? "GameFAQs guide" : hostLabel(url)}
+                        {displayLabel}
                       </a>
                     )}
                     {(() => {
@@ -415,14 +417,16 @@ export function GuideLinkField({
                   <span className="guide-url-path">
                     {uploaded
                       ? uploadedGuideFilename(url)
-                      : meta?.title ?? url}
+                      : meta?.title
+                        ? hostLabel(url)
+                        : url}
                   </span>
                 </div>
                 <button
                   type="button"
                   className="guide-url-remove"
                   disabled={disabled}
-                  aria-label={`Remove ${uploaded ? uploadedGuideFilename(url) : gamefaqs ? "GameFAQs guide" : hostLabel(url)}`}
+                  aria-label={`Remove ${uploaded ? uploadedGuideFilename(url) : displayLabel}`}
                   onClick={() => void confirmRemoveUrl(url)}
                 >
                   <IconX size={14} />

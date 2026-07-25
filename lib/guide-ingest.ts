@@ -41,6 +41,7 @@ export type IngestResult = {
   chunkCount: number;
   hubWarning: boolean;
   isBlocked?: boolean;
+  title?: string;
 };
 
 type IngestContext = {
@@ -62,6 +63,66 @@ function embedLogFromContext(ctx?: IngestContext): EmbedLogMeta | undefined {
 function gamefaqsStorageUrl(rawUrl: string): string {
   const canonical = canonicalGamefaqsBundleUrl(rawUrl);
   return normalizeGuideUrl(canonical ?? rawUrl);
+}
+
+/** Stable DB/cache key for a preferred guide URL. */
+export function guideStorageKey(rawUrl: string): string {
+  return parseGamefaqsFaqUrl(rawUrl)
+    ? gamefaqsStorageUrl(rawUrl)
+    : normalizeGuideUrl(rawUrl);
+}
+
+/** Cached display title from a prior GameFAQs ingest (guide_bundle_cache). */
+export async function getGuideDisplayTitle(guideUrl: string): Promise<string | null> {
+  const supabase = getServerClient();
+  if (!supabase) return null;
+  const storageUrl = guideStorageKey(guideUrl);
+  try {
+    const { data } = await supabase
+      .from("guide_bundle_cache")
+      .select("data")
+      .eq("bundle_key", storageUrl)
+      .maybeSingle();
+    const title = (data?.data as { title?: string } | null)?.title;
+    return typeof title === "string" && title.trim() ? title.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Batch-read cached guide titles keyed by normalized URL. */
+export async function getGuideDisplayTitles(
+  urls: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const unique = [...new Set(urls.map((url) => guideStorageKey(url)))];
+  await Promise.all(
+    unique.map(async (url) => {
+      const title = await getGuideDisplayTitle(url);
+      if (title) out.set(url, title);
+    }),
+  );
+  return out;
+}
+
+async function cacheGamefaqsGuideTitle(
+  supabase: SupabaseClient,
+  guideUrl: string,
+  rawContent: string,
+): Promise<string | undefined> {
+  const parsed = parseGamefaqsFaqUrl(guideUrl);
+  if (!parsed) return undefined;
+  const title = parseGamefaqsGuideTitle(rawContent, parsed);
+  if (!title) return undefined;
+  try {
+    await supabase.from("guide_bundle_cache").upsert({
+      bundle_key: guideUrl,
+      data: { title },
+    });
+  } catch {
+    // best-effort display title
+  }
+  return title;
 }
 
 /** True when guide_chunks already has rows for this URL. */
@@ -243,7 +304,13 @@ async function ingestGuidePage(
           .from("guide_chunks")
           .select("*", { count: "exact", head: true })
           .eq("guide_url", guideUrl);
-        return { indexed: true, chunkCount: count ?? 0, hubWarning: false };
+        const title = await getGuideDisplayTitle(guideUrl);
+        return {
+          indexed: true,
+          chunkCount: count ?? 0,
+          hubWarning: false,
+          ...(title ? { title } : {}),
+        };
       }
     } else {
       const { count } = await supabase
@@ -311,28 +378,20 @@ async function ingestGuidePage(
   }
 
   // ponytail: title parse from extract text only — direct GameFAQs fetch is Cloudflare-blocked.
-  const parsed = parseGamefaqsFaqUrl(guideUrl);
-  if (parsed) {
-    const title = parseGamefaqsGuideTitle(extracted.content, parsed);
-    if (title) {
-      try {
-        await supabase.from("guide_bundle_cache").upsert({
-          bundle_key: guideUrl,
-          data: { title },
-        });
-      } catch {
-        // best-effort display title
-      }
-    }
-  }
+  const title = await cacheGamefaqsGuideTitle(supabase, guideUrl, extracted.content);
 
   void logTraceEvent(
     "ingest_complete",
     `Successfully ingested guide: ${guideUrl}`,
     Date.now() - startMs,
-    { guideUrl, chunkCount: stored.chunkCount, hubWarning },
+    { guideUrl, chunkCount: stored.chunkCount, hubWarning, ...(title ? { title } : {}) },
   );
-  return { indexed: true, chunkCount: stored.chunkCount, hubWarning };
+  return {
+    indexed: true,
+    chunkCount: stored.chunkCount,
+    hubWarning,
+    ...(title ? { title } : {}),
+  };
 }
 
 /**

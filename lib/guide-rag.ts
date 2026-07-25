@@ -4,6 +4,8 @@ import { embedQuery } from "@/lib/embed";
 import { toVectorString } from "@/lib/embed-cache";
 import {
   ensureGuideIngested,
+  getGuideDisplayTitles,
+  guideStorageKey,
   isGuideRagAvailable,
   normalizeGuideUrl,
 } from "@/lib/guide-ingest";
@@ -220,13 +222,16 @@ export async function retrieveFromPreferredGuides(input: {
   const topSimilarity = matches[0]?.similarity ?? 0;
   // Rerank verdict wins when it ran (semantic relevance); else cosine threshold.
   const hit = rerankRelevant != null ? rerankRelevant : topSimilarity >= GUIDE_HIT;
+  const titleByUrl = await getGuideDisplayTitles(matches.map((row) => row.guide_url));
+  const labelFor = (guideUrl: string) =>
+    titleByUrl.get(guideStorageKey(guideUrl)) ?? hostLabel(guideUrl);
   void logTraceEvent("rag_similarity_score", `Top RAG similarity: ${topSimilarity.toFixed(3)} (Hit: ${hit}, reranked: ${rerankRelevant != null})`, undefined, {
     topSimilarity,
     hit,
     threshold: GUIDE_HIT,
     reranked: rerankRelevant != null,
     chunks: matches.map((row, index) => ({
-      title: hostLabel(row.guide_url) + (matches.length > 1 ? ` (section ${index + 1})` : ""),
+      title: labelFor(row.guide_url) + (matches.length > 1 ? ` (section ${index + 1})` : ""),
       url: row.guide_url,
       similarity: row.similarity,
       preview: row.chunk_text.slice(0, 600),
@@ -245,7 +250,7 @@ export async function retrieveFromPreferredGuides(input: {
   }
 
   const sources: SearchResult[] = matches.map((row, index) => {
-    const label = hostLabel(row.guide_url);
+    const label = labelFor(row.guide_url);
     return {
       title: hit ? `${label} (section ${index + 1})` : label,
       url: row.guide_url,

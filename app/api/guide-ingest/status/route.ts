@@ -5,6 +5,7 @@ import {
   normalizeGuideUrlList,
 } from "@/lib/guide-urls.js";
 import {
+  getGuideDisplayTitle,
   isGuideIndexed,
   isGuideRagAvailable,
 } from "@/lib/guide-ingest";
@@ -43,10 +44,15 @@ export async function GET(request: Request) {
   }
 
   const results = await Promise.all(
-    urls.map(async (url) => ({
-      url,
-      indexed: await isGuideIndexed(url),
-    })),
+    urls.map(async (url) => {
+      const indexed = await isGuideIndexed(url);
+      const title = indexed ? await getGuideDisplayTitle(url) : null;
+      return {
+        url,
+        indexed,
+        ...(title ? { title } : {}),
+      };
+    }),
   );
 
   return NextResponse.json({ available: true, results });

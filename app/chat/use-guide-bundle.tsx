@@ -54,10 +54,21 @@ export function useGuideBundle({
         if (!response.ok) return;
         const data: {
           available: boolean;
-          results: { url: string; indexed: boolean }[];
+          results: { url: string; indexed: boolean; title?: string }[];
         } = await response.json();
 
         if (cancelled) return;
+
+        setGuideMeta((prev) => {
+          let next = prev;
+          for (const item of data.results) {
+            if (!item.title) continue;
+            const existing = prev[item.url];
+            if (existing?.title === item.title) continue;
+            next = { ...next, [item.url]: { ...existing, title: item.title } };
+          }
+          return next === prev ? prev : next;
+        });
 
         setGuideIndexState((prev) => {
           const next: GuideIndexState = {};
@@ -89,8 +100,12 @@ export function useGuideBundle({
   const applyIngestRowToMeta = useCallback(
     (url: string, row: Record<string, unknown>, existing?: GuideMeta): GuideMeta | undefined => {
       if (!row || typeof row !== "object") return existing;
+      const title =
+        typeof row.title === "string" && row.title.trim()
+          ? row.title.trim()
+          : existing?.title;
       return {
-        title: existing?.title ?? "GameFAQs guide",
+        ...(title ? { title } : {}),
         ...(row.isBlocked === true || existing?.isBlocked ? { isBlocked: true } : {}),
       };
     },

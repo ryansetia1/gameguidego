@@ -16,12 +16,14 @@ import { WRITING_ANSWER_PLACEHOLDER, messageShowsVariantNav } from "@/lib/chat-m
 import { KIND_LABELS, type Highlight } from "@/lib/highlights.js";
 import {
   answerModeInfo,
+  enrichMessageSources,
   groupHighlightsByKind,
   isUploadOnlySources,
   pipelineSourceLabel,
   sourceHostname,
   uploadedSourceGuideLabel,
 } from "@/lib/chat-message-ui.js";
+import type { GuideMeta } from "../guide-link-field";
 import { isUploadedGuideUrl } from "@/lib/guide-urls.js";
 import { visualImageProxyUrl } from "@/lib/visual-image-proxy.js";
 
@@ -172,6 +174,7 @@ function IllustrationInfo() {
 function AnswerFoot({
   message,
   index,
+  guideMeta,
   canAddGuide,
   disabled,
   onRetry,
@@ -180,6 +183,7 @@ function AnswerFoot({
 }: {
   message: Message;
   index: number;
+  guideMeta: Record<string, GuideMeta>;
   canAddGuide: boolean;
   disabled: boolean;
   onRetry: () => void;
@@ -187,7 +191,7 @@ function AnswerFoot({
   onNavigateVariant: (msgIndex: number, variantIndex: number) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const sources = message.sources;
+  const sources = enrichMessageSources(message.sources, guideMeta) as Message["sources"];
   const mode = answerModeInfo(message.pipelineType, sources);
   const expandable = Boolean(
     sources && sources.length > 0 && !isUploadOnlySources(sources),
@@ -362,6 +366,7 @@ export type MessageListProps = {
   onAddGuide?: () => void;
   guideUpsellDismissed?: boolean;
   onDismissGuideUpsell?: () => void;
+  guideMeta?: Record<string, GuideMeta>;
 };
 
 export function MessageList({
@@ -387,6 +392,7 @@ export function MessageList({
   onAddGuide,
   guideUpsellDismissed,
   onDismissGuideUpsell,
+  guideMeta = {},
 }: MessageListProps) {
   const answerCount = messages.reduce(
     (count, message) => (message.role === "assistant" ? count + 1 : count),
@@ -557,6 +563,7 @@ export function MessageList({
               <AnswerFoot
                 message={message}
                 index={index}
+                guideMeta={guideMeta}
                 canAddGuide={preferredUrlCount === 0 && !!onAddGuide}
                 disabled={loading}
                 onRetry={() => void onRetry(index)}
