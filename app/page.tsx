@@ -1267,8 +1267,13 @@ export default function Home() {
 
   function startNewTopic() {
     setMenuOpenId(null);
-    activeChatIdRef.current = null;
-    setActiveChatId(null);
+    // Reuse an empty "save for later" topic if this room has one, so the first
+    // question fills that row instead of orphaning it.
+    const emptyTopic = topicsForRoom(chats, game, platform).find(
+      (t) => !Array.isArray(t.messages) || t.messages.length === 0,
+    );
+    activeChatIdRef.current = emptyTopic?.id ?? null;
+    setActiveChatId(emptyTopic?.id ?? null);
     setMessages([]);
     setEditingIndex(null);
     setInput("");
@@ -1487,6 +1492,20 @@ export default function Home() {
     } catch (caught) {
       console.error("Failed to save game details:", caught);
     }
+  }
+
+  // Save a set-up game (name/platform/guides/cover) to the library without asking
+  // yet. persistChat with empty messages creates the room; guides already indexed
+  // on add, so this only persists the room association. Returns home to prep more.
+  async function saveNewGame() {
+    if (!game.trim() || loading) return;
+    const id = await persistChat([], null);
+    if (!id) {
+      setToast("Couldn't save that game. Try again.");
+      return;
+    }
+    setToast("Saved. Find it in your games.");
+    newGame();
   }
 
   function editGame(chat: Chat, event: MouseEvent<HTMLButtonElement>) {
@@ -2078,7 +2097,11 @@ export default function Home() {
     (gameView === "thread" || messages.length > 0 || Boolean(activeChatId));
   const composerLocked = loading || !hasGame || guideChecking || showTopicList;
   const gameRooms = groupChatsByRoom(chats);
-  const roomTopics = hasGame ? topicsForRoom(chats, game, platform) : [];
+  // Hide empty "save for later" topics from the list (the row still persists the
+  // room's guides/cover). The room card + New topic remain; New topic reuses it.
+  const roomTopics = (hasGame ? topicsForRoom(chats, game, platform) : []).filter(
+    (t) => Array.isArray(t.messages) && t.messages.length > 0,
+  );
   const activeRoomKey = hasGame && gameView !== null ? gameRoomKey(game, platform) : null;
   // Home layout states:
   // - Empty account: marketing hero + setup form (+ examples).
@@ -2423,6 +2446,7 @@ export default function Home() {
         onRequestConfirm={(opts) => askConfirm(opts.message, opts.confirmLabel, opts.danger)}
         onGameSpoilerChange={updateGameSpoiler}
         onSaveGameMeta={() => void saveGameMeta()}
+        onSaveNewGame={() => void saveNewGame()}
       />
 
       {showTopicList ? (

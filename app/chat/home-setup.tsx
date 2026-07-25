@@ -59,6 +59,7 @@ export type HomeSetupProps = {
   }) => Promise<boolean>;
   onGameSpoilerChange: (value: boolean) => void;
   onSaveGameMeta: () => void;
+  onSaveNewGame: () => void;
 };
 
 export function HomeSetup({
@@ -104,6 +105,7 @@ export function HomeSetup({
   onRequestConfirm,
   onGameSpoilerChange,
   onSaveGameMeta,
+  onSaveNewGame,
 }: HomeSetupProps) {
   return (
     <>
@@ -351,6 +353,30 @@ export function HomeSetup({
               <SpoilerToggle prefs={{ major: gameSpoilerMajor }} onChange={onGameSpoilerChange} compact />
             </div>
           </div>
+          {!editingGame && game.trim() && (
+            <div className="field field-wide setup-save-game">
+              <button
+                type="button"
+                className="guide-cta-skip"
+                disabled={loading}
+                onClick={async () => {
+                  if (guidePending) {
+                    const ok = await onRequestConfirm({
+                      message:
+                        "You picked a guide but haven't added it yet. Save without it?",
+                      confirmLabel: "Save without it",
+                      danger: true,
+                    });
+                    if (!ok) return;
+                  }
+                  onSaveNewGame();
+                }}
+              >
+                Save for later
+              </button>
+              <small>Keep this game and its guides. Ask whenever you&apos;re ready.</small>
+            </div>
+          )}
           {editingGame && (
             <div className="field field-wide setup-done">
               <button

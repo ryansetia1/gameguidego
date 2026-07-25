@@ -4707,6 +4707,21 @@ details.sources small {
   color: var(--ink);
 }
 
+/* Secondary "Save for later" exit under the setup form: quiet, centered, sits
+   below the primary composer CTA so it never competes with asking. */
+.setup-save-game {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.setup-save-game small {
+  color: var(--text-subtle);
+  font-size: 0.75rem;
+}
+
 /* Quiet full-width settings row under the guide card: label left, checkbox
    right, lighter border so it reads as subordinate to the guide, not a second
    competing card. Scoped here so the game-card compact toggle is unaffected. */
