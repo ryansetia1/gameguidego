@@ -300,6 +300,12 @@ export default function Home() {
     window.history.pushState({ gggTopics: true }, "");
   }
 
+  /** Global loading/status only apply to the open thread; clear when leaving it. */
+  function clearActiveTurnUi() {
+    setLoading(false);
+    setGenerationStatus(null);
+  }
+
   /** Strip overlay marker in-place (no popstate); safe before router.push. */
   function stripOverlayHistory() {
     if (typeof window === "undefined") return;
@@ -470,6 +476,7 @@ export default function Home() {
       const view = gameViewRef.current;
       if (view === "thread") {
         chatHistoryPushed.current = false;
+        clearActiveTurnUi();
         setMenuOpenId(null);
         setActiveChatId(null);
         setMessages([]);
@@ -1075,6 +1082,7 @@ export default function Home() {
   }
 
   function newGame() {
+    clearActiveTurnUi();
     setChatUrl(null);
     clearSessionDraft();
     setActiveChatId(null);
@@ -1217,6 +1225,7 @@ export default function Home() {
   }
 
   function openGameRoom(chat: Chat) {
+    clearActiveTurnUi();
     jumpRef.current = true;
     applyRoomContext(chat);
     setActiveChatId(null);
@@ -1237,6 +1246,7 @@ export default function Home() {
   }
 
   function backToTopicList() {
+    clearActiveTurnUi();
     setMenuOpenId(null);
     if (typeof window !== "undefined" && chatHistoryPushed.current) {
       window.history.back();
@@ -1558,6 +1568,7 @@ export default function Home() {
       return;
     }
 
+    clearActiveTurnUi();
     jumpRef.current = true;
     setActiveChatId(null);
     setMessages([]);

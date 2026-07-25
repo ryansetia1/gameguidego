@@ -447,7 +447,8 @@ export async function executeChatTurn({
       d.backgroundLoadingRef.current[activeId] = false;
       delete d.abortRefs.current[activeId];
     }
-    if (d.activeChatIdRef.current === activeId) {
+    // ponytail: global loading is thread-scoped; backgroundLoadingRef tracks off-thread turns.
+    if (d.activeChatIdRef.current === activeId || d.activeChatIdRef.current === null) {
       d.setLoading(false);
       if (succeeded) d.setGenerationStatus(null);
     }
