@@ -439,3 +439,78 @@ Revert Phase 1 UI; leave DB columns from Phase 3 nullable unused if rolling back
 - Game rooms: `lib/game-room.js`, `docs/plan/chat-persistence-refactor.md`
 - Autocomplete / TGDB: `app/api/games/route.ts`, `lib/games.js`
 - Answer quality (separate): [answer-satisfaction-signals.md](./answer-satisfaction-signals.md)
+
+---
+
+## Langkah 2 — catalog write-path (DEFERRED, parked 2026-07-25)
+
+### Status
+
+**Langkah 1 (identity core) shipped and closed the real bug.** Strengthening
+`normGameKey` (NFKD + strip quotes + punctuation→space, `lib/game-room.js`) now
+unifies the model's slug output (`risk-of-rain-2013`) with the chat display name
+(`Risk of Rain (2013)`) → both become `risk of rain 2013`. Before this, per-game
+memory (`player_game_memory`) **never loaded on solve** because the stored key
+(slug) and the lookup key (name) never matched. Dual-lookup
+(`loadPlayerGameMemory`) + the backfill (`scripts/backfill-game-keys.mjs`) heal
+existing rows.
+
+The catalog columns already exist (`db/catalog-game-id.sql`, migrated). Only the
+**write-path wiring** is deferred. Build it **only when a real case appears**: two
+genuinely different display strings for the same game that normalize differently —
+e.g. re-adding a game via autocomplete as `Final Fantasy VII` when memory was keyed
+under `FF7`, or a TGDB alias vs a hand-typed name. Punctuation/slug/diacritic drift
+is already handled by Langkah 1, so this is now a **narrow alias case**, not the
+main lubang.
+
+### Trigger (when to un-park)
+
+Un-park if any of these show up in logs/reports:
+- A user's memory silently resets after re-adding the same game from autocomplete
+  under a differently-spelled name (not just different punctuation).
+- `player_game_memory` rows accumulate two entries for what is clearly one game
+  with distinct names.
+- We add IGDB and want a provider-stable id instead of a normalized string.
+
+### Wiring path (each hop, in order)
+
+`catalog_game_id` is the TheGamesDB `game.id` already present in autocomplete rows.
+Thread it exactly like `cover_url` / `release_year` are threaded today (grep those
+to mirror the pattern — same call sites):
+
+1. **Autocomplete → onPick** (`app/game-autocomplete.tsx`): add `id` to the
+   `onPick({ name, year, cover, platform })` payload (the id already exists on the
+   mapped game object from `lib/games.js#mapGames`).
+2. **onPick type** (`app/chat/home-setup.tsx`): add `catalogGameId?: number` to the
+   pick handler type.
+3. **pickGame state** (`app/page.tsx`, `pickGame` ~line 1404): store
+   `catalogGameId` in page state; **clear it to null on manual typing** (same rule
+   as the stale-cover clear — a hand-typed name has no catalog id).
+4. **Persist payload** (`app/page.tsx` persist path): write `catalog_game_id` into
+   the `chats` upsert, shared across the room like cover/year
+   (`lib/game-room.js#syncRoomSharedMeta`). Client reads already tolerate the
+   column being absent (`select("*")`).
+5. **Solve body** (`app/chat/execute-chat-turn.ts`, JSON body ~line 208-225): add
+   `catalogGameId` to the POST body.
+6. **Solve route trust boundary** (`app/api/solve/route.ts`): parse + validate with
+   a `cleanInt` helper (positive integer, else null — TGDB ids are ints today;
+   `ponytail:` note that IGDB may need text/bigint). Pass into `loadMemoryForSolve`.
+7. **Memory read** (`lib/player-memory-server.ts#loadPlayerGameMemory`): when a
+   `catalogGameId` is present, look up by `(user_id, catalog_game_id, platform)`
+   **first** (uses the partial index `player_game_memory_catalog_idx`), fall back to
+   the current name-key dual-lookup. Do NOT remove the name-key path — free-text and
+   pre-catalog rows stay null forever.
+8. **Summarize stamp** (`refreshPlayerMemory` upsert): when writing a game's memory
+   row, stamp `catalog_game_id` by mapping the summarized `gameKey` back to the
+   chat's catalog id (join through the room). Null when unknown.
+
+### Cost of leaving it parked
+
+Only the narrow alias case above stays unfixed; it degrades to "memory resets on
+that specific re-add" (recoverable — user re-teaches, or Forget + start fresh). No
+data loss, no crash. The migration columns sitting unused are inert and nullable.
+
+### Teardown for Langkah 2 (if built then reverted)
+
+Grep `catalog_game_id`, `catalogGameId`, `cleanInt`, `player_game_memory_catalog_idx`.
+Leave the nullable DB columns; revert the 8 wiring hops.
