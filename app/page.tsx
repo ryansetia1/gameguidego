@@ -399,7 +399,6 @@ export default function Home() {
     guideIndexState,
     setGuideIndexState,
     setStatusRev,
-    guideChecking,
     setGuideChecking,
     guidePending,
     setGuidePending,
@@ -2107,7 +2106,15 @@ export default function Home() {
     !editingGame &&
     gameView !== "topics" &&
     (gameView === "thread" || messages.length > 0 || Boolean(activeChatId));
-  const composerLocked = loading || !hasGame || guideChecking || showTopicList;
+  // Lock the composer while any guide in this room is still indexing: adding a
+  // guide is intentional, so the first answer should use it, not fall back to web.
+  // Only "checking"/"pending" lock; terminal states (failed/blocked/unavailable)
+  // don't, so a bad guide never traps the user (they can send with web fallback).
+  const guideIndexing = preferredUrls.some((url) => {
+    const state = guideIndexState[url];
+    return state === "checking" || state === "pending";
+  });
+  const composerLocked = loading || !hasGame || guideIndexing || showTopicList;
   const gameRooms = groupChatsByRoom(chats);
   // Hide empty "save for later" topics from the list (the row still persists the
   // room's guides/cover). The room card + New topic remain; New topic reuses it.
@@ -2550,6 +2557,7 @@ export default function Home() {
           inlineEdit={editingIndex !== null}
           dragActive={dragActive}
           composerLocked={composerLocked}
+          guideIndexing={guideIndexing}
           coverEnabled={coverEnabled}
           hasGame={hasGame}
           preferredUrlCount={preferredUrls.length}

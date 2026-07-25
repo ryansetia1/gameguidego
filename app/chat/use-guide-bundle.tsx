@@ -1,7 +1,7 @@
 "use client";
 
 import type { User } from "@supabase/supabase-js";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { guideIngestHintFromResponse } from "@/lib/guide-hints.js";
 import {
   type GuideIndexState,
@@ -188,6 +188,22 @@ export function useGuideBundle({
       setIsReindexingAll(false);
     }
   }, [preferredUrls, guideIndexState, retryGuideIngest, isReindexingAll]);
+
+  // Auto-index a freshly added guide in the background. This lives at page scope
+  // (the hook never unmounts on topic/room navigation) and retryGuideIngest fires
+  // NO abort signal, so navigating away never cancels an in-flight ingest — the
+  // user can chat in another room and come back when it finishes. The ref guards
+  // against re-firing the same URL (across re-renders and room switches) while its
+  // ingest is still running.
+  const autoIngestingRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const url of preferredUrls) {
+      if (guideIndexState[url] === "pending" && !autoIngestingRef.current.has(url)) {
+        autoIngestingRef.current.add(url);
+        void retryGuideIngest(url).finally(() => autoIngestingRef.current.delete(url));
+      }
+    }
+  }, [preferredUrls, guideIndexState, retryGuideIngest]);
 
   const resetGuideMeta = useCallback(() => setGuideMeta({}), []);
 

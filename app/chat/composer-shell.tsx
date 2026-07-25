@@ -23,6 +23,7 @@ export type ComposerShellProps = {
   inlineEdit: boolean;
   dragActive: boolean;
   composerLocked: boolean;
+  guideIndexing: boolean;
   coverEnabled: boolean;
   hasGame: boolean;
   preferredUrlCount: number;
@@ -61,6 +62,7 @@ export function ComposerShell({
   inlineEdit,
   dragActive,
   composerLocked,
+  guideIndexing,
   coverEnabled,
   hasGame,
   preferredUrlCount,
@@ -160,7 +162,7 @@ export function ComposerShell({
       <div className={`composer-inner ${isExpanded ? "expanded" : ""}`}>
         <div className="composer-input-row">
           <div className="composer-field">
-            {!input && !voiceListening && hasGame && (
+            {!input && !voiceListening && hasGame && !guideIndexing && (
               <div className="composer-placeholder-marquee" aria-hidden="true">
                 <div className="marquee-track">
                   <span className="marquee-content">
@@ -195,7 +197,15 @@ export function ComposerShell({
                   void onSelectImages(files);
                 }
               }}
-              placeholder={voiceListening ? "" : !hasGame ? "Enter a game name first" : ""}
+              placeholder={
+                voiceListening
+                  ? ""
+                  : !hasGame
+                    ? "Enter a game name first"
+                    : guideIndexing
+                      ? "Indexing your guide, one sec…"
+                      : ""
+              }
               rows={1}
               maxLength={2000}
               required
