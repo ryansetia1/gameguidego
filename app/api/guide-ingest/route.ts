@@ -77,6 +77,7 @@ export async function POST(request: Request) {
     typeof record.playerName === "string" ? record.playerName.replace(/\s+/g, " ").trim().slice(0, 32) : "";
   const ingestCtx = { game, platform, userId, playerName: playerName || undefined };
   const bundlePrefs = coerceBundlePrefsFromBody(record.bundlePrefs);
+  const retryFailed = record.retryFailed === true;
 
   if (!urls.length) {
     return NextResponse.json({ error: "Missing guide URL." }, { status: 400 });
@@ -113,6 +114,7 @@ export async function POST(request: Request) {
           ...ingestCtx,
           skipSlugs: prefs?.skippedSlugs,
           includeSlugs: prefs?.selectedSlugs,
+          retryFailed,
         });
         results.push({ ...result, url });
         if (result.hubWarning) anyHubWarning = true;

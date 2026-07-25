@@ -124,7 +124,7 @@ import {
   titleFromGamefaqsSlug,
   expandRootPrintBundleIndexPages,
 } from "../lib/gamefaqs-bundle.js";
-import { coerceCachedBundleDiscovery } from "../lib/guide-bundle-cache.js";
+import { coerceCachedBundleDiscovery, coercePageStatus } from "../lib/guide-bundle-cache.js";
 import {
   cleanGuideUrl,
   coerceGuideUrlsFromBody,
@@ -608,7 +608,7 @@ assert.match(
       },
     ],
   }) ?? "",
-  /Not indexed: FAQ/i,
+  /Couldn't add: FAQ/i,
 );
 
 assert.deepEqual(
@@ -2276,6 +2276,35 @@ assert.match(
     ],
   );
   assert.equal(merged[1].illustration?.alt, "Sprite");
+}
+
+// Bundle page-failure tracking: a page tried-and-failed is "settled" (won't retry),
+// so a partially-indexed bundle stops nagging "memorizing" every turn.
+{
+  // coercePageStatus validates the persisted { slug: reason } map.
+  assert.equal(coercePageStatus({ a: "blocked", b: "not_found" }).a, "blocked");
+  assert.equal(coercePageStatus({ a: "blocked", b: "bogus" }).b, undefined);
+  assert.equal(coercePageStatus({ x: "nonsense" }), undefined);
+  assert.equal(coercePageStatus(null), undefined);
+  // coerceCachedBundleDiscovery preserves pageStatus even with no pages.
+  const cached = coerceCachedBundleDiscovery({ pages: [], pageStatus: { toran: "blocked" } });
+  assert.equal(cached?.pageStatus?.toran, "blocked");
+
+  // The core loop-stopper: fold failed slugs into the "settled" set passed to
+  // bundleHasPendingPages (what guideUrlNeedsIngest does via settledBundleSlugs).
+  const discovered = [
+    { slug: "intro" },
+    { slug: "toran" },
+    { slug: "future" },
+  ];
+  const prefs = { selectedSlugs: ["intro", "toran", "future"], skippedSlugs: [] };
+  // indexed only "intro" → 2 pending (nags every turn).
+  assert.equal(bundleHasPendingPages(discovered, ["intro"], prefs), true);
+  // indexed "intro" + failed "toran","future" folded in → nothing pending → no nag.
+  assert.equal(
+    bundleHasPendingPages(discovered, ["intro", "toran", "future"], prefs),
+    false,
+  );
 }
 
 console.log("Self-check passed.");

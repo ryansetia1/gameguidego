@@ -18,7 +18,7 @@ import {
 } from "@/lib/gamefaqs-bundle.js";
 import { discoverGamefaqsBundleResolved } from "@/lib/gamefaqs-discover";
 import { isGamefaqsBundleUrl } from "@/lib/guide-urls.js";
-import { getCachedBundleDiscovery, setCachedBundleDiscovery, fetchBundleChunkCountsByUrl } from "@/lib/guide-bundle-cache.js";
+import { getCachedBundleDiscovery, setCachedBundleDiscovery, fetchBundleChunkCountsByUrl, recordBundlePageFailures } from "@/lib/guide-bundle-cache.js";
 import { parsePositiveInt, sleep } from "@/lib/replicate-retry.js";
 import {
   extractGuidePage,
@@ -50,6 +50,9 @@ export function isGuideRagAvailable(): boolean {
   return Boolean(getServerClient() && process.env.SUMOPOD_API_KEY);
 }
 
+/** Why a bundle page couldn't be indexed. */
+export type PageFailReason = "blocked" | "not_found";
+
 export type IngestResult = {
   indexed: boolean;
   chunkCount: number;
@@ -59,9 +62,22 @@ export type IngestResult = {
   bundleKey?: string;
   pageCount?: number;
   pagesIndexed?: number;
-  pagesMissing?: { slug: string; title: string; url: string }[];
+  pagesMissing?: { slug: string; title: string; url: string; reason?: PageFailReason }[];
   pagesSkipped?: number;
 };
+
+/** Turn a persisted `{ slug: reason }` map into displayable failed-page rows. */
+function failedPagesFromStatus(
+  parsed: NonNullable<ReturnType<typeof parseGamefaqsFaqUrl>>,
+  pageStatus: Record<string, string> | undefined,
+): { slug: string; title: string; url: string; reason: PageFailReason }[] {
+  return Object.entries(pageStatus ?? {}).map(([slug, reason]) => ({
+    slug,
+    title: titleFromGamefaqsSlug(slug),
+    url: `${parsed.canonicalUrl}/${slug}`,
+    reason: reason as PageFailReason,
+  }));
+}
 
 async function countBundleChunks(
   supabase: SupabaseClient,
@@ -108,6 +124,7 @@ export type BundleIndexStatus = {
   pagesIndexed: number;
   chunkCount: number;
   pages: BundleIndexPageStatus[];
+  failedPages: { slug: string; title: string; url: string; reason: PageFailReason }[];
 };
 
 type BundlePageRef = { slug: string; title: string; url: string };
@@ -171,6 +188,7 @@ export async function getBundleIndexStatus(
         pagesIndexed: 0,
         chunkCount: 0,
         pages: [],
+        failedPages: [],
       };
     }
     return null;
@@ -190,6 +208,7 @@ export async function getBundleIndexStatus(
         pagesIndexed: 0,
         chunkCount: 0,
         pages: [],
+        failedPages: failedPagesFromStatus(parsed, cached?.pageStatus),
       };
     }
 
@@ -226,6 +245,12 @@ export async function getBundleIndexStatus(
       ? byUrl.get(normalizeGuideUrl(parsed.canonicalUrl)) ?? pages.reduce((sum, page) => sum + page.chunks, 0)
       : pages.reduce((sum, page) => sum + page.chunks, 0);
 
+    // Failed pages that later got indexed on a retry drop off the list.
+    const indexedSlugSet = new Set(finalPages.map((page) => page.slug));
+    const failedPages = failedPagesFromStatus(parsed, cached?.pageStatus).filter(
+      (page) => !indexedSlugSet.has(page.slug),
+    );
+
     return {
       bundleKey: parsed.bundleKey,
       canonicalUrl: parsed.canonicalUrl,
@@ -235,6 +260,7 @@ export async function getBundleIndexStatus(
       pagesIndexed: finalPages.length,
       chunkCount,
       pages: finalPages,
+      failedPages,
     };
   } catch {
     return null;
@@ -373,6 +399,8 @@ type IngestContext = {
   userId?: string | null;
   skipSlugs?: string[];
   includeSlugs?: string[];
+  /** User pressed Retry: attempt previously-failed pages again (clear their failed flag). */
+  retryFailed?: boolean;
 };
 
 function filterBundlePages<T extends { slug: string }>(
@@ -582,17 +610,44 @@ async function ingestGamefaqsBundle(
   // ponytail: If chunks already exist for this bundle OR URL, the guide is indexed.
   // Skip the expensive Tavily-based discovery entirely — it was burning 11+
   // API calls per question on an already-indexed guide (see trace audit).
-  if (await isGuideIndexed(rawUrl)) {
-    // We already know it's indexed, just get the count for the return value
-    const existingChunkCount = await countBundleChunks(supabase, parsed.bundleKey);
-    const fallbackCount = existingChunkCount > 0 ? existingChunkCount : 1; // Just a fallback if it was indexed by URL only
-    void logTraceEvent("discovery_skipped", `Skipped discovery: guide already indexed for bundle ${parsed.bundleKey} or URL`, undefined, { bundleKey: parsed.bundleKey, url: rawUrl });
+  // Cheap, no-Tavily: which selected pages are already SETTLED (indexed, or tried
+  // before and recorded as failed)? Only skip discovery when nothing is left to try
+  // — otherwise a partially-indexed bundle would nag "memorizing" forever while its
+  // failed pages were never attempted (so we never learned WHY they failed).
+  const chunkCountsByUrl = await fetchBundleChunkCountsByUrl(parsed.bundleKey);
+  const indexedSlugSet = new Set(
+    [...chunkCountsByUrl.keys()]
+      .map((u) => slugFromGamefaqsPageUrl(u, parsed.faqId))
+      .filter((s): s is string => Boolean(s)),
+  );
+  const settledCache = await getCachedBundleDiscovery(parsed.bundleKey, { allowStale: true });
+  // On an explicit Retry, forget prior failures so those pages are attempted again.
+  const failedStatus = ctx?.retryFailed ? {} : settledCache?.pageStatus ?? {};
+  const failedSlugSet = new Set(Object.keys(failedStatus));
+  const targetSlugList = (
+    ctx?.includeSlugs?.length ? ctx.includeSlugs : (settledCache?.pages ?? []).map((p) => p.slug)
+  ).map((s) => s.toLowerCase());
+  const unattemptedSlugs = targetSlugList.filter(
+    (s) => !indexedSlugSet.has(s) && !failedSlugSet.has(s),
+  );
+
+  if (indexedSlugSet.size > 0 && unattemptedSlugs.length === 0) {
+    const chunkCount = [...chunkCountsByUrl.values()].reduce((a, b) => a + b, 0);
+    void logTraceEvent(
+      "discovery_skipped",
+      `Bundle ${parsed.bundleKey} settled: ${indexedSlugSet.size} indexed, ${failedSlugSet.size} failed, nothing left to try`,
+      undefined,
+      { bundleKey: parsed.bundleKey, indexed: indexedSlugSet.size, failed: failedSlugSet.size },
+    );
     return {
       indexed: true,
-      chunkCount: fallbackCount,
+      chunkCount: chunkCount > 0 ? chunkCount : 1,
       hubWarning: false,
       bundle: true,
       bundleKey: parsed.bundleKey,
+      pageCount: targetSlugList.length || indexedSlugSet.size,
+      pagesIndexed: indexedSlugSet.size,
+      pagesMissing: failedSlugSet.size ? failedPagesFromStatus(parsed, failedStatus) : undefined,
     };
   }
 
@@ -657,6 +712,15 @@ async function ingestGamefaqsBundle(
   }
 
   const targetPages = filterBundlePages(discovery.pages, ctx);
+  // A user-selected slug that discovery didn't surface still deserves an attempt —
+  // build its canonical URL from the slug so we learn if it's blocked / not found
+  // instead of silently leaving it "pending" forever.
+  if (ctx?.includeSlugs?.length) {
+    const have = new Set(targetPages.map((page) => page.slug.toLowerCase()));
+    for (const page of pagesFromIncludeSlugs(parsed, ctx.includeSlugs)) {
+      if (!have.has(page.slug)) targetPages.push(page);
+    }
+  }
   if (!targetPages.length) {
     return {
       indexed: false,
@@ -693,6 +757,9 @@ async function ingestGamefaqsBundle(
   const indexedSlugs = new Set<string>();
   let resolvedTitle = discovery.title ?? "GameFAQs guide";
 
+  // Pages recorded as failed on a prior turn are NOT retried automatically (that was
+  // the "memorizing" nag loop). They stay reported with their reason; the user can
+  // force a fresh attempt with the panel's Retry, which clears them (skipSlugs path).
   const missingPagesToProcess: typeof targetPages = [];
   for (const page of targetPages) {
     const normalized = normalizeGuideUrl(page.url);
@@ -701,10 +768,15 @@ async function ingestGamefaqsBundle(
       pagesIndexed += 1;
       chunkCount += count;
       indexedSlugs.add(page.slug);
-    } else {
+    } else if (!failedSlugSet.has(page.slug)) {
       missingPagesToProcess.push(page);
     }
   }
+
+  // Newly-classified failures this run (slug -> reason), merged into the persisted
+  // pageStatus so future turns skip them and the UI can explain why.
+  const pageFailures: Record<string, PageFailReason> = {};
+
   async function processBatch(batch: typeof targetPages, background: boolean) {
     void logTraceEvent("ingest_bundle_batch_start", `Processing batch of ${batch.length} pages for bundle ${bundleKey} (background: ${background})`, undefined, { bundleKey, batchSize: batch.length, background });
     const batchStart = Date.now();
@@ -715,21 +787,38 @@ async function ingestGamefaqsBundle(
     );
 
     const pending: PendingPage[] = [];
+    const batchFailures: Record<string, PageFailReason> = {};
     for (const page of batch) {
-      let content = extracted.get(page.url) ?? extracted.get(normalizeGuideUrl(page.url));
-      if (!content) {
-        const solo = await extractGuidePage(page.url, activeSignal);
-        content = solo?.content;
-      }
       const normalized = normalizeGuideUrl(page.url);
       const { count: dbCountBefore } = await (supabase as SupabaseClient)
         .from("guide_chunks")
         .select("*", { count: "exact", head: true })
         .eq("guide_url", normalized)
         .eq("guide_bundle", bundleKey);
-      const chunksPreview = content ? chunkGuide(content) : [];
+
+      // Already stored (prior/concurrent run) — count it even if extract now fails.
+      if ((dbCountBefore ?? 0) > 0) {
+        pagesIndexed += 1;
+        chunkCount += dbCountBefore ?? 0;
+        indexedSlugs.add(page.slug);
+        continue;
+      }
+
+      let content = extracted.get(page.url) ?? extracted.get(normalizeGuideUrl(page.url));
       if (!content) {
+        const solo = await extractGuidePage(page.url, activeSignal);
+        content = solo?.content;
+      }
+      if (!content) {
+        // GameFAQs bundle page: all extract fallbacks (print/advanced/Wayback) failed
+        // => anti-bot block, not a transient miss.
         void logTraceEvent("ingest_bundle_page_error", `Could not extract page ${page.url} in bundle ${bundleKey}`, undefined, { bundleKey, pageUrl: page.url });
+        batchFailures[page.slug] = "blocked";
+        continue;
+      }
+      if (isBlockedGuideContent(content)) {
+        void logTraceEvent("ingest_bundle_page_blocked", `Anti-bot blocked page ${page.url} in bundle ${bundleKey}`, undefined, { bundleKey, pageUrl: page.url });
+        batchFailures[page.slug] = "blocked";
         continue;
       }
 
@@ -741,15 +830,12 @@ async function ingestGamefaqsBundle(
         if (!isGenericGamefaqsBundleTitle(parsedTitle)) resolvedTitle = parsedTitle;
       }
 
-      if ((dbCountBefore ?? 0) > 0) {
-        pagesIndexed += 1;
-        chunkCount += dbCountBefore ?? 0;
-        indexedSlugs.add(page.slug);
+      const chunks = chunkGuide(content);
+      if (!chunks.length) {
+        // Page read but had no usable text (stub / wrong slug / non-article page).
+        batchFailures[page.slug] = "not_found";
         continue;
       }
-
-      const chunks = chunksPreview;
-      if (!chunks.length) continue;
       pending.push({
         guideUrl: page.url,
         guideBundle: bundleKey,
@@ -767,6 +853,10 @@ async function ingestGamefaqsBundle(
     pagesIndexed += stored.pagesIndexed;
     chunkCount += stored.chunkCount;
     for (const slug of stored.indexedSlugs) indexedSlugs.add(slug);
+    if (Object.keys(batchFailures).length) {
+      Object.assign(pageFailures, batchFailures);
+      await recordBundlePageFailures(bundleKey, batchFailures);
+    }
     void logTraceEvent("ingest_bundle_batch_end", `Completed batch of ${batch.length} pages for bundle ${bundleKey}`, Date.now() - batchStart, { bundleKey, pagesIndexed: stored.pagesIndexed, chunkCount: stored.chunkCount, background });
   }
 
@@ -784,10 +874,14 @@ async function ingestGamefaqsBundle(
     isBlocked: false,
   });
 
-  const pagesMissing = targetPages
-    .filter((page) => !indexedSlugs.has(page.slug))
-    .filter((page) => !missingPagesToProcess.slice(EXTRACT_BATCH_SIZE).some((queued) => queued.slug === page.slug))
-    .map((page) => ({ slug: page.slug, title: page.title, url: page.url }));
+  const allFailed = { ...failedStatus, ...pageFailures };
+  const backgroundQueued = missingPagesToProcess
+    .slice(EXTRACT_BATCH_SIZE)
+    .filter((page) => !indexedSlugs.has(page.slug) && !allFailed[page.slug]);
+  const pagesMissing = [
+    ...failedPagesFromStatus(parsed, allFailed),
+    ...backgroundQueued.map((page) => ({ slug: page.slug, title: page.title, url: page.url })),
+  ];
 
   // 3. Process remaining batches in the background
   if (missingPagesToProcess.length > EXTRACT_BATCH_SIZE) {

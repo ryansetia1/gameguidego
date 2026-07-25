@@ -3,6 +3,7 @@ import {
   buildBundlePrefsBody,
   guideUrlNeedsIngest,
   mergedBundlePrefs,
+  settledBundleSlugs,
 } from "@/lib/guide-card-ui.js";
 import { guideIngestHint, guideIngestHintFromResponse } from "@/lib/guide-hints.js";
 import { guideIndexStateFromIngest } from "@/lib/guide-index-state";
@@ -50,8 +51,7 @@ export async function runGuideIngestForTurn({
     const prefs = mergedBundlePrefs(ingestBundleUrl, meta);
     const discovered = meta?.pages ?? [];
     bundleTargets = discovered.length ? targetBundleSlugs(discovered, prefs) : [];
-    const indexedSlugs =
-      deps.bundleIndexStatus[ingestBundleUrl]?.pages?.map((page) => page.slug) ?? [];
+    const indexedSlugs = settledBundleSlugs(deps.bundleIndexStatus[ingestBundleUrl]);
     const indexedSet = new Set(indexedSlugs.map((slug) => slug.toLowerCase()));
     const pending = bundleTargets.length
       ? bundleTargets.filter((slug) => !indexedSet.has(slug)).length

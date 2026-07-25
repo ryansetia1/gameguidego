@@ -20,7 +20,13 @@ export type ChatTurnDeps = {
   editingIndex: number | null;
   loading: boolean;
   guideBundleMeta: Record<string, GuideBundleMeta>;
-  bundleIndexStatus: Record<string, { pages: { slug: string }[] }>;
+  bundleIndexStatus: Record<
+    string,
+    {
+      pages: { slug: string }[];
+      failedPages?: { slug: string; title: string; url: string; reason: string }[];
+    }
+  >;
   guideIndexState: GuideIndexState;
   spoilerPrefs: SpoilerPrefs;
   /** Per-topic toggle stored on the chats row (not the global OR effective value). */

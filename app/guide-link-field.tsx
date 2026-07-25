@@ -29,7 +29,7 @@ export type GuideBundleMeta = {
   title: string;
   pageCount: number;
   pages?: { slug: string; title: string; url: string }[];
-  missingPages?: { slug: string; title: string; url: string }[];
+  missingPages?: { slug: string; title: string; url: string; reason?: string }[];
   selectedSlugs?: string[];
   skippedSlugs?: string[];
   isBlocked?: boolean;

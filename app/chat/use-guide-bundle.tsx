@@ -46,7 +46,13 @@ export function useGuideBundle({
 }: UseGuideBundleOptions) {
   const [guideBundleMeta, setGuideBundleMeta] = useState<Record<string, GuideBundleMeta>>({});
   const [bundleIndexStatus, setBundleIndexStatus] = useState<
-    Record<string, { pages: { slug: string; title: string; url: string; chunks: number }[] }>
+    Record<
+      string,
+      {
+        pages: { slug: string; title: string; url: string; chunks: number }[];
+        failedPages?: { slug: string; title: string; url: string; reason: string }[];
+      }
+    >
   >({});
   const [bundlePanelLoad, setBundlePanelLoad] = useState<
     Record<string, { meta: boolean; status: boolean }>
@@ -73,9 +79,17 @@ export function useGuideBundle({
       try {
         const response = await fetch(`/api/guide-bundle/status?url=${encodeURIComponent(url)}`);
         if (!response.ok) return;
-        const data = (await response.json()) as { pages?: { slug: string }[] };
-        const indexed = new Set((data.pages ?? []).map((page) => page.slug.toLowerCase()));
-        const remaining = targets.filter((slug) => !indexed.has(slug.toLowerCase())).length;
+        const data = (await response.json()) as {
+          pages?: { slug: string }[];
+          failedPages?: { slug: string }[];
+        };
+        // Failed pages are settled (won't retry) — don't keep counting them as pending.
+        const settled = new Set(
+          [...(data.pages ?? []), ...(data.failedPages ?? [])].map((page) =>
+            page.slug.toLowerCase(),
+          ),
+        );
+        const remaining = targets.filter((slug) => !settled.has(slug.toLowerCase())).length;
         setIndexingGuideCount(remaining);
       } catch {
         // polling is best-effort
@@ -158,8 +172,15 @@ export function useGuideBundle({
             pageCount?: number;
             discoveryPages?: { slug: string; title: string; url: string }[];
             pages?: { slug: string; title: string; url: string; chunks: number }[];
+            failedPages?: { slug: string; title: string; url: string; reason: string }[];
           } = await response.json();
-          if (!data.title && !data.discoveryPages?.length && !data.pages?.length) return null;
+          if (
+            !data.title &&
+            !data.discoveryPages?.length &&
+            !data.pages?.length &&
+            !data.failedPages?.length
+          )
+            return null;
           return { url, data };
         } catch {
           return null;
@@ -191,6 +212,10 @@ export function useGuideBundle({
             pages: pages.length ? pages : row.data.discoveryPages,
             selectedSlugs: prev[row.url]?.selectedSlugs ?? prefs.selectedSlugs,
             skippedSlugs: prev[row.url]?.skippedSlugs ?? prefs.skippedSlugs,
+            // Failed pages (with reason) drive the panel's "couldn't add" rows.
+            missingPages: row.data.failedPages?.length
+              ? row.data.failedPages
+              : prev[row.url]?.missingPages,
           };
         }
         return next;
@@ -198,7 +223,12 @@ export function useGuideBundle({
       setBundleIndexStatus((prev) => {
         const next = { ...prev };
         for (const row of found) {
-          if (row.data.pages?.length) next[row.url] = { pages: row.data.pages };
+          if (row.data.pages?.length || row.data.failedPages?.length) {
+            next[row.url] = {
+              pages: row.data.pages ?? [],
+              failedPages: row.data.failedPages,
+            };
+          }
         }
         return next;
       });
@@ -292,7 +322,7 @@ export function useGuideBundle({
     ): GuideBundleMeta | undefined => {
       if (!isGamefaqsBundleUrl(url)) return existing;
       const pagesMissing = Array.isArray(row.pagesMissing)
-        ? (row.pagesMissing as { slug: string; title: string; url: string }[])
+        ? (row.pagesMissing as { slug: string; title: string; url: string; reason?: string }[])
         : undefined;
       const prefs = mergedBundlePrefs(url, existing);
       const skipped = new Set(prefs.skippedSlugs.map((slug) => slug.toLowerCase()));
@@ -330,6 +360,7 @@ export function useGuideBundle({
             userId: user?.id ?? null,
             playerName: user ? displayNameFromMetadata(user.user_metadata) : "",
             bundlePrefs: buildBundlePrefsBody([url], guideBundleMeta),
+            retryFailed: true,
           }),
         });
         if (!response.ok) {

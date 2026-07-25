@@ -8,12 +8,13 @@ export type BundleIndexRow = {
   url: string;
   state: "indexed" | "missing" | "skipped";
   chunks?: number;
+  reason?: string;
 };
 
 type Props = {
   discoveredPages: { slug: string; title: string; url: string }[];
   indexedPages: { slug: string; title: string; url: string; chunks: number }[];
-  missingPages?: { slug: string; title: string; url: string }[];
+  missingPages?: { slug: string; title: string; url: string; reason?: string }[];
   skippedSlugs?: string[];
   selectionLocked?: boolean;
   onSkipPage?: (slug: string) => void;
@@ -31,6 +32,12 @@ function dotLabel(state: BundleIndexRow["state"]) {
   if (state === "indexed") return "Indexed";
   if (state === "skipped") return "Skipped";
   return "Not indexed";
+}
+
+function reasonLabel(reason: string | undefined) {
+  if (reason === "blocked") return "Blocked by GameFAQs";
+  if (reason === "not_found") return "Page not found";
+  return null;
 }
 
 function PageRow({
@@ -55,6 +62,9 @@ function PageRow({
         )}
         {row.state === "indexed" && row.chunks ? (
           <span className="bundle-index-meta">{row.chunks} chunks</span>
+        ) : null}
+        {row.state === "missing" && reasonLabel(row.reason) ? (
+          <span className="bundle-index-reason">{reasonLabel(row.reason)}</span>
         ) : null}
       </span>
       {row.state === "missing" && onSkipPage ? (
@@ -129,12 +139,16 @@ export function BundleIndexPanel({
       url,
       state,
       chunks: hit?.chunks,
+      reason: missing?.reason,
     };
   });
 
   const targetTotal = rows.filter((row) => row.state !== "skipped").length;
   const indexedCount = rows.filter((row) => row.state === "indexed").length;
   const missingRows = rows.filter((row) => row.state === "missing");
+  // A row with a reason was tried and failed; without one it's just not attempted yet.
+  const failedRows = missingRows.filter((row) => row.reason);
+  const pendingRows = missingRows.filter((row) => !row.reason);
   const skippedRows = rows.filter((row) => row.state === "skipped");
   const indexedRows = rows.filter((row) => row.state === "indexed");
   const progressPct = targetTotal > 0 ? Math.round((indexedCount / targetTotal) * 100) : 0;
@@ -164,8 +178,11 @@ export function BundleIndexPanel({
           </strong>{" "}
           indexed
           {selectionLocked ? <span className="bundle-index-tag">your pick</span> : null}
-          {missingRows.length > 0 ? (
-            <span className="bundle-index-pending"> · {missingRows.length} pending</span>
+          {pendingRows.length > 0 ? (
+            <span className="bundle-index-pending"> · {pendingRows.length} pending</span>
+          ) : null}
+          {failedRows.length > 0 ? (
+            <span className="bundle-index-pending"> · {failedRows.length} couldn&apos;t add</span>
           ) : null}
           {skippedRows.length > 0 ? (
             <span className="bundle-index-muted"> · {skippedRows.length} skipped</span>

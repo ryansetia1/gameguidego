@@ -664,7 +664,7 @@ The following Tier 3 cleanup tasks were deliberately skipped to prioritize stabi
 
 | Case | Auto-fix? |
 |------|-----------|
-| Discovered, extract failed | Retry next turn / Retry button |
+| Discovered, extract failed | Attempted once, recorded `blocked`/`not_found` in `pageStatus`, shown with a reason badge; no auto-retry (manual **Retry** re-attempts) |
 | Indexed in DB, dropped from new discovery | Merged back from `guide_chunks` + cache |
 | New discovery finds more pages later | Cache union adds them |
 | Never discovered (no URL) | No — needs better discovery or user Skip |
@@ -966,9 +966,26 @@ Sound human, not like AI. Specifically avoid these tells:
 
 ## Trace Audit Fixes (July 2026)
 
-### Fix 1: Discovery Short-Circuit for Indexed Guides
-- In `ingestGamefaqsBundle` (`lib/guide-ingest.ts`), added a `countBundleChunks` check before calling `discoverGamefaqsBundleResolved`. If chunks already exist for the bundle, skip discovery entirely and return `indexed: true` immediately.
-- This eliminates 11+ wasted Tavily API calls per question on already-indexed guides (~23s and ~$0.11 saved per request).
+### Fix 1: Discovery Short-Circuit for Indexed Guides (refined 2026-07-25)
+- In `ingestGamefaqsBundle` (`lib/guide-ingest.ts`), skip Tavily discovery when the
+  bundle is fully **settled** and return `indexed: true` immediately (saves 11+ Tavily
+  calls / ~23s / ~$0.11 per question on done guides).
+- **Refinement — "settled" is now slug-aware, not "any chunk exists".** The original
+  blanket `countBundleChunks > 0` short-circuit nagged forever on *partially*-indexed
+  bundles: the client flagged the un-indexed selected pages as pending → "Memorizing N
+  pages" toast + a wasted ingest POST **every turn**, while the server refused to attempt
+  them (trace: Suikoden `gamefaqs:79809`, 15 of 25 selected pages indexed). Now the
+  short-circuit fires only when every selected slug is **indexed OR recorded-failed**;
+  otherwise it attempts the un-attempted pages **once**, classifies each failure
+  (`blocked` = GameFAQs anti-bot / null extract; `not_found` = read but no usable text),
+  and persists it in `guide_bundle_cache.data.pageStatus`
+  (`recordBundlePageFailures`). Failed pages then count as settled
+  (`settledBundleSlugs` in `lib/guide-card-ui.js` → `guideUrlNeedsIngest`), so the toast
+  stops after that one honest attempt. `getBundleIndexStatus` returns `failedPages`
+  (`{slug,title,url,reason}`); the bundle panel shows a **reason badge** ("Blocked by
+  GameFAQs" / "Page not found") and the ingest hint says "Couldn't add: … (blocked by
+  GameFAQs)". The panel **Retry** sends `retryFailed: true`, which clears the failed
+  flag so those pages are attempted again (e.g. if GameFAQs later unblocks).
 
 ### Fix 3: Full Trace Instrumentation
 - **`lib/embed.ts`**: Added `embed_query_start`, `embed_query_end`, `embed_query_cache_hit`, `embed_texts_start`, `embed_texts_end` trace events. The 96-second black hole (embedding model cold start) is now fully visible.
