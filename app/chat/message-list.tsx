@@ -20,6 +20,7 @@ import {
   groupHighlightsByKind,
   isUploadOnlySources,
   pipelineSourceLabel,
+  sourceBadge,
   sourceHostname,
   uploadedSourceGuideLabel,
 } from "@/lib/chat-message-ui.js";
@@ -175,6 +176,7 @@ function AnswerFoot({
   message,
   index,
   guideMeta,
+  preferredUrls,
   canAddGuide,
   disabled,
   onRetry,
@@ -184,6 +186,7 @@ function AnswerFoot({
   message: Message;
   index: number;
   guideMeta: Record<string, GuideMeta>;
+  preferredUrls: string[];
   canAddGuide: boolean;
   disabled: boolean;
   onRetry: () => void;
@@ -309,6 +312,7 @@ function AnswerFoot({
             );
             // Uploaded files have no real URL to open (upload://…), so render
             // them as plain text, not a broken link.
+            const badge = sourceBadge(source, preferredUrls);
             if (isUploadedGuideUrl(source.url)) {
               return (
                 <li key={`${source.url}-${i}`}>
@@ -316,7 +320,10 @@ function AnswerFoot({
                     {number}
                     <span>
                       <strong>{source.title}</strong>
-                      <small>{uploadedSourceGuideLabel([source])}</small>
+                      <small>
+                        <span className="source-badge">{badge}</span>
+                        {uploadedSourceGuideLabel([source])}
+                      </small>
                     </span>
                   </div>
                 </li>
@@ -328,7 +335,10 @@ function AnswerFoot({
                   {number}
                   <span>
                     <strong>{source.title}</strong>
-                    <small>{sourceHostname(source.url)}</small>
+                    <small>
+                      <span className="source-badge">{badge}</span>
+                      {sourceHostname(source.url)}
+                    </small>
                   </span>
                   <span className="source-arrow" aria-hidden="true">
                     <IconArrowUpRight />
@@ -353,6 +363,7 @@ export type MessageListProps = {
   generationStatus: string | null;
   indexingGuideCount: number;
   preferredUrlCount: number;
+  preferredUrls: string[];
   lastUserIndex: number;
   lastGuideIndex: number;
   lastUserRef: RefObject<HTMLDivElement | null>;
@@ -379,6 +390,7 @@ export function MessageList({
   generationStatus,
   indexingGuideCount,
   preferredUrlCount,
+  preferredUrls,
   lastUserIndex,
   lastGuideIndex,
   lastUserRef,
@@ -572,6 +584,7 @@ export function MessageList({
                 message={message}
                 index={index}
                 guideMeta={guideMeta}
+                preferredUrls={preferredUrls}
                 canAddGuide={preferredUrlCount === 0 && !!onAddGuide}
                 disabled={loading}
                 onRetry={() => void onRetry(index)}

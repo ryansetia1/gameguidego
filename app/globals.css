@@ -1006,6 +1006,15 @@ h1 {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: inherit;
+  /* Truncate instead of wrapping: a long sub-label ("PDF guide + Web search")
+     used to force the regenerate/version buttons onto a second row on mobile.
+     flex-grow 0 keeps natural width on desktop (so the "?" stays beside the
+     label); min-width:0 + shrink lets it ellipsize before the row wraps. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .answer-foot-sub {
@@ -1101,6 +1110,21 @@ details[open] > summary .chevron-toggle .icon {
   margin-top: 3px;
   color: var(--muted);
   font-size: 0.68rem;
+}
+
+/* Per-source provenance chip (PDF / GameFAQs / Guide / Web) so a mixed-source
+   answer shows which guide each citation came from. No radius per theme rules. */
+.source-badge {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  vertical-align: baseline;
 }
 
 /* The "?" affordance beside the answer + its on-demand accuracy popover. The
