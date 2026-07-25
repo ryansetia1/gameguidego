@@ -6,13 +6,10 @@ import { logTraceEvent } from "@/lib/trace";
 import {
   REWRITE_INSTRUCTION,
   REWRITE_RAG_INSTRUCTION,
-  SYSTEM_INSTRUCTION,
-  TOPIC_TITLE_INSTRUCTION,
+  summarizeSystemInstruction,
   buildPrompt,
   buildRewritePrompt,
-  buildTopicTitlePrompt,
 } from "@/lib/prompt";
-import { parseGeneratedTopicTitle } from "@/lib/topic-title.js";
 import { parseRewriteVisual } from "@/lib/visual-search.js";
 import {
   SPOILER_CENSOR_INSTRUCTION,
@@ -48,6 +45,7 @@ export type SummaryResult = {
   spoilers: SpoilerReveal[];
   // Model self-flag (spoilers OFF only): its answer may brush a major reveal.
   spoilerRisk: boolean;
+  topicTitle: string;
 };
 
 type ModelName = `${string}/${string}` | `${string}/${string}:${string}`;
@@ -243,68 +241,9 @@ export type SummarizeInput = {
   userId?: string | null;
   signal?: AbortSignal;
   onProgress?: (msg: string, id?: string) => void;
+  /** First turn with auto-derived title — ask summarize for topicTitle in JSON. */
+  isFirstTurn?: boolean;
 };
-
-export async function generateTopicTitle(input: {
-  game?: string;
-  platform?: string;
-  question: string;
-  answer: string;
-  userId?: string | null;
-  signal?: AbortSignal;
-}): Promise<string | null> {
-  const replicate = getReplicate();
-  const model = resolveModel();
-  if (!replicate || !model) return null;
-
-  const question = input.question.trim();
-  const answer = input.answer.trim();
-  if (!question || !answer) return null;
-
-  try {
-    const prompt = buildTopicTitlePrompt({
-      game: input.game,
-      platform: input.platform,
-      question,
-      answer,
-    });
-    const { output: rawOutput, durationMs, predictTimeMs, inputTokens, outputTokens } =
-      await runModel(
-        replicate,
-        model,
-        {
-          prompt,
-          system_instruction: TOPIC_TITLE_INSTRUCTION,
-          temperature: 0.2,
-          max_output_tokens: 512,
-          thinking_budget: 0,
-        },
-        10_000,
-        input.signal,
-      );
-
-    logLlmCall({
-      kind: "topic_title",
-      model,
-      system: TOPIC_TITLE_INSTRUCTION,
-      prompt,
-      response: rawOutput,
-      durationMs,
-      predictTimeMs,
-      inputTokens,
-      outputTokens,
-      game: input.game,
-      platform: input.platform,
-      userId: input.userId,
-    });
-
-    const title = parseGeneratedTopicTitle(rawOutput);
-    return title || null;
-  } catch (error) {
-    console.error("Topic title generation failed:", error);
-    return null;
-  }
-}
 
 export async function summarize(input: SummarizeInput): Promise<SummaryResult> {
   const replicate = getReplicate();
@@ -318,6 +257,7 @@ export async function summarize(input: SummarizeInput): Promise<SummaryResult> {
   }
 
   const images = (input.images ?? []).filter((url) => typeof url === "string" && url);
+  const systemInstruction = summarizeSystemInstruction(Boolean(input.isFirstTurn));
   const prompt = buildPrompt({
     ...input,
     imageCount: images.length,
@@ -336,7 +276,7 @@ export async function summarize(input: SummarizeInput): Promise<SummaryResult> {
     model,
     {
       prompt,
-      system_instruction: SYSTEM_INSTRUCTION,
+      system_instruction: systemInstruction,
       ...(images.length ? { images } : {}),
       temperature: 0.35,
       max_output_tokens: 4096,
@@ -356,7 +296,7 @@ export async function summarize(input: SummarizeInput): Promise<SummaryResult> {
   logLlmCall({
     kind: "summarize",
     model,
-    system: SYSTEM_INSTRUCTION,
+    system: systemInstruction,
     prompt,
     response: trimmed,
     durationMs,

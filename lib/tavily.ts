@@ -244,13 +244,13 @@ export function isBlockedGuideContent(text: string): boolean {
   );
 }
 
-function usableExtractContent(content: string | undefined): content is string {
+function usableExtractContent(content: string | null | undefined): content is string {
   return Boolean(content && content.length >= MIN_CONTENT && !isBlockedGuideContent(content));
 }
 
 /** GameFAQs Wayback hub pages are ~3–8k; only accept full walkthrough extracts. */
 function acceptableWaybackContent(
-  content: string | undefined,
+  content: string | null | undefined,
   originalUrl: string,
 ): content is string {
   if (!usableExtractContent(content)) return false;
@@ -259,7 +259,7 @@ function acceptableWaybackContent(
 }
 
 function sufficientGuideExtractContent(
-  content: string | undefined,
+  content: string | null | undefined,
   originalUrl: string,
 ): content is string {
   return acceptableWaybackContent(content, originalUrl);

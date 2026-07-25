@@ -11,7 +11,7 @@ import {
   SYSTEM_INSTRUCTION,
   buildPrompt,
   buildRewritePrompt,
-  buildTopicTitlePrompt,
+  summarizeSystemInstruction,
   trimImageResolvedSubject,
 } from "../lib/prompt.js";
 import { selectSources } from "../lib/rank.js";
@@ -938,6 +938,18 @@ const parsed = parseSummary(
 assert.equal(parsed.answer, "Go east.");
 assert.equal(parsed.highlights.length, 1);
 assert.equal(parsed.highlights[0].kind, "item");
+assert.equal(parsed.topicTitle, "");
+
+const withTopicTitle = parseSummary(
+  '{"answer":"Parry her jumps.","highlights":[],"spoilers":[],"topicTitle":"Malenia phase 2"}',
+);
+assert.equal(withTopicTitle.topicTitle, "Malenia phase 2");
+assert.equal(
+  parseSummary(
+    '{"answer":"Go east.","highlights":[],"spoilers":[],"topicTitle":"This is a deliberately very long topic title that should be truncated to sixty characters max"}',
+  ).topicTitle.length,
+  60,
+);
 
 const withSpoilers = parseSummary(
   '{"answer":"Go east.","highlights":[],"spoilers":[{"title":"Late twist","detail":"The village burns."}]}',
@@ -1882,12 +1894,8 @@ assert.equal(
   topicTitleForPersist("", [{ role: "user", content: "Best GF setup?" }], ""),
   "Best GF setup?",
 );
-assert.match(buildTopicTitlePrompt({
-  game: "FF8",
-  platform: "PC",
-  question: "Best GF junction?",
-  answer: "Use Str-J.",
-}), /Best GF junction/);
+assert.match(summarizeSystemInstruction(true), /"topicTitle"/);
+assert.equal(summarizeSystemInstruction(false), SYSTEM_INSTRUCTION);
 assert.equal(displayTopicTitle(""), "Untitled topic");
 assert.equal(
   titleFromMessages([{ role: "user", content: "Best GF junction setup?" }]),

@@ -1,6 +1,6 @@
 # Topic title: fold into summarize (kill the third LLM call)
 
-**Status:** Planned (July 2026)  
+**Status:** Shipped (July 2026)  
 **Goal:** On the first turn of a new topic, emit `topicTitle` from the existing
 `summarize` JSON instead of a separate `generateTopicTitle` Gemini call.  
 **Saves:** 1 Replicate call + sequential latency per new topic (3 → 2 LLM calls on turn 1).

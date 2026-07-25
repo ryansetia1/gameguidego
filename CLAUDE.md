@@ -459,10 +459,12 @@ do not sync to the cloud or use Storage uploads.
   topics in the same room (write-time sync via `lib/game-room.js#syncRoomSharedMeta`).
   Sidebar/carousel list one row per room; tap opens the topic list (`app/chat/topic-list.tsx`).
   **Topic title:** first persist uses a truncated first question (`lib/topic-title.js`);
-  after the first answer `/api/solve` runs `generateTopicTitle` (Gemini via
-  `lib/replicate.ts`) and overwrites auto-derived titles only (user renames are kept).
-  Pre-migration installs without `title`/`spoiler_major` columns fall back to
-  `gg:topic-title` / `gg:topic-spoiler` localStorage keyed by chat id.
+  after the first answer `/api/solve` reads `topicTitle` from the `summarize` JSON
+  (first turn only) when the stored title is still auto-derived from the first
+  question (`topicTitleForPersist` / `isAutoDerivedTopicTitle` in
+  `lib/topic-title.js`). Pre-migration installs without `title`/`spoiler_major`
+  columns fall back to `gg:topic-title` / `gg:topic-spoiler` localStorage keyed by
+  chat id.
   `preferred_guide_url` (legacy first URL), `preferred_guide_urls` (text[]; see
   `db/preferred-guide-urls.sql`), `cover_url`, `release_year`, `messages` jsonb),
   RLS-scoped to `auth.uid()`; the client upserts the whole `messages` array each
@@ -577,11 +579,11 @@ top_chunk=…` per query.
   `maxChars` / `REWRITE_RAG_INSTRUCTION` word limit). Do not remove the SQL
   `LIMIT` or send unbounded `guide_chunks` rows to `summarize`.
 - Every turn runs at least two sequential Gemini calls (`resolveQuestion` then
-  `summarize`). The **first turn** of a new topic adds a third (`generateTopicTitle`
-  via `lib/replicate.ts`) when the stored title is still auto-derived from the
-  first question (`topicTitleForPersist` / `isAutoDerivedTopicTitle` in
-  `lib/topic-title.js`). A preferred-guide RAG turn adds **one Cohere rerank HTTP call only
-  when `COHERE_API_KEY` is set**; unset adds nothing and routes on cosine
+  `summarize`). On the **first turn** of a new topic, `summarize` also emits
+  `topicTitle` in its JSON when the stored title is still auto-derived
+  (`isAutoDerivedTopicTitle` in `lib/topic-title.js`). A preferred-guide RAG turn
+  adds **one Cohere rerank HTTP call only when `COHERE_API_KEY` is set**; unset
+  adds nothing and routes on cosine
   `GUIDE_HIT`. Web rewrite `max_output_tokens` ~200; preferred-guide RAG rewrite
   ~400 (`forRag`). Too tight a cap returns empty even with thinking off.
 - `solve_logs.pipeline_type` now correctly records `"rag"` when preferred-guide
@@ -760,7 +762,7 @@ large chat or persistence work:
   **Future experiment:** retry / thumbs-down as answer-quality signals — Phase A
   regenerate-aware prompt first, explicit feedback second, opt-in memory aggregate last.
 - [`docs/plan/topic-title-in-summarize.md`](docs/plan/topic-title-in-summarize.md):
-  **Planned** — fold first-turn `topicTitle` into `summarize` JSON (3 → 2 Gemini
+  **Shipped** — first-turn `topicTitle` folded into `summarize` JSON (2 Gemini
   calls on turn 1); revert steps in plan.
 
 ## Working conventions

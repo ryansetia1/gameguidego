@@ -8,7 +8,7 @@ import {
 } from "@/lib/chat-persist.js";
 import { persistAssistantResponse, loadMessagesForServerMerge } from "@/lib/chat-thread-persist.js";
 import { getCachedSearch, setCachedSearch } from "@/lib/search-cache";
-import { censorSpoilers, generateTopicTitle, resolveQuestion, summarize, type Turn } from "@/lib/replicate";
+import { censorSpoilers, resolveQuestion, summarize, type Turn } from "@/lib/replicate";
 import {
   guideIngestHint,
   guideSearchFallbackHint,
@@ -453,7 +453,36 @@ export async function POST(request: Request) {
 
         sendEvent("status", { text: "Reading and building answer..." });
         const generationStart = Date.now();
-        let { answer, highlights, spoilers, spoilerRisk } = await summarize({
+        const isFirstTurn = history.length === 0;
+        const authedChatId = chatId && authHeader ? chatId : null;
+        const authedAuthHeader = chatId && authHeader ? authHeader : null;
+        const authedSupabaseForTitle =
+          authedChatId && authedAuthHeader
+            ? createClient(
+                process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+                { global: { headers: { Authorization: authedAuthHeader } } },
+              )
+            : null;
+        let shouldGenerateTitle = false;
+        if (isFirstTurn) {
+          shouldGenerateTitle = !authedSupabaseForTitle;
+          if (authedSupabaseForTitle && authedChatId) {
+            try {
+              const [{ data: chatRow }, messages] = await Promise.all([
+                authedSupabaseForTitle.from("chats").select("title").eq("id", authedChatId).maybeSingle(),
+                loadMessagesForServerMerge(authedSupabaseForTitle, authedChatId),
+              ]);
+              const existingTitle = (chatRow as { title?: string } | null)?.title?.trim() ?? "";
+              shouldGenerateTitle = isAutoDerivedTopicTitle(existingTitle, messages);
+            } catch (titleCheckError) {
+              console.error("Topic title check failed:", titleCheckError);
+              shouldGenerateTitle = true;
+            }
+          }
+        }
+        let { answer, highlights, spoilers, spoilerRisk, topicTitle: generatedTitle } =
+          await summarize({
           game,
           platform,
           question,
@@ -466,6 +495,7 @@ export async function POST(request: Request) {
           playerMemory,
           userId,
           webSupplement: pipelineType === "rag_supplemented",
+          isFirstTurn: shouldGenerateTitle,
           onProgress: (msg: string, id?: string) => {
             if (id) sendEvent("prediction_id", { id });
             sendEvent("status", { text: msg });
@@ -504,65 +534,33 @@ export async function POST(request: Request) {
         const illustration = proxifyIllustration(await visualIllustrationPromise);
 
         let topicTitle: string | undefined;
-        const isFirstTurn = history.length === 0;
-        const authedChatId = chatId && authHeader ? chatId : null;
-        const authedAuthHeader = chatId && authHeader ? authHeader : null;
-        const authedSupabaseForTitle =
-          authedChatId && authedAuthHeader
-            ? createClient(
-                process.env.NEXT_PUBLIC_SUPABASE_URL!,
-                process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-                { global: { headers: { Authorization: authedAuthHeader } } },
-              )
-            : null;
-        if (isFirstTurn) {
-          let shouldGenerate = !authedSupabaseForTitle;
-          if (authedSupabaseForTitle && authedChatId) {
-            try {
-              const [{ data: chatRow }, messages] = await Promise.all([
-                authedSupabaseForTitle.from("chats").select("title").eq("id", authedChatId).maybeSingle(),
-                loadMessagesForServerMerge(authedSupabaseForTitle, authedChatId),
-              ]);
-              const existingTitle = (chatRow as { title?: string } | null)?.title?.trim() ?? "";
-              shouldGenerate = isAutoDerivedTopicTitle(existingTitle, messages);
-            } catch (titleCheckError) {
-              console.error("Topic title check failed:", titleCheckError);
-              shouldGenerate = true;
+        if (shouldGenerateTitle && generatedTitle) {
+          const generated = generatedTitle.trim();
+          if (generated) {
+            if (authedSupabaseForTitle && authedChatId) {
+              try {
+                const [{ data: chatRow }, messages] = await Promise.all([
+                  authedSupabaseForTitle
+                    .from("chats")
+                    .select("title")
+                    .eq("id", authedChatId)
+                    .maybeSingle(),
+                  loadMessagesForServerMerge(authedSupabaseForTitle, authedChatId),
+                ]);
+                const existingTitle = (chatRow as { title?: string } | null)?.title?.trim() ?? "";
+                const safeTitle = topicTitleForPersist(existingTitle, messages, generated);
+                if (safeTitle === generated) topicTitle = generated;
+              } catch (titleApplyError) {
+                console.error("Topic title apply check failed:", titleApplyError);
+              }
+            } else {
+              topicTitle = generated;
             }
-          }
-          if (shouldGenerate) {
-            const generated = await generateTopicTitle({
-              game,
-              platform,
-              question,
-              answer: finalAnswer,
-              userId,
-            });
-            if (generated) {
-              if (authedSupabaseForTitle && authedChatId) {
-                try {
-                  const [{ data: chatRow }, messages] = await Promise.all([
-                    authedSupabaseForTitle
-                      .from("chats")
-                      .select("title")
-                      .eq("id", authedChatId)
-                      .maybeSingle(),
-                    loadMessagesForServerMerge(authedSupabaseForTitle, authedChatId),
-                  ]);
-                  const existingTitle = (chatRow as { title?: string } | null)?.title?.trim() ?? "";
-                  const safeTitle = topicTitleForPersist(existingTitle, messages, generated);
-                  if (safeTitle === generated) topicTitle = generated;
-                } catch (titleApplyError) {
-                  console.error("Topic title apply check failed:", titleApplyError);
-                }
-              } else {
-                topicTitle = generated;
-              }
-              if (topicTitle) {
-                await logTraceEvent("topic_title_complete", "Generated topic title", undefined, {
-                  topicTitle,
-                });
-              }
+            if (topicTitle) {
+              await logTraceEvent("topic_title_complete", "Generated topic title", undefined, {
+                topicTitle,
+                source: "summarize",
+              });
             }
           }
         }

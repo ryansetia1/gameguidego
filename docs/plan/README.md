@@ -16,6 +16,6 @@ they describe where the codebase is going, not necessarily what is shipped yet.
 | [guide-web-override.md](./guide-web-override.md) | **Shipped** | **Search web instead** + **Also search web** toggles when a preferred guide is attached |
 | [visual-search-rewrite-fold.md](./visual-search-rewrite-fold.md) | **Shipped** | Visual-intent detection folded into the rewrite (any language) + dropped the `visual_query` LLM call; auto-image by default with one global profile toggle (replaced the per-topic `+` menu toggle) |
 | [gamefaqs-toc-discovery.md](./gamefaqs-toc-discovery.md) | **Shipped** | Fix GameFAQs bundle discovery: derive part URLs from TOC titles (not Tavily search) + content-hash dedup (kill the 25× duplication) + retrieval dedup + root-URL detection |
-| [topic-title-in-summarize.md](./topic-title-in-summarize.md) | **Planned** | Fold first-turn `topicTitle` into `summarize` JSON — drop the third Gemini call (includes revert steps) |
+| [topic-title-in-summarize.md](./topic-title-in-summarize.md) | **Shipped** | Fold first-turn `topicTitle` into `summarize` JSON — drop the third Gemini call (includes revert steps) |
 
 When a plan phase ships, update its status here and cross-link from `CLAUDE.md`.
