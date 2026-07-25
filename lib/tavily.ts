@@ -1,5 +1,16 @@
 import { cleanSnippet } from "@/lib/clean";
-import { gamefaqsPrintExtractUrl } from "@/lib/gamefaqs-bundle.js";
+import {
+  canonicalGamefaqsBundleUrl,
+  gamefaqsPrintExtractUrl,
+  gamefaqsWaybackExtractTargets,
+  isGamefaqsFaqUrl,
+  MIN_GAMEFAQS_GUIDE_CHARS,
+} from "@/lib/gamefaqs-bundle.js";
+import {
+  fetchGamefaqsWaybackMulti,
+  fetchWaybackPageText,
+  waybackUrlsForTarget,
+} from "@/lib/wayback.js";
 import {
   buildGuideDiscoveryQuery,
   filterGuideDiscoveryResults,
@@ -237,6 +248,63 @@ function usableExtractContent(content: string | undefined): content is string {
   return Boolean(content && content.length >= MIN_CONTENT && !isBlockedGuideContent(content));
 }
 
+/** GameFAQs Wayback hub pages are ~3–8k; only accept full walkthrough extracts. */
+function acceptableWaybackContent(
+  content: string | undefined,
+  originalUrl: string,
+): content is string {
+  if (!usableExtractContent(content)) return false;
+  if (!isGamefaqsFaqUrl(originalUrl)) return true;
+  return content.length >= MIN_GAMEFAQS_GUIDE_CHARS;
+}
+
+function sufficientGuideExtractContent(
+  content: string | undefined,
+  originalUrl: string,
+): content is string {
+  return acceptableWaybackContent(content, originalUrl);
+}
+
+async function extractWaybackUrl(
+  waybackUrl: string,
+  originalUrl: string,
+  target: string,
+  apiKey: string,
+  signal?: AbortSignal,
+  raw = false,
+): Promise<{ content?: string; via: "tavily" | "direct" | null }> {
+  const datedSnapshot = /\/web\/\d{8,}/.test(waybackUrl);
+  const canonical = canonicalGamefaqsBundleUrl(originalUrl) ?? originalUrl;
+
+  if (datedSnapshot) {
+    const direct = await fetchWaybackPageText(waybackUrl, signal);
+    if (acceptableWaybackContent(direct, originalUrl)) {
+      return { content: direct, via: "direct" };
+    }
+    if (
+      isGamefaqsFaqUrl(originalUrl) &&
+      target === canonical &&
+      !target.includes("print=1")
+    ) {
+      const multi = await fetchGamefaqsWaybackMulti(waybackUrl, canonical, signal);
+      if (acceptableWaybackContent(multi, originalUrl)) {
+        return { content: multi, via: "direct" };
+      }
+    }
+  }
+
+  const waybackResults = await runTavilyExtract([waybackUrl], apiKey, signal, "basic", raw);
+  let content = waybackResults.get(waybackUrl);
+  if (!content && waybackResults.size === 1) {
+    content = waybackResults.values().next().value;
+  }
+  if (acceptableWaybackContent(content, originalUrl)) {
+    return { content, via: "tavily" };
+  }
+
+  return { via: null };
+}
+
 const EXTRACT_BATCH_SIZE = 10;
 
 type TavilyExtractDepth = "basic" | "advanced";
@@ -367,7 +435,9 @@ async function extractWithWaybackFallback(
 ): Promise<Map<string, string>> {
   const out = await extractBasicAdvanced(urls, apiKey, signal, raw);
 
-  const needsWayback = urls.filter((url) => !usableExtractContent(out.get(url)));
+  const needsWayback = urls.filter(
+    (url) => !sufficientGuideExtractContent(out.get(url), url),
+  );
 
   if (!needsWayback.length) return out;
 
@@ -377,37 +447,83 @@ async function extractWithWaybackFallback(
     undefined,
     { urlsCount: needsWayback.length },
   );
-  const waybackUrls = needsWayback.map((url) => {
-    const print = gamefaqsPrintExtractUrl(url);
-    return `https://web.archive.org/web/2/${print ?? url}`;
-  });
-  const waybackResults = await runTavilyExtract(waybackUrls, apiKey, signal, "basic", raw);
+  for (const originalUrl of needsWayback) {
+    const targets = gamefaqsWaybackExtractTargets(originalUrl);
+    const canonical =
+      targets.find((target) => !target.includes("print=1")) ?? null;
+    let resolved = false;
 
-  for (let i = 0; i < needsWayback.length; i++) {
-    const originalUrl = needsWayback[i];
-    const waybackUrl = waybackUrls[i];
-    let waybackContent = waybackResults.get(waybackUrl);
-    if (!waybackContent && waybackResults.size === 1) {
-      waybackContent = waybackResults.values().next().value;
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i];
+      const { urls: waybackUrls, borrowed } = await waybackUrlsForTarget(
+        target,
+        target.includes("print=1") ? canonical : null,
+        signal,
+      );
+
+      for (const waybackUrl of waybackUrls) {
+        const { content: waybackContent, via } = await extractWaybackUrl(
+          waybackUrl,
+          originalUrl,
+          target,
+          apiKey,
+          signal,
+          raw,
+        );
+        if (!waybackContent || !via) continue;
+
+        out.set(originalUrl, waybackContent);
+        resolved = true;
+        if (via === "direct") {
+          void logTraceEvent(
+            "wayback_direct_fetch",
+            `Direct Wayback fetch ok: ${originalUrl}`,
+            undefined,
+            {
+              url: originalUrl,
+              waybackTarget: target,
+              waybackUrl,
+              borrowedTimestamp: borrowed,
+              charCount: waybackContent.length,
+              multiSection: waybackContent.length > 15_000,
+            },
+          );
+        } else if (waybackUrl.includes("/web/2/")) {
+          if (i > 0) {
+            void logTraceEvent(
+              "tavily_wayback_root",
+              `Wayback used FAQ root (print=1 archive missing): ${originalUrl}`,
+              undefined,
+              { url: originalUrl, waybackTarget: target },
+            );
+          }
+        } else {
+          void logTraceEvent(
+            "tavily_wayback_snapshot",
+            `Wayback snapshot extract ok: ${originalUrl}`,
+            undefined,
+            {
+              url: originalUrl,
+              waybackTarget: target,
+              waybackUrl,
+              borrowedTimestamp: borrowed,
+              via,
+            },
+          );
+        }
+        break;
+      }
+      if (resolved) break;
     }
 
-    if (!waybackContent) {
-      void logTraceEvent(
-        "tavily_wayback_empty",
-        `Wayback Machine has no readable archive for ${originalUrl}`,
-        undefined,
-        { url: originalUrl },
-      );
-    } else if (isBlockedGuideContent(waybackContent)) {
-      void logTraceEvent(
-        "tavily_wayback_blocked",
-        `Wayback Machine archive for ${originalUrl} is also blocked or unreadable`,
-        undefined,
-        { url: originalUrl },
-      );
-    } else {
-      out.set(originalUrl, waybackContent);
-    }
+    if (resolved) continue;
+
+    void logTraceEvent(
+      "tavily_wayback_empty",
+      `Wayback Machine has no readable archive for ${originalUrl}`,
+      undefined,
+      { url: originalUrl, targetsTried: targets.length },
+    );
   }
 
   return out;
@@ -450,7 +566,7 @@ async function extractWithAdvancedFallback(
       if (!content && printFetched.size === 1) {
         content = printFetched.values().next().value;
       }
-      if (usableExtractContent(content)) out.set(original, content);
+      if (sufficientGuideExtractContent(content, original)) out.set(original, content);
     }
   }
 

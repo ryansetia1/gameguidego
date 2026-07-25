@@ -17,6 +17,7 @@ import {
   isBlockedGuideContent,
   looksLikeHub,
 } from "@/lib/tavily";
+import { fetchGamefaqsWaybackRootTitle } from "@/lib/wayback.js";
 import { getServerClient } from "@/lib/supabase-server";
 import { logTraceEvent } from "@/lib/trace";
 
@@ -83,8 +84,15 @@ export async function getGuideDisplayTitle(guideUrl: string): Promise<string | n
       .select("data")
       .eq("bundle_key", storageUrl)
       .maybeSingle();
-    const title = (data?.data as { title?: string } | null)?.title;
-    return typeof title === "string" && title.trim() ? title.trim() : null;
+    const cached = (data?.data as { title?: string } | null)?.title;
+    if (typeof cached === "string" && cached.trim()) return cached.trim();
+
+    // ponytail: Wayback multi-section ingest is plain text — title lives in root HTML only.
+    if (!parseGamefaqsFaqUrl(guideUrl) || !(await isGuideIndexed(guideUrl))) return null;
+    const title = await fetchGamefaqsWaybackRootTitle(storageUrl);
+    if (!title) return null;
+    await persistGuideTitle(supabase, storageUrl, title);
+    return title;
   } catch {
     return null;
   }
@@ -105,24 +113,38 @@ export async function getGuideDisplayTitles(
   return out;
 }
 
-async function cacheGamefaqsGuideTitle(
+async function persistGuideTitle(
   supabase: SupabaseClient,
   guideUrl: string,
-  rawContent: string,
-): Promise<string | undefined> {
-  const parsed = parseGamefaqsFaqUrl(guideUrl);
-  if (!parsed) return undefined;
-  const title = parseGamefaqsGuideTitle(rawContent, parsed);
-  if (!title) return undefined;
+  title: string,
+): Promise<string> {
+  const trimmed = title.trim();
+  if (!trimmed) return trimmed;
   try {
     await supabase.from("guide_bundle_cache").upsert({
       bundle_key: guideUrl,
-      data: { title },
+      data: { title: trimmed },
     });
   } catch {
     // best-effort display title
   }
-  return title;
+  return trimmed;
+}
+
+async function cacheGamefaqsGuideTitle(
+  supabase: SupabaseClient,
+  guideUrl: string,
+  rawContent: string,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  const parsed = parseGamefaqsFaqUrl(guideUrl);
+  if (!parsed) return undefined;
+  let title = parseGamefaqsGuideTitle(rawContent, parsed);
+  if (!title) {
+    title = (await fetchGamefaqsWaybackRootTitle(guideUrl, signal)) || "";
+  }
+  if (!title) return undefined;
+  return persistGuideTitle(supabase, guideUrl, title);
 }
 
 /** True when guide_chunks already has rows for this URL. */
@@ -378,7 +400,7 @@ async function ingestGuidePage(
   }
 
   // ponytail: title parse from extract text only — direct GameFAQs fetch is Cloudflare-blocked.
-  const title = await cacheGamefaqsGuideTitle(supabase, guideUrl, extracted.content);
+  const title = await cacheGamefaqsGuideTitle(supabase, guideUrl, extracted.content, signal);
 
   void logTraceEvent(
     "ingest_complete",

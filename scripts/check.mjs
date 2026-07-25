@@ -102,12 +102,24 @@ import { isReplicateRateLimit, parsePositiveInt } from "../lib/replicate-retry.j
 import {
   canonicalGamefaqsBundleUrl,
   gamefaqsPrintExtractUrl,
+  gamefaqsWaybackExtractTargets,
   gamefaqsExtractQuality,
   isGamefaqsTocOnlyExtract,
   MIN_GAMEFAQS_GUIDE_CHARS,
   parseGamefaqsFaqUrl,
   parseGamefaqsGuideTitle,
 } from "../lib/gamefaqs-bundle.js";
+import {
+  extractGamefaqsFaqHtml,
+  fetchGamefaqsWaybackRootTitle,
+  fetchWaybackPageText,
+  htmlToGuideText,
+  MAX_WAYBACK_GAMEFAQS_SECTIONS,
+  parseGamefaqsTocSlugs,
+  parseWaybackAvailability,
+  waybackIdFetchUrl,
+  waybackSnapshotUrl,
+} from "../lib/wayback.js";
 import {
   cleanGuideUrl,
   coerceGuideUrlsFromBody,
@@ -662,6 +674,56 @@ assert.equal(
   "print=1 is idempotent",
 );
 assert.equal(gamefaqsPrintExtractUrl("https://example.com/guide"), null);
+const ff7Guide = "https://gamefaqs.gamespot.com/ps/197341-final-fantasy-vii/faqs/71240";
+assert.deepEqual(gamefaqsWaybackExtractTargets(ff7Guide), [
+  `${ff7Guide}?print=1`,
+  ff7Guide,
+]);
+assert.deepEqual(gamefaqsWaybackExtractTargets("https://example.com/guide"), [
+  "https://example.com/guide",
+]);
+assert.equal(
+  parseWaybackAvailability({
+    archived_snapshots: { closest: { available: true, timestamp: "20260711090417" } },
+  }),
+  "20260711090417",
+);
+assert.equal(parseWaybackAvailability({ archived_snapshots: {} }), null);
+assert.equal(MAX_WAYBACK_GAMEFAQS_SECTIONS, 100);
+assert.equal(typeof fetchGamefaqsWaybackRootTitle, "function");
+const ff7Parsed = parseGamefaqsFaqUrl(ff7Guide);
+assert.ok(ff7Parsed);
+assert.equal(
+  parseGamefaqsGuideTitle(
+    "<title>Final Fantasy VII - PlayStation - By bover_87 - GameFAQs</title>",
+    ff7Parsed,
+  ),
+  "Final Fantasy Vii — PlayStation - By bover_87",
+);
+assert.equal(
+  parseGamefaqsGuideTitle("Table of Contents Introduction Walkthrough - Disc 1", ff7Parsed),
+  "",
+);
+assert.equal(
+  waybackSnapshotUrl("20260711090417", `${ff7Guide}?print=1`),
+  `https://web.archive.org/web/20260711090417/${ff7Guide}?print=1`,
+);
+assert.ok(htmlToGuideText("<p>Hello <b>world</b></p>").includes("Hello world"));
+assert.equal(
+  waybackIdFetchUrl("https://web.archive.org/web/20260711090417/https://example.com/a"),
+  "https://web.archive.org/web/20260711090417id_/https://example.com/a",
+);
+const faqHtml =
+  '<div id="faqwrap"><div class="ftoc"><a href="introduction">Intro</a></div><p>Midgar</p></div><div class="pod"></div>';
+assert.ok(extractGamefaqsFaqHtml(faqHtml)?.includes("Midgar"));
+assert.ok(htmlToGuideText(faqHtml, { gamefaqs: true }).includes("Midgar"));
+assert.deepEqual(
+  parseGamefaqsTocSlugs(
+    '<div class="ftoc"><a href="introduction">I</a><a href="/abs">X</a><a href="part-1">P</a></div>',
+  ),
+  ["introduction", "part-1"],
+);
+assert.equal(typeof fetchWaybackPageText, "function");
 assert.equal(normalizePreferredGuideUrl(suikodenIntro), suikodenBundle);
 assert.equal(isGamefaqsFaqGuideUrl(suikodenBundle), true);
 assert.equal(isGamefaqsFaqGuideUrl(suikodenIntro), true);
