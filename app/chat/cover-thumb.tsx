@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import { steamAppIdFromCoverUrl } from "@/lib/steam.js";
 
 export function CoverThumb({
@@ -9,10 +12,19 @@ export function CoverThumb({
   name: string;
   className?: string;
 }) {
+  // Track the URL that failed so a new cover prop auto-resets (no effect needed).
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const cls = `cover${className ? ` ${className}` : ""}`;
-  if (cover) {
+  if (cover && cover !== failedUrl) {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img className={cls} src={cover} alt={`${name || "Game"} cover`} />;
+    return (
+      <img
+        className={cls}
+        src={cover}
+        alt={`${name || "Game"} cover`}
+        onError={() => setFailedUrl(cover)}
+      />
+    );
   }
   return (
     <span className={`${cls} cover-placeholder`} aria-hidden="true">

@@ -472,6 +472,11 @@ export function MessageList({
                     alt={message.illustration.alt}
                     loading="lazy"
                     referrerPolicy="no-referrer"
+                    onError={(event) => {
+                      // CloudFlare/captcha/dead host: drop the whole figure so no
+                      // broken icon or dangling "Reference image" caption shows.
+                      event.currentTarget.closest("figure")?.remove();
+                    }}
                     onClick={() =>
                       onOpenLightbox([visualImageProxyUrl(message.illustration!.url)], 0)
                     }

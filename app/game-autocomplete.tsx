@@ -320,7 +320,15 @@ export function GameAutocomplete({
                     {showCover &&
                       (game.cover ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img className="combo-cover" src={game.cover} alt="" loading="lazy" />
+                        <img
+                          className="combo-cover"
+                          src={game.cover}
+                          alt=""
+                          loading="lazy"
+                          onError={(event) => {
+                            event.currentTarget.style.visibility = "hidden";
+                          }}
+                        />
                       ) : (
                         <span className="combo-cover combo-cover-empty" aria-hidden="true" />
                       ))}
