@@ -15,6 +15,7 @@ export type Illustration = {
 /** Client retry payload cached from a dropped solve stream. */
 export type RetryContext = {
   searchTopic?: string;
+  visualSubject?: string | null;
   sources?: Source[];
   pipelineType?: string;
   guideHint?: string;

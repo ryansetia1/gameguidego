@@ -223,16 +223,11 @@ import {
 } from "../lib/player-memory-pins.js";
 import {
   buildVisualSearchQuery,
-  extractVisualSubject,
-  isVisualLookupQuestion,
+  parseRewriteVisual,
   pickBestSerperImage,
   sanitizeVisualSearchQuery,
 } from "../lib/visual-search.js";
-import {
-  coerceVisualSearchEnabled,
-  loadTopicVisualSearchPrefs,
-  saveTopicVisualSearchById,
-} from "../lib/visual-search-prefs.js";
+import { coerceVisualAuto } from "../lib/visual-search-prefs.js";
 import { proxifyIllustration, visualImageProxyUrl } from "../lib/visual-image-proxy.js";
 import { coerceIllustration } from "../lib/chat-messages.js";
 
@@ -2140,43 +2135,37 @@ assert.equal(loadTopicSpoilerPrefs({ title: "x" }, "ZZZ-no-prefs").major, false)
   assert.equal(loadTopicSpoilerPrefs({ id: "chat-1", title: "x" }, "FF8").major, true);
 }
 
-assert.equal(coerceVisualSearchEnabled(false), false);
-assert.equal(coerceVisualSearchEnabled("1"), true);
-assert.equal(loadTopicVisualSearchPrefs({ visual_search: true }), true);
-assert.equal(loadTopicVisualSearchPrefs({ id: "chat-vs", title: "x" }), false);
+// Global "auto reference images" pref: default ON, only explicit "0"/false turns off.
+assert.equal(coerceVisualAuto(undefined), true);
+assert.equal(coerceVisualAuto("0"), false);
+assert.equal(coerceVisualAuto(false), false);
+assert.equal(coerceVisualAuto("garbage"), true);
+
+// The rewrite tags visual questions with a trailing "VISUAL: <subject>" line.
+// Absence of the tag = not a visual question (null subject, no image search).
 {
-  const store = new Map();
-  const g = globalThis;
-  const prev = g.window;
-  g.window = {
-    localStorage: {
-      getItem: (k) => store.get(k) ?? null,
-      setItem: (k, v) => store.set(k, v),
-      removeItem: (k) => store.delete(k),
-    },
-  };
-  saveTopicVisualSearchById("chat-vs", true);
-  assert.equal(loadTopicVisualSearchPrefs({ id: "chat-vs", title: "x" }), true);
-  g.window = prev;
+  const web = parseRewriteVisual("How to beat the first boss in the game");
+  assert.equal(web.visualSubject, null);
+  assert.equal(web.searchTopic, "How to beat the first boss in the game");
+
+  const visual = parseRewriteVisual("False Knight appearance\nVISUAL: False Knight");
+  assert.equal(visual.visualSubject, "False Knight");
+  assert.equal(visual.searchTopic, "False Knight appearance"); // VISUAL line stripped from web query
+
+  // Case-insensitive tag, quotes trimmed, subject capped.
+  const lower = parseRewriteVisual('"Ifrit design"\nvisual: Ifrit');
+  assert.equal(lower.visualSubject, "Ifrit");
+  assert.equal(lower.searchTopic, "Ifrit design");
 }
 
-assert.equal(isVisualLookupQuestion("magic powder itu kaya gimana sih?"), true);
-assert.equal(isVisualLookupQuestion("ifrit itu wujudnya gimana sih?"), true);
-assert.equal(isVisualLookupQuestion("gimana wujudnya bentuknya?"), true);
-assert.equal(isVisualLookupQuestion("where do I get magic powder?"), false);
+// Dedupe guard: a subject that already names the game must not double it.
 assert.equal(
-  extractVisualSubject(
-    "Bentuknya yang kaya gimana sih magic powder itu?",
-    "Describe the appearance of the Magic Powder item. This item is obtained from the Witch's Hut after bringing her a Toadstool from Mysterious Forest.",
-  ),
-  "Magic Powder",
+  buildVisualSearchQuery("Hollow Knight", "PC", "False Knight Hollow Knight"),
+  "False Knight Hollow Knight PC",
 );
 assert.equal(
-  extractVisualSubject(
-    "ifrit itu wujudnya gimana sih? kmu ada gambarnya ga?",
-    "Describe the visual appearance of the Guardian Force Ifrit. Provide details on its physical characteristics.",
-  ),
-  "Ifrit",
+  buildVisualSearchQuery("Hollow Knight", "PC", "False Knight"),
+  "False Knight Hollow Knight PC",
 );
 assert.equal(
   buildVisualSearchQuery("Suikoden", "PS1", "magic powder"),

@@ -25,8 +25,8 @@ export type ChatTurnDeps = {
   spoilerPrefs: SpoilerPrefs;
   /** Per-topic toggle stored on the chats row (not the global OR effective value). */
   topicSpoilerMajor: boolean;
-  /** Per-topic Serper reference-image lookup; default off. */
-  topicVisualSearchEnabled: boolean;
+  /** Global "auto reference images" pref; default on. */
+  visualAuto: boolean;
   setActiveChatId: (id: string | null) => void;
   setChats: import("react").Dispatch<import("react").SetStateAction<Chat[]>>;
   setMessages: Dispatch<SetStateAction<Message[]>>;

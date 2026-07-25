@@ -8,17 +8,12 @@ import {
   REWRITE_RAG_INSTRUCTION,
   SYSTEM_INSTRUCTION,
   TOPIC_TITLE_INSTRUCTION,
-  VISUAL_SEARCH_QUERY_INSTRUCTION,
   buildPrompt,
   buildRewritePrompt,
   buildTopicTitlePrompt,
-  buildVisualSearchQueryPrompt,
 } from "@/lib/prompt";
 import { parseGeneratedTopicTitle } from "@/lib/topic-title.js";
-import {
-  buildVisualSearchQuery,
-  sanitizeVisualSearchQuery,
-} from "@/lib/visual-search.js";
+import { parseRewriteVisual } from "@/lib/visual-search.js";
 import {
   SPOILER_CENSOR_INSTRUCTION,
   buildSpoilerCensorPrompt,
@@ -171,10 +166,10 @@ export async function resolveQuestion(input: {
   signal?: AbortSignal;
   /** Preferred-guide RAG: longer contextual retrieval query instead of a short web-search string. */
   forRag?: boolean;
-}): Promise<string> {
+}): Promise<{ searchTopic: string; visualSubject: string | null }> {
   const replicate = getReplicate();
   const model = resolveModel();
-  if (!replicate || !model) return input.question;
+  if (!replicate || !model) return { searchTopic: input.question, visualSubject: null };
 
   const forRag = Boolean(input.forRag);
   const instruction = forRag ? REWRITE_RAG_INSTRUCTION : REWRITE_INSTRUCTION;
@@ -218,88 +213,17 @@ export async function resolveQuestion(input: {
       platform: input.platform,
       userId: input.userId,
     });
-    const rewritten = rawOutput
-      .replace(/\s+/g, " ")
-      .replace(/^["']|["']$/g, "")
-      .trim()
-      .slice(0, maxChars);
-    return rewritten || input.question;
+    // Both the web and RAG rewrites may append a "VISUAL: <subject>" line for
+    // appearance questions — parse it out so the visual image works with a guide
+    // attached too. parseRewriteVisual also collapses whitespace and trims quotes.
+    const { searchTopic, visualSubject } = parseRewriteVisual(rawOutput);
+    return {
+      searchTopic: (searchTopic || input.question).slice(0, maxChars),
+      visualSubject,
+    };
   } catch (error) {
     console.error("Query rewrite failed, using raw question:", error);
-    return input.question;
-  }
-}
-
-/**
- * English image-search query for Serper. Fail-open to buildVisualSearchQuery.
- */
-export async function resolveVisualSearchQuery(input: {
-  game?: string;
-  platform?: string;
-  question: string;
-  searchTopic?: string;
-  subject?: string;
-  userId?: string | null;
-  signal?: AbortSignal;
-}): Promise<string> {
-  const fallback = buildVisualSearchQuery(
-    input.game ?? "",
-    input.platform ?? "",
-    input.subject ?? "",
-  );
-  const replicate = getReplicate();
-  const model = resolveModel();
-  if (!replicate || !model || !fallback) return fallback;
-
-  try {
-    const prompt = buildVisualSearchQueryPrompt({
-      game: input.game,
-      platform: input.platform,
-      question: input.question,
-      searchTopic: input.searchTopic,
-      subject: input.subject,
-    });
-    const { output: rawOutput, durationMs, predictTimeMs, inputTokens, outputTokens } =
-      await runModel(
-        replicate,
-        model,
-        {
-          prompt,
-          system_instruction: VISUAL_SEARCH_QUERY_INSTRUCTION,
-          temperature: 0.1,
-          max_output_tokens: 256,
-          thinking_budget: 0,
-        },
-        10_000,
-        input.signal,
-      );
-
-    logLlmCall({
-      kind: "visual_query",
-      model,
-      system: VISUAL_SEARCH_QUERY_INSTRUCTION,
-      prompt,
-      response: rawOutput,
-      durationMs,
-      predictTimeMs,
-      inputTokens,
-      outputTokens,
-      game: input.game,
-      platform: input.platform,
-      userId: input.userId,
-    });
-
-    const rewritten = sanitizeVisualSearchQuery(
-      rawOutput
-        .replace(/\s+/g, " ")
-        .replace(/^["']|["']$/g, "")
-        .trim()
-        .slice(0, 120),
-    );
-    return rewritten || fallback;
-  } catch (error) {
-    console.error("Visual search query rewrite failed, using heuristic query:", error);
-    return fallback;
+    return { searchTopic: input.question, visualSubject: null };
   }
 }
 

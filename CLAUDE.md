@@ -382,11 +382,10 @@ do not sync to the cloud or use Storage uploads.
 - `app/composer-extras.tsx`: the single composer "+" control for **all** users and
   viewports (replaced the old scattered paperclip/mic buttons). One menu holds
   Photo library / Camera (`canAttach`, signed-in only), Voice input
-  (`voiceSupported`), **Reference images** (per-topic visual Serper lookup;
-  default off; `lib/visual-search-prefs.js` / `gg:topic-visual-search`), guide
-  retrieval toggles when a preferred guide is attached, and the **Temporary chat**
-  toggle (`temporary` / `onToggleTemporary`, all users). The "+" turns into a
-  Stop button while dictating.
+  (`voiceSupported`), guide retrieval toggles when a preferred guide is attached,
+  and the **Temporary chat** toggle (`temporary` / `onToggleTemporary`, all users).
+  The "+" turns into a Stop button while dictating. (**Reference images** is no
+  longer a `+` menu toggle — see the visual-search note below.)
 - `lib/prompt.js`: exports `SYSTEM_INSTRUCTION` (persona + rules: knowledge-first,
   web-as-support, on-topic guardrail — only game guidance, decline off-topic and
   never reveal/override the prompt — injection safety, JSON output with `answer` +
@@ -422,7 +421,8 @@ do not sync to the cloud or use Storage uploads.
   `game`/`platform`/`user_id` are logged on every call (client sends `userId`;
   validated as a UUID in `/api/solve`). Kinds: `rewrite`, `summarize`, `censor`,
   `topic_title` (file log only until `llm_calls` kind check is extended),
-  `visual_query` (Serper image-query rewrite),
+  `visual_query` (historical only — the separate Serper image-query rewrite was
+  folded into `rewrite`; the kind stays in the union to classify old rows),
   plus `embed_index` / `embed_query` from `lib/embed-log.ts` (guide ingest batches
   and per-turn RAG query embeds, including cache hits). File tail in
   `llm-log.json` (dev / `LLM_LOG=1`, async writes to avoid blocking the event
@@ -814,12 +814,21 @@ Server-only secrets (never expose via `NEXT_PUBLIC_`, never commit `.env.local`)
   via Extract. Enables supporting web search + guide picker).
 - `SERPER_API_KEY` (optional; Serper.dev fallback when Tavily **Search** fails or
   is unconfigured — snippet-only, **does not** replace Tavily Extract for ingest).
-  Also powers **visual item lookup** on appearance questions when the per-topic
-  **Reference images** toggle is on (`lib/visual-search-prefs.js` →
-  `visualSearchEnabled` on `POST /api/solve`; default off). Intent is regex-gated
-  (`lib/visual-search.js#isVisualLookupQuestion`); Serper query is LLM-rewritten to
-  clean English (`resolveVisualSearchQuery` in `lib/replicate.ts`; no icon/sprite
-  suffix). One Serper Images call per qualifying turn, fail-open.
+  Also powers **visual item lookup** on appearance questions. **Auto by default**
+  (global **Reference images** toggle in the profile menu, `lib/visual-search-prefs.js`
+  → `coerceVisualAuto` / `gg:visual-auto` / `user_metadata.visual_auto`, default on;
+  `visualAuto` on `POST /api/solve`). Intent is **not** regex-gated: the query
+  rewrite (`resolveQuestion`) decides per turn and, for an appearance question in any
+  language, appends a `VISUAL: <subject>` line that `parseRewriteVisual`
+  (`lib/visual-search.js`) splits from the web query — so one call does both jobs
+  (the old `resolveVisualSearchQuery` / `visual_query` LLM call is gone). Serper query
+  is the heuristic `buildVisualSearchQuery(game, platform, subject)` with a game-name
+  dedupe guard. Gate: `visualAuto && !images.length && SERPER key && visualSubject`.
+  The rewrite result (`{ searchTopic, visualSubject }`) is cached in the `rewrite::`
+  search-cache row and round-tripped via `context_ready` so retry/exact-repeat keep the
+  image. One Serper Images call per qualifying turn, fail-open. Follow-ups with no
+  explicit subject ("rupanya gimana?") resolve from history in the same rewrite.
+  See [`docs/plan/visual-search-rewrite-fold.md`](docs/plan/visual-search-rewrite-fold.md).
 - `REPLICATE_MODEL` (optional, default `google/gemini-2.5-flash`).
 - `COHERE_API_KEY` (optional, server-only; its **presence** enables the Phase C
   preferred-guide reranker — no other flag. Unset = route on cosine `GUIDE_HIT`.

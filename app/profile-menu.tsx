@@ -16,6 +16,11 @@ import {
   saveGlobalSpoilerPrefs,
   spoilerMajorFromUserMetadata,
 } from "@/lib/spoiler-prefs.js";
+import {
+  VISUAL_SEARCH_TOGGLE_LABEL,
+  saveVisualAuto,
+  visualAutoFromUserMetadata,
+} from "@/lib/visual-search-prefs.js";
 import { getSupabase } from "@/lib/supabase";
 import {
   applyTheme,
@@ -44,6 +49,8 @@ type Props = {
   supabaseReady: boolean;
   spoilerMajor: boolean;
   onSpoilerChange: (value: boolean) => void;
+  visualAuto: boolean;
+  onVisualAutoChange: (value: boolean) => void;
   onSignIn: () => void;
   onSignOut: () => void;
   /** When set, menu open state is owned by the parent (for hardware-back sync). */
@@ -73,11 +80,23 @@ async function persistSpoilerForUser(major: boolean) {
   }
 }
 
+async function persistVisualAutoForUser(enabled: boolean) {
+  const supabase = getSupabase();
+  if (!supabase) return;
+  try {
+    await supabase.auth.updateUser({ data: { visual_auto: enabled } });
+  } catch (error) {
+    console.error("Failed to save reference-image preference:", error);
+  }
+}
+
 export function ProfileMenu({
   user,
   supabaseReady,
   spoilerMajor,
   onSpoilerChange,
+  visualAuto,
+  onVisualAutoChange,
   onSignIn,
   onSignOut,
   navMenu: navMenuProp,
@@ -142,7 +161,13 @@ export function ProfileMenu({
       onSpoilerChange(remoteSpoiler);
       saveGlobalSpoilerMajor(remoteSpoiler);
     }
-  }, [onSpoilerChange, user]);
+
+    const remoteVisual = visualAutoFromUserMetadata(user.user_metadata);
+    if (remoteVisual !== null) {
+      onVisualAutoChange(remoteVisual);
+      saveVisualAuto(remoteVisual);
+    }
+  }, [onSpoilerChange, onVisualAutoChange, user]);
 
   // ponytail: uncontrolled pages (/profile) manage their own history entry.
   useEffect(() => {
@@ -209,6 +234,13 @@ export function ProfileMenu({
     saveGlobalSpoilerMajor(next);
     saveGlobalSpoilerPrefs({ major: next });
     if (user) void persistSpoilerForUser(next);
+  }
+
+  function toggleVisualAuto() {
+    const next = !visualAuto;
+    onVisualAutoChange(next);
+    saveVisualAuto(next);
+    if (user) void persistVisualAutoForUser(next);
   }
 
   function handleSignOut() {
@@ -314,6 +346,16 @@ export function ProfileMenu({
                   checked={spoilerMajor}
                   onChange={toggleSpoiler}
                   aria-label={GLOBAL_SPOILER_TOGGLE_LABEL}
+                />
+              </label>
+
+              <label className="profile-menu-item profile-menu-toggle">
+                <span>{VISUAL_SEARCH_TOGGLE_LABEL}</span>
+                <input
+                  type="checkbox"
+                  checked={visualAuto}
+                  onChange={toggleVisualAuto}
+                  aria-label={VISUAL_SEARCH_TOGGLE_LABEL}
                 />
               </label>
 

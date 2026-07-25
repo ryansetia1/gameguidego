@@ -8,7 +8,7 @@ import {
 } from "@/lib/chat-persist.js";
 import { persistAssistantResponse, loadMessagesForServerMerge } from "@/lib/chat-thread-persist.js";
 import { getCachedSearch, setCachedSearch } from "@/lib/search-cache";
-import { censorSpoilers, generateTopicTitle, resolveQuestion, resolveVisualSearchQuery, summarize, type Turn } from "@/lib/replicate";
+import { censorSpoilers, generateTopicTitle, resolveQuestion, summarize, type Turn } from "@/lib/replicate";
 import {
   guideIngestHint,
   guideSearchFallbackHint,
@@ -31,11 +31,10 @@ import {
 } from "@/lib/player-memory-server";
 import { searchGuides, searchSerperImages, type SearchResult } from "@/lib/tavily";
 import {
-  extractVisualSubject,
-  isVisualLookupQuestion,
+  buildVisualSearchQuery,
   pickBestSerperImage,
 } from "@/lib/visual-search.js";
-import { coerceVisualSearchEnabled } from "@/lib/visual-search-prefs.js";
+import { coerceVisualAuto } from "@/lib/visual-search-prefs.js";
 import { logSolveJourneyToDb, sourcesForSolveLog, type SolveJourneyEntry } from "@/lib/solve-log";
 import { isAutoDerivedTopicTitle, topicTitleForPersist } from "@/lib/topic-title.js";
 import { proxifyIllustration } from "@/lib/visual-image-proxy.js";
@@ -159,10 +158,11 @@ export async function POST(request: Request) {
   const bundlePrefs = coerceBundlePrefsFromBody(record.bundlePrefs);
   const chatId = cleanUuid(record.chatId);
   const { skipPreferredGuide, alsoSearchWeb } = coerceGuideRetrievalFlags(record);
-  const visualSearchEnabled = coerceVisualSearchEnabled(record.visualSearchEnabled);
+  const visualAuto = coerceVisualAuto(record.visualAuto);
   const authHeader = request.headers.get("Authorization");
   const retryContext = record.retryContext as {
     searchTopic?: string;
+    visualSubject?: string | null;
     sources?: SearchResult[];
     pipelineType?: string;
     guideHint?: string;
@@ -251,8 +251,23 @@ export async function POST(request: Request) {
         });
         const rewriteCacheKey = `rewrite::${createHash("sha256").update(rawInputs).digest("hex")}`;
 
-        let searchTopic = retryContext?.searchTopic || (await getCachedSearch(rewriteCacheKey)) as string | null;
-        if (typeof searchTopic !== "string") {
+        // The rewrite result carries the web query plus an optional visual subject
+        // (the model tags "what does X look like" questions). Cache/retry preserve
+        // both so an exact-repeat or regenerate keeps the reference image.
+        const cachedRaw = retryContext?.searchTopic
+          ? { searchTopic: retryContext.searchTopic, visualSubject: retryContext.visualSubject ?? null }
+          : await getCachedSearch(rewriteCacheKey);
+        const cachedRewrite =
+          typeof cachedRaw === "string"
+            ? { searchTopic: cachedRaw, visualSubject: null } // legacy string rows
+            : (cachedRaw as { searchTopic?: string; visualSubject?: string | null } | null);
+
+        let searchTopic: string;
+        let visualSubject: string | null;
+        if (cachedRewrite && typeof cachedRewrite.searchTopic === "string") {
+          searchTopic = cachedRewrite.searchTopic;
+          visualSubject = cachedRewrite.visualSubject ?? null;
+        } else {
           // Fix A: on image turns, drop prior Guide (assistant) turns from the
           // rewrite's history. A past answer's character ID poisons "ini"/"this"
           // follow-ups (trace 192da351 → d1c3401f: rewrite inherited a wrong GF
@@ -262,7 +277,7 @@ export async function POST(request: Request) {
           const rewriteHistory = images.length
             ? history.filter((turn) => turn.role === "user")
             : history;
-          searchTopic = await resolveQuestion({
+          const resolved = await resolveQuestion({
             question,
             history: rewriteHistory,
             game,
@@ -271,28 +286,22 @@ export async function POST(request: Request) {
             images,
             forRag,
           });
-          void setCachedSearch(rewriteCacheKey, searchTopic);
+          searchTopic = resolved.searchTopic;
+          visualSubject = resolved.visualSubject;
+          void setCachedSearch(rewriteCacheKey, { searchTopic, visualSubject });
         }
 
         rewriteLatencyMs = Date.now() - rewriteStart;
         await logTraceEvent("rewrite_complete", "Resolved question into search topic", rewriteLatencyMs, { searchTopic });
 
         const wantsVisualIllustration =
-          visualSearchEnabled &&
+          visualAuto &&
           !images.length &&
           Boolean(process.env.SERPER_API_KEY) &&
-          isVisualLookupQuestion(question);
-        const visualIllustrationPromise = wantsVisualIllustration
+          Boolean(visualSubject);
+        const visualIllustrationPromise = wantsVisualIllustration && visualSubject
           ? (async () => {
-              const visualSubject = extractVisualSubject(question, searchTopic);
-              const visualQuery = await resolveVisualSearchQuery({
-                game,
-                platform,
-                question,
-                searchTopic,
-                subject: visualSubject,
-                userId,
-              });
+              const visualQuery = buildVisualSearchQuery(game, platform, visualSubject);
               void logTraceEvent("visual_search_start", "Starting Serper image search", undefined, {
                 visualQuery,
                 visualSubject,
@@ -416,6 +425,7 @@ export async function POST(request: Request) {
         // Emit context so frontend can cache it for potential retry
         sendEvent("context_ready", {
           searchTopic,
+          visualSubject,
           sources,
           pipelineType,
           guideHint

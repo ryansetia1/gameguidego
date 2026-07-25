@@ -59,11 +59,7 @@ import {
   SPOILER_MODE_ON_LABEL,
   spoilerMajorFromUserMetadata,
 } from "@/lib/spoiler-prefs.js";
-import {
-  loadTopicVisualSearchPrefs,
-  saveTopicVisualSearchById,
-  topicVisualSearchPayload,
-} from "@/lib/visual-search-prefs.js";
+import { loadVisualAuto } from "@/lib/visual-search-prefs.js";
 import { groupChatsByRoom, isTopicColumnDbError, mergeChatsFromServer, normGameKey, syncRoomSharedMeta, syncSharedMetaToLocalGames, topicsForRoom, gameRoomKey, upsertChatInList } from "@/lib/game-room.js";
 import {
   displayTopicTitle,
@@ -226,7 +222,7 @@ export default function Home() {
   const [editSlotEl, setEditSlotEl] = useState<HTMLDivElement | null>(null);
   const [globalSpoilerMajor, setGlobalSpoilerMajor] = useState(false);
   const [gameSpoilerMajor, setGameSpoilerMajor] = useState(false);
-  const [topicVisualSearchEnabled, setTopicVisualSearchEnabled] = useState(false);
+  const [visualAuto, setVisualAuto] = useState(true);
   const spoilerPrefs = effectiveSpoilerPrefs(globalSpoilerMajor, gameSpoilerMajor);
   const [voiceListening, setVoiceListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
@@ -271,7 +267,6 @@ export default function Home() {
   const conversationGame = useRef("");
   const conversationPlatform = useRef("");
   const activeChatIdRef = useRef<string | null>(null);
-  const pendingVisualSearchRef = useRef(false);
   const chatsRef = useRef<Chat[]>([]);
   // Snapshot of the thread open before entering temporary chat, so turning it off
   // returns there (temporary is a non-destructive detour, not a reset).
@@ -653,7 +648,7 @@ export default function Home() {
       return;
     }
     const fullSelect =
-      "id, game, platform, preferred_guide_url, preferred_guide_urls, cover_url, release_year, title, spoiler_major, visual_search, updated_at, messages";
+      "id, game, platform, preferred_guide_url, preferred_guide_urls, cover_url, release_year, title, spoiler_major, updated_at, messages";
     const legacySelect =
       "id, game, platform, preferred_guide_url, preferred_guide_urls, cover_url, release_year, updated_at, messages";
     const fullResult = await supabase
@@ -918,6 +913,7 @@ export default function Home() {
 
   useEffect(() => {
     setGlobalSpoilerMajor(loadGlobalSpoilerPrefs().major);
+    setVisualAuto(loadVisualAuto());
   }, []);
 
   useEffect(() => {
@@ -947,29 +943,6 @@ export default function Home() {
     const row = chatsRef.current.find((chat) => chat.id === activeChatId);
     setGameSpoilerMajor(loadTopicSpoilerPrefs(row, game).major);
   }, [game, activeChatId]);
-
-  useEffect(() => {
-    if (!activeChatId) {
-      if (!pendingVisualSearchRef.current) {
-        setTopicVisualSearchEnabled(false);
-      }
-      return;
-    }
-    const row = chatsRef.current.find((chat) => chat.id === activeChatId);
-    if (pendingVisualSearchRef.current) {
-      const pending = pendingVisualSearchRef.current;
-      pendingVisualSearchRef.current = false;
-      saveTopicVisualSearchById(activeChatId, pending);
-      setTopicVisualSearchEnabled(pending);
-      setChats((prev) =>
-        prev.map((chat) =>
-          chat.id === activeChatId ? { ...chat, ...topicVisualSearchPayload(pending) } : chat,
-        ),
-      );
-      return;
-    }
-    setTopicVisualSearchEnabled(loadTopicVisualSearchPrefs(row));
-  }, [activeChatId]);
 
   useEffect(() => {
     if (messages.length > 0 && gameView === null && game.trim()) {
@@ -1034,45 +1007,6 @@ export default function Home() {
       updateGameSpoiler(true);
     }
   }, [spoilerPrefs.major, turnOffSpoilers, updateGameSpoiler]);
-
-  const updateTopicVisualSearch = useCallback(async (value: boolean) => {
-    setTopicVisualSearchEnabled(value);
-    const chatId = activeChatIdRef.current;
-    if (!chatId) {
-      pendingVisualSearchRef.current = value;
-      return;
-    }
-    setChats((prev) =>
-      prev.map((row) =>
-        row.id === chatId ? { ...row, ...topicVisualSearchPayload(value) } : row,
-      ),
-    );
-    const supabase = getSupabase();
-    if (chatId && supabase && user) {
-      let { error } = await supabase
-        .from("chats")
-        .update(topicVisualSearchPayload(value))
-        .eq("id", chatId);
-      if (error && isTopicColumnDbError(error)) {
-        saveTopicVisualSearchById(chatId, value);
-        error = null;
-      }
-      if (!error) void loadChats();
-    } else if (chatId && !user) {
-      saveTopicVisualSearchById(chatId, value);
-      const row = loadLocalGames().find((entry) => entry.id === chatId);
-      if (row) {
-        upsertLocalGame({ ...row, ...topicVisualSearchPayload(value) });
-        setChats(loadLocalGames());
-      }
-    } else if (chatId) {
-      saveTopicVisualSearchById(chatId, value);
-    }
-  }, [user, loadChats]);
-
-  const toggleTopicVisualSearch = useCallback(() => {
-    updateTopicVisualSearch(!topicVisualSearchEnabled);
-  }, [topicVisualSearchEnabled, updateTopicVisualSearch]);
 
   useEffect(() => {
     setGuideRetrievalMode(loadGuideRetrievalMode());
@@ -1291,7 +1225,6 @@ export default function Home() {
     conversationGame.current = chat.game;
     conversationPlatform.current = chat.platform;
     setGameSpoilerMajor(loadTopicSpoilerPrefs(chat, chat.game).major);
-    setTopicVisualSearchEnabled(loadTopicVisualSearchPrefs(chat));
   }
 
   function openGameRoom(chat: Chat) {
@@ -1344,8 +1277,6 @@ export default function Home() {
     clearPendingImages();
     setTemporary(false);
     setGameSpoilerMajor(false);
-    setTopicVisualSearchEnabled(false);
-    pendingVisualSearchRef.current = false;
     syncGameView("thread");
     setChatUrl(null);
     clearSessionDraft();
@@ -2051,7 +1982,7 @@ export default function Home() {
     guidePending,
     spoilerPrefs,
     topicSpoilerMajor: gameSpoilerMajor,
-    topicVisualSearchEnabled,
+    visualAuto,
     setActiveChatId,
     setChats,
     setMessages,
@@ -2293,6 +2224,8 @@ export default function Home() {
             supabaseReady={supabaseReady}
             spoilerMajor={globalSpoilerMajor}
             onSpoilerChange={updateGlobalSpoiler}
+            visualAuto={visualAuto}
+            onVisualAutoChange={setVisualAuto}
             navMenu={navMenu}
             onNavMenuChange={handleNavMenuChange}
             onNavMenuNavigate={closeNavMenuForNav}
@@ -2619,9 +2552,6 @@ export default function Home() {
           guideRetrievalMode={guideRetrievalMode}
           onToggleSkipGuide={toggleSkipGuide}
           onToggleSupplementGuide={toggleSupplementGuide}
-          showVisualSearchToggle={hasGame}
-          visualSearchEnabled={topicVisualSearchEnabled}
-          onToggleVisualSearch={toggleTopicVisualSearch}
           onVoiceListeningChange={setVoiceListening}
           onVoiceTranscript={(text) =>
             setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))

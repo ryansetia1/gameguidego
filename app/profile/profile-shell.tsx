@@ -2,11 +2,12 @@
 
 import type { User } from "@supabase/supabase-js";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { AuthPanel } from "@/app/auth-panel";
 import { IconArrowLeft } from "@/app/icons";
 import { ProfileMenu } from "@/app/profile-menu";
+import { loadVisualAuto } from "@/lib/visual-search-prefs.js";
 
 type Props = {
   backHref: string;
@@ -37,6 +38,10 @@ export function ProfileShell({
   onSignOut,
   children,
 }: Props) {
+  const [visualAuto, setVisualAuto] = useState(true);
+  useEffect(() => {
+    setVisualAuto(loadVisualAuto());
+  }, []);
   return (
     <main className={pageClassName ? `profile-page-shell ${pageClassName}` : "profile-page-shell"}>
       <nav className="nav" aria-label="Brand">
@@ -51,6 +56,8 @@ export function ProfileShell({
             supabaseReady={supabaseReady}
             spoilerMajor={spoilerMajor}
             onSpoilerChange={onSpoilerChange}
+            visualAuto={visualAuto}
+            onVisualAutoChange={setVisualAuto}
             onSignIn={onAuthOpen}
             onSignOut={() => void onSignOut()}
           />
