@@ -487,7 +487,8 @@ is no multi-page discovery, bundle prefs, or per-section ingest.
 1. **Add** (`app/guide-link-field.tsx`): paste any GameFAQs FAQ URL → stored as
    canonical root immediately (no preview checklist).
 2. **Ingest** (`lib/guide-ingest.ts`, `POST /api/guide-ingest`): skip if chunks exist
-   for canonical `guide_url`; else Tavily `extractGuidePage` (tries `?print=1` first)
+   for canonical `guide_url`; else Tavily `extractGuidePage` (tries `?print=1` first;
+   on empty/blocked extract, Wayback via `?print=1` for GameFAQs)
    → `chunkGuide` → embed → `guide_chunks` with `guide_bundle = null`.
 3. **Status** (`GET /api/guide-ingest/status`): per-URL `indexed: true/false`.
 4. **RAG** (`lib/guide-rag.ts`): `match_guide_chunks` filtered by `guide_url` only

@@ -358,7 +358,7 @@ async function extractBasicAdvanced(
   return out;
 }
 
-/** ponytail: basic → advanced → Wayback on the caller's exact URLs. */
+/** ponytail: basic → advanced → Wayback when extract is empty or blocked. */
 async function extractWithWaybackFallback(
   urls: string[],
   apiKey: string,
@@ -367,26 +367,29 @@ async function extractWithWaybackFallback(
 ): Promise<Map<string, string>> {
   const out = await extractBasicAdvanced(urls, apiKey, signal, raw);
 
-  const blockedUrls = urls.filter((url) => {
-    const content = out.get(url);
-    return content && isBlockedGuideContent(content);
-  });
+  const needsWayback = urls.filter((url) => !usableExtractContent(out.get(url)));
 
-  if (!blockedUrls.length) return out;
+  if (!needsWayback.length) return out;
 
   void logTraceEvent(
     "tavily_wayback_fallback",
-    `GameFAQs blocked ${blockedUrls.length} URLs, falling back to Wayback Machine`,
+    `Extract empty or blocked for ${needsWayback.length} URL(s), trying Wayback Machine`,
     undefined,
-    { urlsCount: blockedUrls.length },
+    { urlsCount: needsWayback.length },
   );
-  const waybackUrls = blockedUrls.map((url) => `https://web.archive.org/web/2/${url}`);
+  const waybackUrls = needsWayback.map((url) => {
+    const print = gamefaqsPrintExtractUrl(url);
+    return `https://web.archive.org/web/2/${print ?? url}`;
+  });
   const waybackResults = await runTavilyExtract(waybackUrls, apiKey, signal, "basic", raw);
 
-  for (let i = 0; i < blockedUrls.length; i++) {
-    const originalUrl = blockedUrls[i];
+  for (let i = 0; i < needsWayback.length; i++) {
+    const originalUrl = needsWayback[i];
     const waybackUrl = waybackUrls[i];
-    const waybackContent = waybackResults.get(waybackUrl);
+    let waybackContent = waybackResults.get(waybackUrl);
+    if (!waybackContent && waybackResults.size === 1) {
+      waybackContent = waybackResults.values().next().value;
+    }
 
     if (!waybackContent) {
       void logTraceEvent(
@@ -443,7 +446,10 @@ async function extractWithAdvancedFallback(
       raw,
     );
     for (const { original, print } of printPairs) {
-      const content = printFetched.get(print);
+      let content = printFetched.get(print);
+      if (!content && printFetched.size === 1) {
+        content = printFetched.values().next().value;
+      }
       if (usableExtractContent(content)) out.set(original, content);
     }
   }
