@@ -1,7 +1,33 @@
 # GameFAQs bundle: TOC-based discovery + content dedup
 
-**Status:** Planned (2026-07-26). No runtime change yet. Diagnosis grounded in live
-traces (Suikoden `gamefaqs:79809`, `gamefaqs:80674`).
+**Status:** Shipped (2026-07-26). All 4 phases built. Gates green (`check`, `tsc`,
+`build`). Diagnosis grounded in live traces (Suikoden `gamefaqs:79809`, `gamefaqs:80674`).
+
+### What shipped
+- **Phase 2+4 (dedup / print-once):** content-hash dedup per ingest run in
+  `ingestGamefaqsBundle` — the first unique page is stored, later pages with identical
+  content are marked `duplicate` (settled, counted as covered, hidden from "couldn't
+  add"). Kills the 25× duplication and gives print-once for free.
+- **Retrieval dedup:** `lib/guide-rag.ts` over-fetches `RETRIEVE_K*4` then collapses
+  identical chunk text to K distinct — fixes diversity for legacy 25×-data too.
+- **Phase 1 (TOC titles):** `slugFromGamefaqsTitle` + `parseGamefaqsTocByTitles`
+  (`lib/gamefaqs-bundle.js`), wired into `discoverGamefaqsBundleViaExtract` as a
+  fallback when the href-regex TOC finds ≤1. Best-effort; candidates that don't resolve
+  self-clean via failed-page tracking.
+- **Phase 3 (root URL):** `previewGuideUrl` runs discovery (`?refresh=1`) for FAQ root
+  URLs too, not just section URLs.
+
+### Deliberate ponytail cuts (self-healing)
+- Ingest dedup hashes raw extracted content; if a per-section nav marker makes raw
+  content differ, retrieval dedup still collapses the identical chunks. If the first
+  page's store fails mid-batch, its duplicate is marked settled but re-stored on the
+  next turn (the primary is retried).
+- Phase 1 title parser can over-capture the LAST "Part N:" title (no following marker);
+  that one candidate simply fails ingest and is recorded.
+- Phase 3 makes every GameFAQs add run a full Tavily discovery; the route's 30s
+  per-URL cooldown caps repeat cost.
+- No `content_hash` DB column / unique index yet (in-app dedup covers it); add later
+  only if cross-run duplicate storage shows up in practice.
 
 ## Why this exists
 

@@ -172,12 +172,9 @@ export function GuideLinkField({
       return;
     }
 
-    // FAQ root only (no chapter) — single-page until ingest/cache proves multi-page.
-    if (!parsed.sectionSlug) {
-      commitAddUrl(cleaned);
-      return;
-    }
-
+    // Both the FAQ root and a section URL run discovery — the guide's natural URL is
+    // the root, and it's still a multi-page bundle. Falls through to single-page below
+    // when discovery genuinely finds ≤1 page.
     setPreviewLoading(true);
     setAddError("");
     setBundlePreview(null);
@@ -185,7 +182,7 @@ export function GuideLinkField({
     const timeout = window.setTimeout(() => controller.abort(), 45_000);
     try {
       const response = await fetch(
-        `/api/guide-bundle?url=${encodeURIComponent(cleaned)}`,
+        `/api/guide-bundle?url=${encodeURIComponent(cleaned)}&refresh=1`,
         { signal: controller.signal },
       );
       const payload: {

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { after } from "next/server";
+import { createHash } from "node:crypto";
 
 import { chunkGuide } from "@/lib/chunk-guide.js";
 import { embedTexts } from "@/lib/embed";
@@ -50,8 +51,8 @@ export function isGuideRagAvailable(): boolean {
   return Boolean(getServerClient() && process.env.SUMOPOD_API_KEY);
 }
 
-/** Why a bundle page couldn't be indexed. */
-export type PageFailReason = "blocked" | "not_found";
+/** Why a bundle page isn't stored on its own: failed, or its content duplicates another page. */
+export type PageFailReason = "blocked" | "not_found" | "duplicate";
 
 export type IngestResult = {
   indexed: boolean;
@@ -77,6 +78,22 @@ function failedPagesFromStatus(
     url: `${parsed.canonicalUrl}/${slug}`,
     reason: reason as PageFailReason,
   }));
+}
+
+/** Count slugs whose content duplicates another page (their text IS indexed elsewhere). */
+function countDuplicateSlugs(pageStatus: Record<string, string> | undefined): number {
+  return Object.values(pageStatus ?? {}).filter((reason) => reason === "duplicate").length;
+}
+
+/** Only genuinely-unindexed reasons (blocked / not_found) — duplicates are covered. */
+function realFailuresOnly(
+  pageStatus: Record<string, string> | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [slug, reason] of Object.entries(pageStatus ?? {})) {
+    if (reason !== "duplicate") out[slug] = reason;
+  }
+  return out;
 }
 
 async function countBundleChunks(
@@ -257,7 +274,8 @@ export async function getBundleIndexStatus(
       title: cached?.title ?? "GameFAQs guide",
       pageCount: discoveryPages.length,
       discoveryPages,
-      pagesIndexed: finalPages.length,
+      // Duplicates carry no chunks of their own but their content is covered.
+      pagesIndexed: finalPages.length + countDuplicateSlugs(cached?.pageStatus),
       chunkCount,
       pages: finalPages,
       failedPages,
@@ -639,6 +657,7 @@ async function ingestGamefaqsBundle(
       undefined,
       { bundleKey: parsed.bundleKey, indexed: indexedSlugSet.size, failed: failedSlugSet.size },
     );
+    const realFailed = realFailuresOnly(failedStatus);
     return {
       indexed: true,
       chunkCount: chunkCount > 0 ? chunkCount : 1,
@@ -646,8 +665,10 @@ async function ingestGamefaqsBundle(
       bundle: true,
       bundleKey: parsed.bundleKey,
       pageCount: targetSlugList.length || indexedSlugSet.size,
-      pagesIndexed: indexedSlugSet.size,
-      pagesMissing: failedSlugSet.size ? failedPagesFromStatus(parsed, failedStatus) : undefined,
+      pagesIndexed: indexedSlugSet.size + countDuplicateSlugs(failedStatus),
+      pagesMissing: Object.keys(realFailed).length
+        ? failedPagesFromStatus(parsed, realFailed)
+        : undefined,
     };
   }
 
@@ -777,6 +798,12 @@ async function ingestGamefaqsBundle(
   // pageStatus so future turns skip them and the UI can explain why.
   const pageFailures: Record<string, PageFailReason> = {};
 
+  // Content-hash dedup within this ingest run. GameFAQs `?print=1` often returns the
+  // WHOLE guide for every section URL; the first unique page is stored, later pages
+  // with identical content are marked "duplicate" (settled, not re-attempted) instead
+  // of storing the same guide 25×. This also gives us "print-once" for free.
+  const seenContentHashes = new Set<string>();
+
   async function processBatch(batch: typeof targetPages, background: boolean) {
     void logTraceEvent("ingest_bundle_batch_start", `Processing batch of ${batch.length} pages for bundle ${bundleKey} (background: ${background})`, undefined, { bundleKey, batchSize: batch.length, background });
     const batchStart = Date.now();
@@ -821,6 +848,16 @@ async function ingestGamefaqsBundle(
         batchFailures[page.slug] = "blocked";
         continue;
       }
+
+      const contentHash = createHash("sha1").update(content).digest("hex");
+      if (seenContentHashes.has(contentHash)) {
+        // Same content as an already-stored page (GameFAQs print returns the whole
+        // guide). Its text is already indexed under the first page — mark settled.
+        void logTraceEvent("ingest_bundle_page_duplicate", `Duplicate content for ${page.url} in bundle ${bundleKey} — skipping store`, undefined, { bundleKey, pageUrl: page.url });
+        batchFailures[page.slug] = "duplicate";
+        continue;
+      }
+      seenContentHashes.add(contentHash);
 
       if (
         isGenericGamefaqsBundleTitle(resolvedTitle) &&
@@ -878,8 +915,10 @@ async function ingestGamefaqsBundle(
   const backgroundQueued = missingPagesToProcess
     .slice(EXTRACT_BATCH_SIZE)
     .filter((page) => !indexedSlugs.has(page.slug) && !allFailed[page.slug]);
+  // Duplicates are covered (their text is stored under the first page) — don't report
+  // them as "couldn't add", and count them toward pagesIndexed.
   const pagesMissing = [
-    ...failedPagesFromStatus(parsed, allFailed),
+    ...failedPagesFromStatus(parsed, realFailuresOnly(allFailed)),
     ...backgroundQueued.map((page) => ({ slug: page.slug, title: page.title, url: page.url })),
   ];
 
@@ -904,7 +943,8 @@ async function ingestGamefaqsBundle(
     bundle: true,
     bundleKey,
     pageCount,
-    pagesIndexed,
+    // Duplicates are covered content, so they count as indexed for the "X of Y" hint.
+    pagesIndexed: pagesIndexed + countDuplicateSlugs(allFailed),
     pagesMissing: pagesMissing.length ? pagesMissing : undefined,
     pagesSkipped: skippedCount > 0 ? skippedCount : undefined,
   };

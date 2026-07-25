@@ -8,6 +8,7 @@ import {
   parseGamefaqsFaqUrl,
   parseGamefaqsGuideTitle,
   parseGamefaqsPagesFromUrls,
+  parseGamefaqsTocByTitles,
   parseGamefaqsTocFromHtml,
   pickGamefaqsBundleTitle,
 } from "@/lib/gamefaqs-bundle.js";
@@ -253,7 +254,19 @@ async function discoverGamefaqsBundleViaExtract(
     if (!isGenericGamefaqsBundleTitle(title)) bestTitle = title;
 
     const fromToc = parseGamefaqsTocFromHtml(extracted.content, parsed);
-    const merged = mergeGamefaqsBundlePages([...seedPages, ...fromToc]);
+    let merged = mergeGamefaqsBundlePages([...seedPages, ...fromToc]);
+
+    // Fallback: Tavily sometimes flattens the sidebar TOC to plain text (no hrefs), so
+    // the href regex finds nothing. Rebuild "Part N: Title" sections from the text.
+    if (merged.length <= 1) {
+      const fromTitles = parseGamefaqsTocByTitles(extracted.content, parsed);
+      if (fromTitles.length) {
+        merged = mergeGamefaqsBundlePages([...seedPages, ...fromToc, ...fromTitles]);
+        if (merged.length > 1) {
+          void logTraceEvent("discovery_toc_titles", `Rebuilt ${merged.length} pages from TOC titles on ${url}`, undefined, { bundleKey: parsed.bundleKey, fromTitles: fromTitles.length });
+        }
+      }
+    }
 
     if (merged.length > 1) {
       void logTraceEvent("discovery_extract_success", `Found ${merged.length} pages via TOC on ${url}`);

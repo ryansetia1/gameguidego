@@ -212,9 +212,10 @@ export function useGuideBundle({
             pages: pages.length ? pages : row.data.discoveryPages,
             selectedSlugs: prev[row.url]?.selectedSlugs ?? prefs.selectedSlugs,
             skippedSlugs: prev[row.url]?.skippedSlugs ?? prefs.skippedSlugs,
-            // Failed pages (with reason) drive the panel's "couldn't add" rows.
+            // Failed pages (blocked / not-found) drive the panel's "couldn't add" rows.
+            // Duplicates are already covered by another page — settled, but not shown.
             missingPages: row.data.failedPages?.length
-              ? row.data.failedPages
+              ? row.data.failedPages.filter((page) => page.reason !== "duplicate")
               : prev[row.url]?.missingPages,
           };
         }
@@ -322,7 +323,9 @@ export function useGuideBundle({
     ): GuideBundleMeta | undefined => {
       if (!isGamefaqsBundleUrl(url)) return existing;
       const pagesMissing = Array.isArray(row.pagesMissing)
-        ? (row.pagesMissing as { slug: string; title: string; url: string; reason?: string }[])
+        ? (row.pagesMissing as { slug: string; title: string; url: string; reason?: string }[]).filter(
+            (page) => page.reason !== "duplicate",
+          )
         : undefined;
       const prefs = mergedBundlePrefs(url, existing);
       const skipped = new Set(prefs.skippedSlugs.map((slug) => slug.toLowerCase()));

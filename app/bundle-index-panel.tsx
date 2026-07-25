@@ -37,6 +37,7 @@ function dotLabel(state: BundleIndexRow["state"]) {
 function reasonLabel(reason: string | undefined) {
   if (reason === "blocked") return "Blocked by GameFAQs";
   if (reason === "not_found") return "Page not found";
+  if (reason === "duplicate") return "Merged (same content)";
   return null;
 }
 

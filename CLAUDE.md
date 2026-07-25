@@ -630,6 +630,15 @@ Panel when loaded:
 - `retrieveFromPreferredGuides` ingests (with `bundlePrefs`), embeds query
   (`embed_query` in `llm_calls`), `match_guide_chunks` with `GUIDE_HIT` threshold.
 - High hit → `skipWebSearch: true`; else tiered Tavily + one chunk fallback.
+- **Retrieval dedup (2026-07-26):** over-fetches `RETRIEVE_K*4` then collapses
+  byte-identical `chunk_text` down to `RETRIEVE_K` distinct (`dedupeByChunkText`). A
+  GameFAQs `?print=1` guide can be stored under many section URLs with identical
+  content, so raw top-K could be 5 copies of one chunk. See
+  [`docs/plan/gamefaqs-toc-discovery.md`](docs/plan/gamefaqs-toc-discovery.md) for the
+  matching ingest-side content-hash dedup (first page stored, later identical pages
+  marked `duplicate` in `pageStatus` — settled, counted as covered, hidden from
+  "couldn't add"), the TOC-title fallback discovery (`parseGamefaqsTocByTitles`), and
+  root-URL bundle detection.
 - **DO NOT add an ANN index (ivfflat/hnsw) on `guide_chunks.embedding`.**
   Retrieval always filters by `guide_url`/`guide_bundle` first (btree), then does an
   EXACT cosine sort on that ≤~dozens-of-rows subset — fast + 100% recall. A prior

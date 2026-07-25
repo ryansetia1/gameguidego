@@ -30,6 +30,25 @@ export const GUIDE_HIT = 0.35;
 // ranks 2–3, so overfetch gives Gemini the right chunk until a reranker lands.
 const RETRIEVE_K = 5;
 
+// Over-fetch, then collapse identical chunk text down to RETRIEVE_K distinct. A
+// GameFAQs `?print=1` guide can be stored under many section URLs with byte-identical
+// content, so the raw top-K can be 5 copies of one chunk — this restores diversity for
+// both legacy 25×-duplicated data and anything new.
+const RETRIEVE_FETCH = RETRIEVE_K * 4;
+
+/** Keep only the first (highest-similarity) occurrence of each distinct chunk text. */
+function dedupeByChunkText<T extends { chunk_text?: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const row of rows) {
+    const key = (row.chunk_text ?? "").trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
 let ragUnavailableLogged = false;
 
 type MatchRow = {
@@ -162,10 +181,10 @@ export async function retrieveFromPreferredGuides(input: {
       p_guide_urls: guideUrls,
       p_guide_bundles: guideBundles,
       p_embedding: toVectorString(queryEmbedding),
-      p_limit: RETRIEVE_K,
+      p_limit: RETRIEVE_FETCH,
     });
     if (error) throw error;
-    matches = (data ?? []) as MatchRow[];
+    matches = dedupeByChunkText((data ?? []) as MatchRow[]).slice(0, RETRIEVE_K);
     void logTraceEvent("rag_db_check", "Checked DB for RAG chunks", Date.now() - start, { matchCount: matches.length });
   } catch (error) {
     console.error("Guide chunk retrieval failed:", error);
