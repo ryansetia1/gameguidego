@@ -1900,7 +1900,18 @@ assert.equal(
   "Best GF setup?",
 );
 assert.match(summarizeSystemInstruction(true), /"topicTitle"/);
+assert.match(summarizeSystemInstruction(true), /"topicTitle" is REQUIRED/);
+assert.match(summarizeSystemInstruction(true), /FIRST MESSAGE focus/);
+assert.doesNotMatch(summarizeSystemInstruction(false), /"topicTitle"/);
 assert.equal(summarizeSystemInstruction(false), SYSTEM_INSTRUCTION);
+assert.match(
+  buildPrompt({ question: "Tujuan kastil terbalik?", sources: [], isFirstTurn: true }),
+  /first message in a new saved thread/i,
+);
+assert.doesNotMatch(
+  buildPrompt({ question: "Follow-up?", sources: [], history: [{ role: "user", content: "Hi" }] }),
+  /first message in a new saved thread/i,
+);
 assert.equal(displayTopicTitle(""), "Untitled topic");
 assert.equal(
   titleFromMessages([{ role: "user", content: "Best GF junction setup?" }]),

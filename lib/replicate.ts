@@ -264,6 +264,7 @@ export async function summarize(input: SummarizeInput): Promise<SummaryResult> {
     imageResolvedSubject: images.length ? input.imageResolvedSubject : "",
     playerMemory: input.playerMemory ?? null,
     webSupplement: Boolean(input.webSupplement),
+    isFirstTurn: Boolean(input.isFirstTurn),
     sources: input.sources.map(({ title, content, preferred }) => ({
       title,
       content,
