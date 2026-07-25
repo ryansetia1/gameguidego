@@ -900,6 +900,10 @@ large chat or persistence work:
   editor + **Update now**,
   disable wipes memory; cron `GET /api/cron/player-memory` (needs `CRON_SECRET` +
   `SUPABASE_SERVICE_ROLE_KEY`).
+- [`docs/plan/player-memory-game-lifecycle.md`](docs/plan/player-memory-game-lifecycle.md):
+  **Planned** — delete-game memory checkbox (default keep), **Forget this game**,
+  **Not in library** badge (Phase 1); stronger `normGameKey` (Phase 2);
+  `catalog_game_id` from autocomplete (Phase 3); similar-memory link prompt (Phase 4).
 - [`docs/plan/answer-satisfaction-signals.md`](docs/plan/answer-satisfaction-signals.md):
   **Future experiment:** retry / thumbs-down as answer-quality signals — Phase A
   regenerate-aware prompt first, explicit feedback second, opt-in memory aggregate last.
