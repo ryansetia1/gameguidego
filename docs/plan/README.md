@@ -15,5 +15,6 @@ they describe where the codebase is going, not necessarily what is shipped yet.
 | [answer-satisfaction-signals.md](./answer-satisfaction-signals.md) | **Future** | Retry / feedback as answer-quality signals — phased experiment backlog |
 | [guide-web-override.md](./guide-web-override.md) | **Shipped** | **Search web instead** + **Also search web** toggles when a preferred guide is attached |
 | [visual-search-rewrite-fold.md](./visual-search-rewrite-fold.md) | **Shipped** | Visual-intent detection folded into the rewrite (any language) + dropped the `visual_query` LLM call; auto-image by default with one global profile toggle (replaced the per-topic `+` menu toggle) |
+| [gamefaqs-toc-discovery.md](./gamefaqs-toc-discovery.md) | **Planned** | Fix GameFAQs bundle discovery: derive part URLs from TOC titles (not Tavily search) + content-hash dedup (kill the 25× duplication) + root-URL detection |
 
 When a plan phase ships, update its status here and cross-link from `CLAUDE.md`.
