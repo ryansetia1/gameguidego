@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
 import { ClearButton } from "@/app/clear-button";
+import { Snackbar } from "@/app/snackbar";
 import { PlayerMemoryLink } from "@/app/profile/player-memory-link";
 import { ProfileShell } from "@/app/profile/profile-shell";
 import { useProfileSession } from "@/app/profile/use-profile-session";
@@ -201,7 +202,6 @@ export default function ProfilePage() {
                 </div>
               </label>
               {error && <p className="profile-error">{error}</p>}
-              {notice && <p className="profile-notice">{notice}</p>}
               <button type="submit" className="nav-button" disabled={saving}>
                 {saving ? "Saving…" : "Save"}
               </button>
@@ -264,6 +264,7 @@ export default function ProfilePage() {
             <PlayerMemoryLink session={session} />
           </div>
         )}
+      <Snackbar message={notice} onDismiss={() => setNotice("")} />
     </ProfileShell>
   );
 }

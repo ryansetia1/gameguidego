@@ -6,6 +6,7 @@ import {
   extractUserMessagesFromChats,
   MEMORY_DRAFT_THRESHOLD,
   MEMORY_FULL_THRESHOLD,
+  legacyNormGameKey,
   memoryRefreshCooldownRemainingMs,
   normGameKey,
   playerMemoryEnabledFromMetadata,
@@ -99,17 +100,21 @@ export async function loadPlayerGameMemory(
   game: string,
   platform: string,
 ): Promise<PlayerGameMemoryRow | null> {
-  const gameKey = normGameKey(game);
-  if (!gameKey) return null;
+  const newKey = normGameKey(game);
+  if (!newKey) return null;
+  // Dual key during the strengthen transition: a memory row saved under the old
+  // (lowercase+collapse only) key still loads until the backfill re-keys it.
+  const legacyKey = legacyNormGameKey(game);
+  const keys = legacyKey && legacyKey !== newKey ? [newKey, legacyKey] : [newKey];
   const { data, error } = await supabase
     .from("player_game_memory")
     .select("*")
     .eq("user_id", userId)
-    .eq("game_key", gameKey)
-    .eq("platform", platform || "")
-    .maybeSingle();
-  if (error || !data) return null;
-  return data as PlayerGameMemoryRow;
+    .in("game_key", keys)
+    .eq("platform", platform || "");
+  if (error || !data?.length) return null;
+  const row = data.find((r) => r.game_key === newKey) ?? data[0];
+  return row as PlayerGameMemoryRow;
 }
 
 export async function loadAllPlayerGameMemory(

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { cleanSnippet, focusSection } from "../lib/clean.js";
 import { mapGames, formatReleaseHint, prepareAutocompleteGames } from "../lib/games.js";
 import { coerceHighlights, coerceSpoilers, parseSummary } from "../lib/highlights.js";
+import { demoJsonRepair } from "../lib/json-repair.js";
 import { PLATFORMS, matchPlatforms, tgdbPlatformToLabel } from "../lib/platforms.js";
 import {
   REWRITE_INSTRUCTION,
@@ -1945,6 +1946,17 @@ assert.equal(formatAdminMoney(0.004, 16000), formatIdr(64));
 assert.equal(formatAdminMoney(0.004, null), "$0.004");
 
 assert.equal(normGameKey("  Resident Evil 0 "), "resident evil 0");
+// Strengthened identity: punctuation/quote/case variants collapse to one key.
+assert.equal(
+  normGameKey("Assassin's Creed: Brotherhood"),
+  normGameKey("Assassins Creed Brotherhood"),
+);
+assert.equal(normGameKey("Spider-Man"), normGameKey("Spider Man"));
+assert.equal(normGameKey("Pokémon"), "pokemon");
+// Idempotent — the backfill re-applies it to already-normalized keys.
+assert.equal(normGameKey(normGameKey("Assassin's Creed: Brotherhood")), normGameKey("Assassin's Creed: Brotherhood"));
+// Distinct games stay distinct (numbers are not punctuation).
+assert.notEqual(normGameKey("Final Fantasy VII"), normGameKey("Final Fantasy VII Remake"));
 assert.equal(tierFromMessageCount(0), "collecting");
 assert.equal(tierFromMessageCount(5), "draft");
 assert.equal(tierFromMessageCount(10), "full");
@@ -1958,6 +1970,7 @@ assert.match(
 );
 assert.equal(memoryRefreshCooldownRemainingMs("2026-01-01T00:00:00.000Z", Date.parse("2026-01-01T01:00:00.000Z")), 0);
 assert.equal(demoPlayerMemoryPins(), true);
+assert.equal(demoJsonRepair(), true);
 const pinFixture = readStyleRecord({
   answerLength: "short",
   userPins: { fields: ["answerLength"], notes: [true] },

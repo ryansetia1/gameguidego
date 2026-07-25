@@ -12,6 +12,8 @@
     "backfill:chats": "node scripts/backfill-chat-threads.mjs",
     "backfill:chats:verify": "node scripts/backfill-chat-threads.mjs --verify",
     "backfill:chats:dry": "node scripts/backfill-chat-threads.mjs --dry-run",
+    "backfill:game-keys": "node scripts/backfill-game-keys.mjs",
+    "backfill:game-keys:dry": "node scripts/backfill-game-keys.mjs --dry-run",
     "eval:rag": "node scripts/rag-calibrate.mjs"
   },
   "dependencies": {

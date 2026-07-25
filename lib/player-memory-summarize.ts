@@ -1,6 +1,7 @@
 import Replicate from "replicate";
 
 import { logLlmCall } from "@/lib/llm-log";
+import { repairJsonStructure } from "@/lib/json-repair.js";
 import { getTraceId, logTraceEvent } from "@/lib/trace";
 import {
   coercePlayerStyle,
@@ -100,8 +101,19 @@ function parseMemorySummary(raw: string): MemorySummaryResult | null {
     ? trimmed
     : trimmed.match(/\{[\s\S]*\}/)?.[0] ?? "";
   if (!jsonText) return null;
+  // Gemini sometimes emits a wrong/stray closing bracket or truncates the tail, which
+  // breaks strict parse and silently stalls memory. Repair the structure and retry.
+  let parsed: Record<string, unknown>;
   try {
-    const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+    parsed = JSON.parse(jsonText) as Record<string, unknown>;
+  } catch {
+    try {
+      parsed = JSON.parse(repairJsonStructure(jsonText)) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+  try {
     const style = coercePlayerStyle(parsed.style);
     const games = Array.isArray(parsed.games)
       ? parsed.games.flatMap((item) => {
@@ -153,7 +165,12 @@ async function runMemoryModel(
           prompt,
           system_instruction: MEMORY_SUMMARIZE_INSTRUCTION,
           temperature: 0.2,
-          max_output_tokens: 2048,
+          // Gemini 2.5 Flash burns a variable, sometimes large slice of this cap on
+          // internal reasoning even with thinking_budget:0 — 2048 then 4096 both still
+          // truncated this nested games JSON mid-value on some calls, so parse failed
+          // and memory silently stopped updating. 8192 gives headroom; repairJsonStructure
+          // salvages the leading data (style + finished games) if a call still truncates.
+          max_output_tokens: 8192,
           thinking_budget: 0,
         },
         wait: { mode: "poll", interval: 500 },

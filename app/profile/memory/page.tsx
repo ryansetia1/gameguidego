@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { Snackbar } from "@/app/snackbar";
 import { PlayerMemorySection } from "@/app/profile/player-memory-section";
 import { ProfileShell } from "@/app/profile/profile-shell";
 import { useProfileSession } from "@/app/profile/use-profile-session";
@@ -49,10 +50,10 @@ export default function ProfileMemoryPage() {
             <h1>Learn my style</h1>
             <p className="profile-hint">Tailor answers to how you ask questions.</p>
           </header>
-          {notice ? <p className="profile-notice">{notice}</p> : null}
           <PlayerMemorySection session={session} onToast={setNotice} />
         </div>
       )}
+      <Snackbar message={notice} onDismiss={() => setNotice("")} />
     </ProfileShell>
   );
 }
