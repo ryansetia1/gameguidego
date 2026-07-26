@@ -21,6 +21,8 @@ import { getServerClient } from "@/lib/supabase-server";
 import { logTraceEvent } from "@/lib/trace";
 
 const MIN_GUIDE_CHARS = 400;
+// ponytail: single bulk insert of 1k+ vector rows hits Supabase statement timeout (~8s).
+const GUIDE_CHUNK_INSERT_BATCH = 50;
 
 /** Normalize a guide URL for storage and retrieval keys. */
 export function normalizeGuideUrl(raw: string): string {
@@ -230,32 +232,45 @@ async function insertGuideChunks(input: {
 
   const insertStart = Date.now();
   try {
-    const { error } = await input.supabase.from("guide_chunks").insert(rows);
-    if (error) {
-      const { count } = await input.supabase
-        .from("guide_chunks")
-        .select("*", { count: "exact", head: true })
-        .eq("guide_url", guideUrl)
-        .is("guide_bundle", null);
-      if ((count ?? 0) > 0) {
+    for (let offset = 0; offset < rows.length; offset += GUIDE_CHUNK_INSERT_BATCH) {
+      const batch = rows.slice(offset, offset + GUIDE_CHUNK_INSERT_BATCH);
+      const { error } = await input.supabase.from("guide_chunks").insert(batch);
+      if (error) {
+        const { count } = await input.supabase
+          .from("guide_chunks")
+          .select("*", { count: "exact", head: true })
+          .eq("guide_url", guideUrl)
+          .is("guide_bundle", null);
+        if ((count ?? 0) >= input.chunks.length) {
+          void logTraceEvent(
+            "ingest_db_insert",
+            `Chunks already exist for ${guideUrl} (${count} rows)`,
+            Date.now() - insertStart,
+            { guideUrl, chunkCount: count, duplicate: true },
+          );
+          return { indexed: true, chunkCount: count ?? input.chunks.length };
+        }
+        if (offset > 0) {
+          await deleteGuideChunks(input.supabase, guideUrl);
+        }
         void logTraceEvent(
           "ingest_db_insert",
-          `Chunks already exist for ${guideUrl} (${count} rows)`,
+          `Insert failed for ${guideUrl}: ${error.message}`,
           Date.now() - insertStart,
-          { guideUrl, chunkCount: count, duplicate: true },
+          {
+            guideUrl,
+            error: error.message,
+            batchSize: batch.length,
+            batchOffset: offset,
+            insertedBeforeFailure: offset,
+          },
         );
-        return { indexed: true, chunkCount: count ?? input.chunks.length };
+        console.error("Guide ingest insert failed:", error);
+        return { indexed: false, chunkCount: 0 };
       }
-      void logTraceEvent(
-        "ingest_db_insert",
-        `Insert failed for ${guideUrl}: ${error.message}`,
-        Date.now() - insertStart,
-        { guideUrl, error: error.message },
-      );
-      console.error("Guide ingest insert failed:", error);
-      return { indexed: false, chunkCount: 0 };
     }
   } catch (error) {
+    await deleteGuideChunks(input.supabase, guideUrl);
     void logTraceEvent(
       "ingest_db_insert",
       `Insert error for ${guideUrl}: ${error instanceof Error ? error.message : String(error)}`,
