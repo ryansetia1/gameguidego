@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { chunkGuide } from "@/lib/chunk-guide.js";
+import { chunkGuideWithMeta, formatEmbedPrefix } from "@/lib/chunk-guide.js";
 import { embedTexts } from "@/lib/embed";
 import type { EmbedLogMeta } from "@/lib/embed-log";
 import { toVectorString } from "@/lib/embed-cache";
@@ -164,6 +164,20 @@ export async function isGuideIndexed(guideUrl: string): Promise<boolean> {
   }
 }
 
+async function guideNeedsOutlineReingest(
+  supabase: SupabaseClient,
+  guideUrl: string,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("guide_chunks")
+    .select("section_confidence")
+    .eq("guide_url", guideUrl)
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return false;
+  return data.section_confidence == null;
+}
+
 async function guideChunkText(
   supabase: SupabaseClient,
   guideUrl: string,
@@ -184,10 +198,17 @@ async function deleteGuideChunks(
   await supabase.from("guide_chunks").delete().eq("guide_url", guideUrl);
 }
 
+type GuideChunkMeta = {
+  text: string;
+  section_path: string[];
+  section_confidence: number;
+  chunk_index: number;
+};
+
 async function insertGuideChunks(input: {
   supabase: SupabaseClient;
   guideUrl: string;
-  chunks: string[];
+  chunks: GuideChunkMeta[];
   embeddings: number[][];
 }): Promise<{ indexed: boolean; chunkCount: number }> {
   const guideUrl = normalizeGuideUrl(input.guideUrl);
@@ -197,11 +218,13 @@ async function insertGuideChunks(input: {
     return { indexed: false, chunkCount: 0 };
   }
 
-  const rows = input.chunks.map((chunk_text, chunk_index) => ({
+  const rows = input.chunks.map((chunk, chunk_index) => ({
     guide_url: guideUrl,
     guide_bundle: null,
-    chunk_index,
-    chunk_text,
+    chunk_index: chunk.chunk_index ?? chunk_index,
+    chunk_text: chunk.text,
+    section_path: chunk.section_path ?? [],
+    section_confidence: chunk.section_confidence ?? null,
     embedding: toVectorString(input.embeddings[chunk_index]),
   }));
 
@@ -259,7 +282,7 @@ async function storeGuideChunks(input: {
   signal?: AbortSignal;
   embedLog?: EmbedLogMeta;
 }): Promise<{ indexed: boolean; chunkCount: number }> {
-  const chunks = chunkGuide(input.text);
+  const chunks = chunkGuideWithMeta(input.text);
   if (!chunks.length) return { indexed: false, chunkCount: 0 };
 
   void logTraceEvent(
@@ -269,9 +292,11 @@ async function storeGuideChunks(input: {
     { guideUrl: input.guideUrl, chunkCount: chunks.length },
   );
 
+  const embedInputs = chunks.map((chunk) => `${formatEmbedPrefix(chunk)}${chunk.text}`);
+
   let embeddings: number[][];
   try {
-    embeddings = await embedTexts(chunks, input.signal, {
+    embeddings = await embedTexts(embedInputs, input.signal, {
       purpose: "ingest",
       guideUrl: input.guideUrl,
       ...input.embedLog,
@@ -311,7 +336,15 @@ async function ingestGuidePage(
 
   if (await isGuideIndexed(guideUrl)) {
     const isGamefaqs = Boolean(parseGamefaqsFaqUrl(guideUrl));
-    if (isGamefaqs) {
+    if (await guideNeedsOutlineReingest(supabase, guideUrl)) {
+      void logTraceEvent(
+        "ingest_stale_purge",
+        `Purging guide chunks missing outline metadata for re-ingest: ${guideUrl}`,
+        undefined,
+        { guideUrl, reason: "outline_metadata" },
+      );
+      await deleteGuideChunks(supabase, guideUrl);
+    } else if (isGamefaqs) {
       // Purge only genuinely bad stored content (TOC-only / near-empty), not
       // merely-short guides — else a small real guide re-embeds every turn.
       const storedText = await guideChunkText(supabase, guideUrl);
@@ -396,9 +429,9 @@ async function ingestGuidePage(
       "ingest_error",
       `Failed to store guide chunks for: ${guideUrl}`,
       Date.now() - startMs,
-      { guideUrl, error: "Store failed", hubWarning: true },
+      { guideUrl, error: "Store failed" },
     );
-    return { indexed: false, chunkCount: 0, hubWarning: true };
+    return { indexed: false, chunkCount: 0, hubWarning: false };
   }
 
   // ponytail: title parse from extract text only — direct GameFAQs fetch is Cloudflare-blocked.

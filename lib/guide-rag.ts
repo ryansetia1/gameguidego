@@ -12,6 +12,7 @@ import {
 import { canonicalGamefaqsBundleUrl } from "@/lib/gamefaqs-bundle.js";
 import { normalizeGuideUrlList } from "@/lib/guide-urls.js";
 import type { SearchResult } from "@/lib/tavily";
+import { rescoreGuideChunks } from "@/lib/guide-rescore.js";
 import { cohereRerankChunks } from "@/lib/guide-rerank-cohere";
 import { logTraceEvent } from "@/lib/trace";
 
@@ -53,7 +54,13 @@ let ragUnavailableLogged = false;
 type MatchRow = {
   guide_url: string;
   chunk_text: string;
+  chunk_index: number;
+  section_path: string[];
+  section_confidence: number | null;
   similarity: number;
+  rescore_delta?: number;
+  rescore_reasons?: string[];
+  rescore_score?: number;
 };
 
 export type GuideRagResult = {
@@ -103,6 +110,8 @@ function resolveRagTargets(urls: string[]) {
 export async function retrieveFromPreferredGuides(input: {
   guideUrls: string[];
   query: string;
+  /** Raw player question — used for rules rescoring (progress/location tokens). */
+  question?: string;
   signal?: AbortSignal;
   game?: string;
   platform?: string;
@@ -175,7 +184,12 @@ export async function retrieveFromPreferredGuides(input: {
       p_limit: RETRIEVE_FETCH,
     });
     if (error) throw error;
-    matches = dedupeByChunkText((data ?? []) as MatchRow[]).slice(0, RETRIEVE_K);
+    const raw = dedupeByChunkText((data ?? []) as MatchRow[]);
+    matches = rescoreGuideChunks({
+      query: input.question ?? input.query,
+      searchTopic: input.query,
+      chunks: raw,
+    }).slice(0, RETRIEVE_K) as MatchRow[];
     void logTraceEvent("rag_db_check", "Checked DB for RAG chunks", Date.now() - start, { matchCount: matches.length });
   } catch (error) {
     console.error("Guide chunk retrieval failed:", error);
@@ -230,10 +244,14 @@ export async function retrieveFromPreferredGuides(input: {
     hit,
     threshold: GUIDE_HIT,
     reranked: rerankRelevant != null,
+    rules_rescored: true,
     chunks: matches.map((row, index) => ({
       title: labelFor(row.guide_url) + (matches.length > 1 ? ` (section ${index + 1})` : ""),
       url: row.guide_url,
       similarity: row.similarity,
+      rescore_delta: row.rescore_delta,
+      rescore_reasons: row.rescore_reasons,
+      section_path: row.section_path,
       preview: row.chunk_text.slice(0, 600),
     })),
   });

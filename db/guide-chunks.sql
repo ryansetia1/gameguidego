@@ -11,6 +11,8 @@ create table if not exists public.guide_chunks (
   guide_bundle text,
   chunk_index int  not null,
   chunk_text  text not null,
+  section_path text[] not null default '{}',
+  section_confidence real,
   embedding   vector(1024) not null,
   created_at  timestamptz not null default now()
 );
@@ -54,6 +56,9 @@ create or replace function public.match_guide_chunks(
 returns table (
   guide_url text,
   chunk_text text,
+  chunk_index int,
+  section_path text[],
+  section_confidence real,
   similarity float
 )
 language sql stable
@@ -61,6 +66,9 @@ as $$
   select
     guide_url,
     chunk_text,
+    chunk_index,
+    coalesce(section_path, '{}'::text[]) as section_path,
+    section_confidence,
     1 - (embedding <=> p_embedding) as similarity
   from public.guide_chunks
   where

@@ -28,6 +28,7 @@ export type PipelineRag = {
   topSimilarity?: number;
   threshold?: number;
   reranked?: boolean;
+  rules_rescored?: boolean;
   matchCount?: number;
   embedQuery?: string;
   rerank?: PipelineRerank;

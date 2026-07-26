@@ -349,6 +349,7 @@ export async function POST(request: Request) {
           rag = await retrieveFromPreferredGuides({
             guideUrls: preferredUrls,
             query: searchTopic,
+            question,
             game,
             platform,
             userId,

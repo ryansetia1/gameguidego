@@ -80,7 +80,9 @@ import {
 } from "../lib/admin-trace-event-cost.ts";
 import { formatAdminMoney, formatIdr, usdToIdrAmount } from "../lib/admin-fx.ts";
 import { dateRangeForPreset } from "../lib/admin-date-range.ts";
-import { chunkGuide } from "../lib/chunk-guide.js";
+import { chunkGuide, chunkGuideWithMeta, formatEmbedPrefix } from "../lib/chunk-guide.js";
+import { buildOutline, detectHeading, sectionAtLine } from "../lib/guide-outline.js";
+import { rescoreGuideChunks } from "../lib/guide-rescore.js";
 import {
   guideIngestHint,
   guideIngestHintFromResponse,
@@ -448,6 +450,59 @@ const preferredPrompt = buildPrompt({
 });
 assert.match(preferredPrompt, /PREFERRED GUIDE/);
 assert.match(preferredPrompt, /primary sources of truth/);
+assert.match(preferredPrompt, /consistent with the player's stated location/);
+
+const ruleGuide =
+  "Walkthrough\n=========\n\nIntro text.\n\nBottle Grotto\n=========\n\nOpen it to get the Power Bracelet.";
+const ruleOutline = buildOutline(ruleGuide);
+assert.ok(ruleOutline.some((row) => /Bottle Grotto/i.test(row.title)), "outline should detect rule-underline headings");
+const ruleMeta = chunkGuideWithMeta(ruleGuide);
+assert.ok(
+  ruleMeta.some((chunk) => chunk.section_path.some((part) => /Bottle Grotto/i.test(part))),
+  "chunkGuideWithMeta should attach section_path from outline",
+);
+assert.match(formatEmbedPrefix({ section_path: ["Walkthrough", "Bottle Grotto"], section_confidence: 0.9 }), /\[Section: Walkthrough > Bottle Grotto\]/);
+assert.equal(formatEmbedPrefix({ section_path: ["X"], section_confidence: 0.2 }), "");
+
+const laCorrect =
+  "Open it to get the Power Bracelet! Now, leave the room and lift up the pots behind the chest.";
+const laWrong =
+  "Open the chest to receive the Level 2 Power Bracelet. Anyway, lift the large statues";
+const laForward = "After you are brought back outside of the Bottle Grotto, have BowWow";
+const laQuery =
+  "di bottle grotto, aku baru aja buka peti untuk dapetin power bracelet, setelah itu kemana ya?";
+const laSearch =
+  "After getting the Power Bracelet from the chest in Bottle Grotto, where should I go next? I am currently inside the Bottle Grotto dungeon.";
+const laRanked = rescoreGuideChunks({
+  query: laQuery,
+  searchTopic: laSearch,
+  chunks: [
+    { chunk_text: laForward, similarity: 0.716, chunk_index: 12, section_path: ["Overworld"] },
+    { chunk_text: laWrong, similarity: 0.699, chunk_index: 32, section_path: ["Face Shrine"] },
+    { chunk_text: laCorrect, similarity: 0.648, chunk_index: 11, section_path: ["Bottle Grotto"] },
+  ],
+});
+assert.ok(
+  laRanked[0].chunk_text.includes("lift up the pots"),
+  "rescoreGuideChunks should promote acquisition chunk over forward-jump chunk",
+);
+assert.ok(detectHeading("## Act 2", undefined), "detectHeading should accept markdown");
+const singleLineMd =
+  "# Suikoden Guide and Walkthrough by Cyril ### Version 1.1 ### Part 1 - Beginning";
+const singleOutline = buildOutline(singleLineMd);
+assert.ok(
+  singleOutline.every((row) => row.title.length <= 120),
+  "single-line Tavily extract should not produce megabyte heading titles",
+);
+assert.ok(
+  formatEmbedPrefix({ section_path: ["A".repeat(10_000)], section_confidence: 0.9 }).length <= 520,
+  "formatEmbedPrefix should cap oversized section paths",
+);
+const pathAtEnd = sectionAtLine(8, ruleOutline).path;
+assert.ok(
+  pathAtEnd.some((part) => /Bottle Grotto/i.test(part)),
+  "sectionAtLine should return active breadcrumb",
+);
 assert.match(preferredPrompt, /Talk to Viktor after the fire\./);
 
 const plainPrompt = buildPrompt({

@@ -1,6 +1,6 @@
 # Guide outline metadata + rules-based rescoring
 
-**Status:** Planned (July 2026)  
+**Status:** Shipped (July 2026)  
 **Audience:** Future agents implementing preferred-guide RAG without relying on Cohere  
 **Last updated:** 2026-07-26  
 **Related:** [rag-tuning-roadmap.md](./rag-tuning-roadmap.md), [preferred-guide.md](../preferred-guide.md), `lib/chunk-guide.js`, `lib/guide-rag.ts`, `lib/guide-ingest.ts`, `lib/prompt.js`
