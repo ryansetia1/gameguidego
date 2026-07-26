@@ -4,6 +4,7 @@ import type { Session } from "@supabase/supabase-js";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PromptDialog, usePromptDialog } from "@/app/chat/use-prompt-dialog";
+import { IconChevronDown } from "@/app/icons";
 import {
   PlayerMemoryGamesPanel,
   type GameMemoryRow,
@@ -637,8 +638,13 @@ export function PlayerMemorySection({ session, onToast }: Props) {
             >
               <details className="player-memory-panel">
                 <summary className="player-memory-panel-summary">
-                  <span className="player-memory-panel-title">Answer style{draftLabel}</span>
-                  <span className="player-memory-summary-text">{styleSummary(style)}</span>
+                  <span className="player-memory-panel-summary-copy">
+                    <span className="player-memory-panel-title">Answer style{draftLabel}</span>
+                    <span className="player-memory-summary-text">{styleSummary(style)}</span>
+                  </span>
+                  <span className="chevron-toggle" aria-hidden>
+                    <IconChevronDown size={18} />
+                  </span>
                 </summary>
                 <div className="player-memory-panel-body">
                   <p className="player-memory-panel-hint">

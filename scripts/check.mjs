@@ -80,6 +80,12 @@ import {
 } from "../lib/admin-trace-event-cost.ts";
 import { formatAdminMoney, formatIdr, usdToIdrAmount } from "../lib/admin-fx.ts";
 import { dateRangeForPreset } from "../lib/admin-date-range.ts";
+import {
+  activityRowMatchesSearch,
+  matchesAdminContentSearch,
+  matchesAdminUserSearch,
+  traceMatchesSearch,
+} from "../lib/admin-search.js";
 import { chunkGuide, chunkGuideWithMeta, formatEmbedPrefix } from "../lib/chunk-guide.js";
 import { buildOutline, detectHeading, sectionAtLine } from "../lib/guide-outline.js";
 import { rescoreGuideChunks, extractQueryFocalItem } from "../lib/guide-rescore.js";
@@ -2546,5 +2552,72 @@ assert.match(
   );
   assert.equal(merged[1].illustration?.alt, "Sprite");
 }
+
+assert.equal(matchesAdminUserSearch(["Egi", "egi@example.com"], "egi"), true);
+assert.equal(matchesAdminContentSearch("tips strategi ngalahin boss", "egi"), false);
+assert.equal(matchesAdminContentSearch("fight the genie boss", "genie"), true);
+assert.equal(
+  activityRowMatchesSearch(
+    {
+      id: "solve:1",
+      type: "chat",
+      createdAt: "2026-01-01",
+      status: "success",
+      userLabel: "Ryan Setiawan",
+      userEmail: "egi@example.com",
+      userId: "58dd5e1e-8a80-4063-ae98-b85554ff0f02",
+      game: "Zelda",
+      platform: "GB",
+      provider: "gemini",
+      service: "RAG",
+      summary: "tips strategi",
+      question: "tips strategi ngalahin genie",
+      answer: "pakai strategi ini",
+      traceId: "trace-1",
+    },
+    "egi",
+  ),
+  true,
+);
+assert.equal(
+  activityRowMatchesSearch(
+    {
+      id: "solve:2",
+      type: "chat",
+      createdAt: "2026-01-01",
+      status: "success",
+      userLabel: "Ryan Setiawan",
+      userEmail: null,
+      userId: null,
+      game: "Zelda",
+      platform: "GB",
+      provider: "gemini",
+      service: "RAG",
+      summary: "tips strategi",
+      question: "tips strategi ngalahin genie",
+      answer: "pakai strategi ini",
+      traceId: "trace-2",
+    },
+    "egi",
+  ),
+  false,
+);
+assert.equal(
+  traceMatchesSearch(
+    {
+      traceId: "abc",
+      startTime: "2026-01-01",
+      status: "Finished",
+      category: "Chat",
+      userName: "Egi",
+      userId: "user-1",
+      events: [],
+      rawEventCount: 0,
+      totalLatencyMs: 0,
+    },
+    "egi",
+  ),
+  true,
+);
 
 console.log("Self-check passed.");

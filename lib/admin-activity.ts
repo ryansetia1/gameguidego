@@ -33,6 +33,7 @@ export type ActivityRow = {
   createdAt: string;
   status: ActivityStatus;
   userLabel: string;
+  userEmail?: string | null;
   userId: string | null;
   game: string | null;
   platform: string | null;
@@ -331,9 +332,11 @@ export function mergeActivityRows(input: {
   traces: GroupedTrace[];
   llmCalls: LlmCallRow[];
   userLabels?: Record<string, string>;
+  userEmails?: Record<string, string>;
   limit?: number;
 }): ActivityRow[] {
   const userLabels = input.userLabels ?? {};
+  const userEmails = input.userEmails ?? {};
   const llmByTrace = groupLlmByTrace(input.llmCalls);
   const traceById = new Map(input.traces.map((trace) => [trace.traceId, trace]));
   const claimedTraceIds = new Set<string>();
@@ -349,12 +352,14 @@ export function mergeActivityRows(input: {
         row.player_name || tracePlayer,
         row.user_id ? userLabels[row.user_id] : null,
       );
+      base.userEmail = row.user_id ? userEmails[row.user_id] ?? null : null;
       return enrichRow(base, llmByTrace, traceById, input.llmCalls, input.traces, userLabels);
     }),
     ...input.ingestLogs.map((row) => {
       if (row.trace_id) claimedTraceIds.add(row.trace_id);
       const base = ingestLogToActivity(row);
       base.userLabel = userLabel(row.user_id, row.player_name, row.user_id ? userLabels[row.user_id] : null);
+      base.userEmail = row.user_id ? userEmails[row.user_id] ?? null : null;
       return enrichRow(base, llmByTrace, traceById, input.llmCalls, input.traces, userLabels);
     }),
     ...input.traces

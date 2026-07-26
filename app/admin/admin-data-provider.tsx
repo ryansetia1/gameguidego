@@ -178,6 +178,7 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
         ];
 
         let userLabels: Record<string, string> = {};
+        let userEmails: Record<string, string> = {};
         if (userIds.length && sessionData.session.access_token) {
           try {
             const labelRes = await fetch("/api/admin/user-labels", {
@@ -189,8 +190,12 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
               body: JSON.stringify({ userIds }),
             });
             if (labelRes.ok) {
-              const payload = (await labelRes.json()) as { labels?: Record<string, string> };
+              const payload = (await labelRes.json()) as {
+                labels?: Record<string, string>;
+                emails?: Record<string, string>;
+              };
               userLabels = payload.labels ?? {};
+              userEmails = payload.emails ?? {};
             }
           } catch {
             // Best-effort display names.
@@ -205,6 +210,7 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
             traces: grouped,
             llmCalls: (llmRes.data ?? []) as LlmCallRow[],
             userLabels,
+            userEmails,
             limit: 500,
           }),
         );

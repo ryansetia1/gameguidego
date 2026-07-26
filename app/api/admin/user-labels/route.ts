@@ -64,12 +64,17 @@ export async function POST(request: Request) {
   });
 
   const labels: Record<string, string> = {};
+  const emails: Record<string, string> = {};
   await Promise.all(
     userIds.map(async (userId) => {
       const { data, error } = await admin.auth.admin.getUserById(userId);
-      if (!error && data.user) labels[userId] = labelFromUser(data.user);
+      if (!error && data.user) {
+        labels[userId] = labelFromUser(data.user);
+        const email = data.user.email?.trim().toLowerCase();
+        if (email) emails[userId] = email;
+      }
     }),
   );
 
-  return NextResponse.json({ labels });
+  return NextResponse.json({ labels, emails });
 }

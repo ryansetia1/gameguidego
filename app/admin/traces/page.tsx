@@ -9,6 +9,7 @@ import { TraceEventsTable } from "@/app/admin/trace-events-table";
 import { useAdminAuth } from "@/app/admin/use-admin-auth";
 import { useAdminFx } from "@/app/admin/use-admin-fx";
 import { buildTraceEventCostMap, findTraceEventIndex } from "@/lib/admin-trace-event-cost";
+import { traceMatchesSearch } from "@/lib/admin-search";
 
 export const dynamic = "force-dynamic";
 
@@ -69,23 +70,9 @@ export default function AdminTracesPage() {
   }, [liveFeed, traces, traceEventCostByIndex]);
 
   const filteredTraces = useMemo(() => {
-    const q = search.trim().toLowerCase();
     return traces.filter((trace) => {
       if (!showFinished && trace.status === "Finished") return false;
-      if (!q) return true;
-      const haystack = [
-        trace.traceId,
-        trace.game,
-        trace.platform,
-        trace.question,
-        trace.category,
-        trace.pipelineType,
-        ...trace.events.map((event) => `${event.event_type} ${event.message}`),
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(q);
+      return traceMatchesSearch(trace, search);
     });
   }, [search, showFinished, traces]);
 

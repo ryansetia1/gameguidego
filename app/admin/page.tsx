@@ -16,6 +16,7 @@ import {
 } from "@/lib/admin-activity";
 import { mergeApiSpendTotals } from "@/lib/admin-api-spend";
 import { mergeApiCostTotals } from "@/lib/admin-api-cost";
+import { activityRowMatchesSearch } from "@/lib/admin-search";
 
 export const dynamic = "force-dynamic";
 
@@ -66,26 +67,9 @@ export default function AdminActivityPage() {
   }, [typeFilter, search, datePreset]);
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
     return rows.filter((row) => {
       if (typeFilter !== "all" && row.type !== typeFilter) return false;
-      if (!q) return true;
-      const haystack = [
-        row.userLabel,
-        row.game,
-        row.platform,
-        row.service,
-        row.provider,
-        row.question,
-        row.answer,
-        row.summary,
-        row.traceId,
-        ...(row.llmCalls?.flatMap((call) => [call.prompt, call.response, call.system_instruction]) ?? []),
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(q);
+      return activityRowMatchesSearch(row, search);
     });
   }, [rows, search, typeFilter]);
 

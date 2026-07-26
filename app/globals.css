@@ -5912,6 +5912,19 @@ details.sources small {
   gap: 18px;
 }
 
+@media (min-width: 768px) {
+  main.profile-page-shell.player-memory-page {
+    width: min(100% - 48px, 960px);
+  }
+
+  .player-memory-page .profile-page {
+    max-width: none;
+    width: 100%;
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+}
+
 .player-memory-header {
   display: flex;
   flex-direction: column;
@@ -6149,13 +6162,27 @@ details.sources small {
 
 .player-memory-panel-summary {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   min-height: 48px;
   padding: 12px;
   cursor: pointer;
   list-style: none;
   user-select: none;
+}
+
+.player-memory-panel-summary-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.player-memory-panel-summary .chevron-toggle {
+  flex: none;
 }
 
 .player-memory-panel-summary::-webkit-details-marker {
