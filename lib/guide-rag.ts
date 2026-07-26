@@ -36,6 +36,23 @@ const RETRIEVE_K = 5;
 // both legacy 25×-duplicated data and anything new.
 const RETRIEVE_FETCH = RETRIEVE_K * 4;
 
+/** On by default. Set GUIDE_RULES_AFTER_COHERE=0 to let Cohere own final chunk order (revert). */
+function rulesRescoreAfterCohereEnabled(): boolean {
+  return process.env.GUIDE_RULES_AFTER_COHERE !== "0";
+}
+
+function rulesRescoreMatches(
+  matches: MatchRow[],
+  question: string,
+  searchTopic: string,
+): MatchRow[] {
+  return rescoreGuideChunks({
+    query: question,
+    searchTopic,
+    chunks: matches,
+  }) as MatchRow[];
+}
+
 /** Keep only the first (highest-similarity) occurrence of each distinct chunk text. */
 function dedupeByChunkText<T extends { chunk_text?: string }>(rows: T[]): T[] {
   const seen = new Set<string>();
@@ -185,11 +202,10 @@ export async function retrieveFromPreferredGuides(input: {
     });
     if (error) throw error;
     const raw = dedupeByChunkText((data ?? []) as MatchRow[]);
-    matches = rescoreGuideChunks({
-      query: input.question ?? input.query,
-      searchTopic: input.query,
-      chunks: raw,
-    }).slice(0, RETRIEVE_K) as MatchRow[];
+    matches = rulesRescoreMatches(raw, input.question ?? input.query, input.query).slice(
+      0,
+      RETRIEVE_K,
+    );
     void logTraceEvent("rag_db_check", "Checked DB for RAG chunks", Date.now() - start, { matchCount: matches.length });
   } catch (error) {
     console.error("Guide chunk retrieval failed:", error);
@@ -214,11 +230,11 @@ export async function retrieveFromPreferredGuides(input: {
 
   // Phase C rerank (opt-in via COHERE_API_KEY presence): cosine recall@K is good but
   // ordering + routing is not (calibration 2026-07-22 — cosine 9/10 rank-1 3/6;
-  // Cohere rerank-v3.5 10/10 rank-1 6/6). Reorder the retrieved chunks and trust the
-  // Cohere `relevant` verdict. Fully fail-open: any Cohere error (trial expired,
-  // 429 rate-limit, network) returns null and we fall back to the cosine GUIDE_HIT,
-  // so enabling it is safe. Set a paid COHERE_API_KEY later — no code change.
+  // Cohere rerank-v3.5 10/10 rank-1 6/6). Cohere supplies the `relevant` routing
+  // verdict; progress-aware rules rescoring owns final order (see rules-after-cohere
+  // pass below). Fully fail-open: any Cohere error returns null → cosine GUIDE_HIT.
   let rerankRelevant: boolean | null = null;
+  let rulesAfterCohere = false;
   if (process.env.COHERE_API_KEY && matches.length > 1) {
     const rr = await cohereRerankChunks({
       question: input.query,
@@ -230,10 +246,15 @@ export async function retrieveFromPreferredGuides(input: {
       // outcome (reranked + hit) is captured by rag_similarity_score below.
       matches = rr.order.map((i) => matches[i]).filter(Boolean);
       rerankRelevant = rr.relevant;
+      if (rulesRescoreAfterCohereEnabled()) {
+        matches = rulesRescoreMatches(matches, input.question ?? input.query, input.query);
+        rulesAfterCohere = true;
+      }
     }
   }
 
   const topSimilarity = matches[0]?.similarity ?? 0;
+  const topRescoreScore = matches[0]?.rescore_score ?? topSimilarity;
   // Rerank verdict wins when it ran (semantic relevance); else cosine threshold.
   const hit = rerankRelevant != null ? rerankRelevant : topSimilarity >= GUIDE_HIT;
   const titleByUrl = await getGuideDisplayTitles(matches.map((row) => row.guide_url));
@@ -241,14 +262,17 @@ export async function retrieveFromPreferredGuides(input: {
     titleByUrl.get(guideStorageKey(guideUrl)) ?? hostLabel(guideUrl);
   void logTraceEvent("rag_similarity_score", `Top RAG similarity: ${topSimilarity.toFixed(3)} (Hit: ${hit}, reranked: ${rerankRelevant != null})`, undefined, {
     topSimilarity,
+    topRescoreScore,
     hit,
     threshold: GUIDE_HIT,
     reranked: rerankRelevant != null,
     rules_rescored: true,
+    rules_after_cohere: rulesAfterCohere,
     chunks: matches.map((row, index) => ({
       title: labelFor(row.guide_url) + (matches.length > 1 ? ` (section ${index + 1})` : ""),
       url: row.guide_url,
       similarity: row.similarity,
+      rescore_score: row.rescore_score,
       rescore_delta: row.rescore_delta,
       rescore_reasons: row.rescore_reasons,
       section_path: row.section_path,

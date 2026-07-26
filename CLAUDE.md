@@ -681,6 +681,8 @@ Server-only secrets (never expose via `NEXT_PUBLIC_`, never commit `.env.local`)
   keys are free (10 req/min, non-commercial); swap in a paid key later with no code
   change). `COHERE_RERANK_MODEL` (default `rerank-v3.5`), `COHERE_RELEVANCE_MIN`
   (default `0.3`; top score below this routes to web fallback).
+  `GUIDE_RULES_AFTER_COHERE` (optional, default on; set `0` to let Cohere own
+  final chunk order after rerank — revert if rules-after-Cohere hurts quality).
 - `SUMOPOD_API_KEY` (required for preferred-guide RAG).
 - `SUMOPOD_BASE_URL` (optional, default `https://ai.sumopod.com/v1`).
 - `EMBED_MODEL` (optional, default `text-embedding-3-large`; preferred-guide

@@ -508,6 +508,19 @@ assert.ok(
   ),
   "wrong-era chunk should record prerequisite_mismatch",
 );
+const laPostCohereOrder = rescoreGuideChunks({
+  query: laQuery,
+  searchTopic: laSearch,
+  chunks: [
+    { chunk_text: laForward, similarity: 0.716, chunk_index: 4 },
+    { chunk_text: laCorrect, similarity: 0.648, chunk_index: 11 },
+    { chunk_text: laRooster, similarity: 0.635, chunk_index: 1 },
+  ],
+});
+assert.ok(
+  laPostCohereOrder[0].chunk_text.includes("lift up the pots"),
+  "rules pass after Cohere reorder should restore acquisition chunk to rank 1",
+);
 const cited = sourcesForSolveLog([
   {
     title: "Guide (section 1)",

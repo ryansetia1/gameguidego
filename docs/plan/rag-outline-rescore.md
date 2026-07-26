@@ -370,3 +370,23 @@ Ship PR1+2 together or back-to-back so we do not embed without metadata paths.
 | 2026-07-26 | No game ontology; structural metadata + generic text signals only |
 | 2026-07-26 | Implementation order: Phase 1 → 2 → 3 |
 | 2026-07-26 | Motivated by traces `765789c7` (cosine fail) and `86e594bb` (Cohere ok) |
+| 2026-07-26 | **Rules-after-Cohere** (shipped): Cohere supplies `relevant`; rules own final order. Revert: `GUIDE_RULES_AFTER_COHERE=0` or revert `lib/guide-rag.ts` rules-after-cohere block |
+
+---
+
+## Rules-after-Cohere (revertable)
+
+**Pipeline:** `cosine fetch → rules rescore → top-K → Cohere reorder → rules rescore again → summarize`
+
+Cohere can promote semantically similar but progress-wrong chunks (trace `50222ad8`: forward-jump at rank 1). A second rules pass restores progress-aware order without dropping Cohere’s routing verdict.
+
+**Trace:** `rag_similarity_score.metadata.rules_after_cohere: true` when the second pass ran.
+
+**Revert without code change:**
+
+```bash
+# .env.local — Cohere keeps routing + final order (old behaviour)
+GUIDE_RULES_AFTER_COHERE=0
+```
+
+**Revert with git:** single block in `lib/guide-rag.ts` after `cohereRerankChunks` (search `rulesRescoreAfterCohereEnabled`).
