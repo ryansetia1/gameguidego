@@ -69,6 +69,7 @@ Trace **`b9cfacdc`**: Cohere + rules-after-Cohere → Genie rank-1 ✅, answer H
 | 1 | Disable `acquisition_anchor` when `isPositionProgressFollowUp` | `lib/guide-rescore.js` |
 | 2 | Post-sort `neighbor_rank_pin` — force `neighbor_of_tail` to rank-1 on position follow-up | `lib/guide-rescore.js` |
 | 3 | `limitSourcesForPositionFollowUp` — send **only rank-1** preferred excerpt to summarize | `lib/guide-progress.js`, `app/api/solve/route.ts` |
+| 4 | `extractQueryFocalItem` — parse *"already obtained X and navigated"* rewrites → `queryPostAcquisition` suppresses `acquisition_anchor` | `lib/guide-rescore.js` |
 
 Supporting signals (already shipped): `lib/guide-progress.js` (landmarks, tail endpoint,
 continuation opening), neighbor fetch in `lib/guide-rag.ts`, `PROGRESS FOLLOW-UP (strict)`
@@ -128,6 +129,20 @@ Single confirm run after T1–T2 fresh:
 - `reranked: false`
 - ✅ Post–Nightmare's Key through basement → elevators → west → stairs
 - Shows T3 without Cohere is **history-sensitive** but can pass with a clean chain
+
+### Post-focal-fix regression (all fixes shipped) — July 2026
+
+After `extractQueryFocalItem` *"already obtained X and navigated"* fix:
+
+| Suite | Cohere | Total | T1 | T2 | T3 | T4 |
+|-------|--------|-------|----|----|----|----|
+| `42b987cd` | off | ~34s | ✅ | ✅ | ✅ | ✅ Genie + Conch |
+| `5b12f5dc` | on | ~83s | ✅ | ✅ | ✅ | ✅ Genie + Conch |
+
+T4 traces: no `acquisition_anchor`; rank-1 `neighbor_continuation_boost`; `positionFollowUpRankOne: true`.
+
+**Verdict:** Both modes pass full T1–T4 after the fix stack. Cohere is **optional** (cost/latency
+tradeoff); keep `GUIDE_RULES_AFTER_COHERE=1` when Cohere is on.
 
 ---
 
@@ -192,8 +207,9 @@ After rank-1 trim, admin citation preview matches the excerpt that drove the ans
    - Trim preferred chunks at `=========` section breaks before summarize
    - Consider rank-1 trim for **vague** `isProgressFollowUp` (not only position) if T3
      no-Cohere drift recurs in production
-   - Fix `extractQueryFocalItem` for *"already obtained X and navigated"* so
-     `queryPostAcquisition` gates `acquisition_anchor` more reliably on rewrites
+   - ~~Fix `extractQueryFocalItem` for *"already obtained X and navigated"*~~ **Shipped**
+     2026-07-26 — `already obtained` pattern + `\s+and` terminator; gates
+     `queryPostAcquisition` → suppresses `acquisition_anchor` on non-position rewrites
 
 ---
 

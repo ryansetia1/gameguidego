@@ -434,4 +434,4 @@ GUIDE_RULES_AFTER_COHERE=0
 
 ### Follow-up progress (2026-07-26)
 
-Expanded `QUERY_EARLY_HINTS` / focal-item patterns for formal rewrites (`obtaining`, `following the steps`, `setelah dapet`). Added `prior_acquisition_penalty` + `continuation_boost` when the player already has the focal item (`queryPostAcquisition`, excludes `just acquired` first-turn rewrites).
+Expanded `QUERY_EARLY_HINTS` / focal-item patterns for formal rewrites (`obtaining`, `following the steps`, `setelah dapet`). Added `prior_acquisition_penalty` + `continuation_boost` when the player already has the focal item (`queryPostAcquisition`, excludes `just acquired` first-turn rewrites). **Bottle Grotto calibration (same day):** `neighbor_rank_pin`, position-follow-up `acquisition_anchor` off, `limitSourcesForPositionFollowUp` (rank-1 to summarize), `already obtained … and navigated` focal parse — see [rag-bottle-grotto-calibration.md](./rag-bottle-grotto-calibration.md).

@@ -82,7 +82,7 @@ import { formatAdminMoney, formatIdr, usdToIdrAmount } from "../lib/admin-fx.ts"
 import { dateRangeForPreset } from "../lib/admin-date-range.ts";
 import { chunkGuide, chunkGuideWithMeta, formatEmbedPrefix } from "../lib/chunk-guide.js";
 import { buildOutline, detectHeading, sectionAtLine } from "../lib/guide-outline.js";
-import { rescoreGuideChunks } from "../lib/guide-rescore.js";
+import { rescoreGuideChunks, extractQueryFocalItem } from "../lib/guide-rescore.js";
 import {
   extractOwnedItemsFromHistory,
   hasContinuationOpening,
@@ -696,6 +696,35 @@ assert.equal(
   limitSourcesForPositionFollowUp(laTurn4Sources, "trus setelah itu kemana?", "after key").length,
   3,
   "vague progress follow-up should not trim preferred sources",
+);
+const laTurn4RewriteFocal =
+  "After descending the second elevator in the basement of Bottle Grotto and then going west up a staircase, what are the next steps? The player has already obtained the Nightmare's Key and navigated through the basement areas. Please provide the subsequent actions to progress through the dungeon.";
+assert.equal(
+  extractQueryFocalItem(laTurn4RewriteFocal),
+  "nightmare's key",
+  "already obtained X and navigated rewrite should extract focal item",
+);
+const laPostAcqAnchorRanked = rescoreGuideChunks({
+  query: "what are the next steps in the dungeon?",
+  searchTopic: laTurn4RewriteFocal,
+  chunks: [
+    {
+      chunk_text:
+        "In this room, defeat the two Stalfos and take the Key that appears after you beat them. Open the chest to get the Compass.",
+      similarity: 0.76,
+      chunk_index: 9,
+    },
+    {
+      chunk_text:
+        "In this room, follow the path to the southern end, then jump across the middle ledges with Roc's Feather. Unlock the boss door.",
+      similarity: 0.71,
+      chunk_index: 11,
+    },
+  ],
+});
+assert.ok(
+  !laPostAcqAnchorRanked.some((row) => row.rescore_reasons?.includes("acquisition_anchor")),
+  "post-acquisition rewrite should suppress acquisition_anchor when focal item parses",
 );
 const laMarkNeighbor = markTailNeighborInPool(
   [
