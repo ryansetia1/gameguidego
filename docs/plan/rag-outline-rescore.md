@@ -389,4 +389,15 @@ Cohere can promote semantically similar but progress-wrong chunks (trace `50222a
 GUIDE_RULES_AFTER_COHERE=0
 ```
 
+**Revert without code change:**
+
+```bash
+# .env.local — Cohere keeps routing + final order (old behaviour)
+GUIDE_RULES_AFTER_COHERE=0
+```
+
 **Revert with git:** single block in `lib/guide-rag.ts` after `cohereRerankChunks` (search `rulesRescoreAfterCohereEnabled`).
+
+### Follow-up progress (2026-07-26)
+
+Expanded `QUERY_EARLY_HINTS` / focal-item patterns for formal rewrites (`obtaining`, `following the steps`, `setelah dapet`). Added `prior_acquisition_penalty` + `continuation_boost` when the player already has the focal item (`queryPostAcquisition`, excludes `just acquired` first-turn rewrites).

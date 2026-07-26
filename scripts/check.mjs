@@ -521,6 +521,32 @@ assert.ok(
   laPostCohereOrder[0].chunk_text.includes("lift up the pots"),
   "rules pass after Cohere reorder should restore acquisition chunk to rank 1",
 );
+const laKeyFollowQuery = "setelah dapet kunci kemana lagi?";
+const laKeyFollowSearch =
+  "After obtaining the Key from the chest in Bottle Grotto, following the steps involving the Power Bracelet and crystal switches, what are the next steps to progress through the dungeon?";
+const laKeyHardhat =
+  "Open the chest to get the Compass, then go back east two rooms to the entrance. Open the chest to get a Small Key, then go into the east room.";
+const laKeyContinuation =
+  "Defeat Spiked Beetles and a Gel. Open the chest to get the Compass, then go into the south room. Defeat the Water Tektites, then open it to get a Key. Next, go back out of this room, then go west to the following room.";
+const laKeyFollowRanked = rescoreGuideChunks({
+  query: laKeyFollowQuery,
+  searchTopic: laKeyFollowSearch,
+  chunks: [
+    { chunk_text: laKeyHardhat, similarity: 0.717, chunk_index: 1 },
+    { chunk_text: laKeyContinuation, similarity: 0.702, chunk_index: 2 },
+    { chunk_text: laForward, similarity: 0.701, chunk_index: 5 },
+  ],
+});
+assert.ok(
+  laKeyFollowRanked[0].chunk_text.includes("Next, go back"),
+  "follow-up after obtaining key should rank continuation chunk first",
+);
+assert.ok(
+  laKeyFollowRanked.find((row) => row.chunk_text.includes("brought back outside"))?.rescore_reasons?.includes(
+    "forward_jump_penalty",
+  ),
+  "post-acquisition follow-up should penalize forward-jump chunks",
+);
 const cited = sourcesForSolveLog([
   {
     title: "Guide (section 1)",
