@@ -756,6 +756,12 @@ large chat or persistence work:
   composer toggles when a preferred guide is attached — **Search web instead**
   (`skipPreferredGuide` / `web_skip_guide`) and **Also search web**
   (`alsoSearchWeb` / `rag_supplemented`); default OFF; `lib/guide-retrieval-mode.js`.
+- [`docs/plan/neoseeker-bundle.md`](docs/plan/neoseeker-bundle.md): **Research**
+  Neoseeker as a top-tier preferred-guide source (multi-page bundle like GameFAQs
+  `?print=1`): **three URL patterns** — flat wiki, nested `/walkthrough/`, and FAQ
+  single-page `/faqs/{id}-*.html`; Tavily discovery cascade for wikis; calibration
+  on Hades / Uncharted 4 / TLOU / Pokémon Platinum.
+  Test scripts: `scripts/test-neoseeker*.mjs`. Read before implementing.
 - [`docs/plan/image-character-recognition.md`](docs/plan/image-character-recognition.md):
   **Experimental (shipped, prompt-only):** vision character naming on image attachments.
   Worth trying in production; revert via `git revert` or manual `lib/prompt.js` rollback
