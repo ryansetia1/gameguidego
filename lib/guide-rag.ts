@@ -124,7 +124,7 @@ async function ensureTailNeighbor(
   if (!landmarks.length || !rows.length) return rows;
 
   const { rows: markedRows, parent, marked } = markTailNeighborInPool(rows, landmarks);
-  if (!parent?.guide_url || parent.chunk_index == null) return markedRows;
+  if (!parent?.guide_url || parent.chunk_index == null) return markedRows as MatchRow[];
   if (marked) return markedRows as MatchRow[];
 
   const nextIndex = parent.chunk_index + 1;

@@ -19,7 +19,7 @@ import {
   enrichMessageSources,
   groupHighlightsByKind,
   isUploadOnlySources,
-  pipelineSourceLabel,
+  collapsedSourcesSubLabel,
   sourceBadge,
   sourceHostname,
   uploadedSourceGuideLabel,
@@ -207,7 +207,7 @@ function AnswerFoot({
         Sources ({sources!.length})
         <span className="answer-foot-sub">
           {" · "}
-          {pipelineSourceLabel(message.pipelineType, sources)}
+          {collapsedSourcesSubLabel(message.pipelineType, sources)}
         </span>
       </>
     );
@@ -322,7 +322,6 @@ function AnswerFoot({
                       <strong>{source.title}</strong>
                       <small>
                         <span className="source-badge">{badge}</span>
-                        {uploadedSourceGuideLabel([source])}
                       </small>
                     </span>
                   </div>

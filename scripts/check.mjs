@@ -190,7 +190,7 @@ import {
   tailTurnIndexFromMessages,
 } from "../lib/chat-thread-persist.js";
 import { compareThreadSources } from "../lib/chat-thread-audit.js";
-import { answerModeInfo, enrichMessageSources, mixedPreferredGuideLabel, pipelineSourceLabel, resolveSourceTitle, sourceHostname } from "../lib/chat-message-ui.js";
+import { answerModeInfo, collapsedSourcesSubLabel, enrichMessageSources, mixedPreferredGuideLabel, pipelineSourceLabel, resolveSourceTitle, sourceHostname } from "../lib/chat-message-ui.js";
 import {
   CHAT_QUERY_PARAM,
   coerceSessionDraft,
@@ -1983,13 +1983,13 @@ assert.ok(auditBad.issues.some((issue) => issue.startsWith("turn_count")));
 
 assert.equal(sourceHostname("https://www.example.com/path"), "example.com");
 assert.equal(pipelineSourceLabel("rag", undefined), "Your guide");
-assert.equal(pipelineSourceLabel("fallback_web", [{ title: "Wiki", url: "https://example.com/a" }]), "Web search");
-assert.equal(pipelineSourceLabel("web", [{ title: "Wiki", url: "https://example.com/a" }]), "Web search");
-assert.equal(pipelineSourceLabel("web_skip_guide", [{ title: "Wiki", url: "https://example.com/a" }]), "Web search");
-assert.equal(pipelineSourceLabel("rag_supplemented", undefined), "Your guide + Web search");
+assert.equal(pipelineSourceLabel("fallback_web", [{ title: "Wiki", url: "https://example.com/a" }]), "Web");
+assert.equal(pipelineSourceLabel("web", [{ title: "Wiki", url: "https://example.com/a" }]), "Web");
+assert.equal(pipelineSourceLabel("web_skip_guide", [{ title: "Wiki", url: "https://example.com/a" }]), "Web");
+assert.equal(pipelineSourceLabel("rag_supplemented", undefined), "Your guide + Web");
 assert.equal(
   pipelineSourceLabel("rag_supplemented", [{ title: "guide.pdf", url: "upload://u/guide.pdf" }]),
-  "PDF guide + Web search",
+  "PDF + Web",
 );
 assert.equal(
   pipelineSourceLabel("rag", [{ title: "steamcommunity.com", url: "https://steamcommunity.com/x" }]),
@@ -2000,7 +2000,7 @@ assert.equal(
     { title: "guide.pdf", url: "upload://u/guide.pdf" },
     { title: "IGN walkthrough", url: "https://www.ign.com/walkthroughs/foo" },
   ]),
-  "PDF guide + IGN walkthrough",
+  "PDF + IGN walkthrough",
 );
 assert.equal(
   pipelineSourceLabel("rag", [
@@ -2010,11 +2010,33 @@ assert.equal(
       url: "https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674",
     },
   ]),
-  "PDF guide + Suikoden — Guide and Walkthrough (PS) by Cyril",
+  "PDF + Suikoden — Guide and Walkthrough (PS) by Cyril",
 );
 assert.equal(
-  mixedPreferredGuideLabel("PDF guide", ["ign.com", "gamefaqs.gamespot.com"]),
-  "PDF guide + 2 links",
+  mixedPreferredGuideLabel("PDF", ["ign.com", "gamefaqs.gamespot.com"]),
+  "PDF + 2 links",
+);
+assert.equal(
+  collapsedSourcesSubLabel("rag", [
+    { title: "guide.pdf", url: "upload://u/guide.pdf" },
+    {
+      title: "Suikoden — Guide and Walkthrough (PS) by Cyril",
+      url: "https://gamefaqs.gamespot.com/ps/198843-suikoden/faqs/80674",
+    },
+  ]),
+  "PDF + links",
+);
+assert.equal(
+  collapsedSourcesSubLabel("rag", [
+    { title: "notes.txt", url: "upload://u/notes.txt" },
+    { title: "IGN walkthrough", url: "https://www.ign.com/walkthroughs/foo" },
+    { title: "GameFAQs", url: "https://gamefaqs.gamespot.com/ps/1/faqs/2" },
+  ]),
+  "TXT + links",
+);
+assert.equal(
+  collapsedSourcesSubLabel("rag", [{ title: "steamcommunity.com", url: "https://steamcommunity.com/x" }]),
+  "Your guide",
 );
 assert.equal(
   guideUrlsSummary([
@@ -2025,7 +2047,7 @@ assert.equal(
 );
 assert.equal(
   pipelineSourceLabel("fallback_web", [{ title: "Risk of Rain wiki", url: "https://wiki.gg/risk-of-rain" }]),
-  "Web search",
+  "Web",
 );
 
 // answerModeInfo: the answer-card mode chip / inline upsell gate.
@@ -2036,7 +2058,7 @@ assert.equal(
   answerModeInfo("rag", [{ title: "x", url: "upload://u/guide.pdf" }]).guideBacked,
   true,
 );
-assert.equal(answerModeInfo("web", undefined).label, "Web search");
+assert.equal(answerModeInfo("web", undefined).label, "Web");
 
 const summarizeFixture = buildPrompt({
   game: "Clair Obscur",
