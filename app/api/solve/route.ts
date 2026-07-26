@@ -19,6 +19,7 @@ import {
 } from "@/lib/guide-hints.js";
 import { coerceGuideRetrievalFlags } from "@/lib/guide-retrieval-mode.js";
 import { coerceGuideUrlsFromBody } from "@/lib/guide-urls.js";
+import { limitSourcesForPositionFollowUp } from "@/lib/guide-progress.js";
 import { retrieveFromPreferredGuides } from "@/lib/guide-rag";
 import { coerceSpoilerPrefs } from "@/lib/spoiler-prefs";
 import { coerceDisplayName } from "@/lib/profile.js";
@@ -350,6 +351,7 @@ export async function POST(request: Request) {
             guideUrls: preferredUrls,
             query: searchTopic,
             question,
+            history,
             game,
             platform,
             userId,
@@ -418,6 +420,11 @@ export async function POST(request: Request) {
           }
         }
 
+        const preferredBeforeTrim = sources.filter((s) => s.preferred).length;
+        sources = limitSourcesForPositionFollowUp(sources, question, searchTopic);
+        const positionFollowUpRankOne =
+          preferredBeforeTrim > 0 && sources.filter((s) => s.preferred).length < preferredBeforeTrim;
+
         retrievalLatencyMs = Date.now() - retrievalStart;
 
         // Emit context so frontend can cache it for potential retry
@@ -434,6 +441,8 @@ export async function POST(request: Request) {
           pipelineType,
           skipPreferredGuide,
           alsoSearchWeb,
+          positionFollowUpRankOne,
+          preferredBeforeTrim,
           webSources: sources
             .filter((s) => !s.preferred)
             .map((s) => ({

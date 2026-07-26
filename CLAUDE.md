@@ -743,8 +743,10 @@ large chat or persistence work:
   router). Phased backlog for the next preferred-guide upgrade; no runtime change yet.
 - [`docs/plan/rag-outline-rescore.md`](docs/plan/rag-outline-rescore.md): **Shipped**
   game-agnostic guide outline metadata (`section_path`), rules-based rescoring without
-  Cohere (progress/tier/overlap signals), and summarize contradiction guardrails.
-  Apply `db/guide-chunk-outline.sql` on existing installs; guides re-ingest lazily when
+  Cohere (progress/tier/overlap signals), neighbor-chunk fetch at chunk boundaries,
+  chat-history owned-item penalties (`lib/guide-progress.js`), and summarize
+  **PROGRESS FOLLOW-UP** guardrails (first excerpt priority). Apply
+  `db/guide-chunk-outline.sql` on existing installs; guides re-ingest lazily when
   `section_confidence` is null.
 - [`docs/plan/guide-web-override.md`](docs/plan/guide-web-override.md): **Shipped**
   composer toggles when a preferred guide is attached — **Search web instead**
@@ -829,3 +831,9 @@ Sound human, not like AI. Specifically avoid these tells:
 - **`lib/embed.ts`**: Added `embed_query_start`, `embed_query_end`, `embed_query_cache_hit`, `embed_texts_start`, `embed_texts_end` trace events. The 96-second black hole (embedding model cold start) is now fully visible.
 - **`app/api/solve/route.ts`**: Added `generation_complete` trace event after answer generation.
 - **`lib/guide-ingest.ts`**: `ingest_complete` / `ingest_error` trace events per guide URL.
+
+### Fix 4: Progress follow-up RAG (2026-07-26)
+- **`lib/guide-progress.js`**: Shared progress helpers (position landmarks, owned items from history, vague follow-up detection).
+- **`lib/guide-rag.ts`**: Fetches `chunk_index+1` when a retrieved chunk tail matches the player's stated position; passes chat `history` into rescoring.
+- **`lib/guide-rescore.js`**: `neighbor_continuation_boost`, `tail_endpoint_penalty`, `history_owned_acquire_penalty`.
+- **`lib/prompt.js`**: **PROGRESS FOLLOW-UP (strict)** — summarize must answer from the first preferred excerpt on vague/position follow-ups.

@@ -14,6 +14,11 @@ import { normalizeGuideUrlList } from "@/lib/guide-urls.js";
 import type { SearchResult } from "@/lib/tavily";
 import { rescoreGuideChunks } from "@/lib/guide-rescore.js";
 import { cohereRerankChunks } from "@/lib/guide-rerank-cohere";
+import {
+  extractPositionLandmarks,
+  hasContinuationOpening,
+  markTailNeighborInPool,
+} from "@/lib/guide-progress.js";
 import { logTraceEvent } from "@/lib/trace";
 
 
@@ -45,10 +50,12 @@ function rulesRescoreMatches(
   matches: MatchRow[],
   question: string,
   searchTopic: string,
+  history: ProgressTurn[] = [],
 ): MatchRow[] {
   return rescoreGuideChunks({
     query: question,
     searchTopic,
+    history,
     chunks: matches,
   }) as MatchRow[];
 }
@@ -78,21 +85,10 @@ type MatchRow = {
   rescore_delta?: number;
   rescore_reasons?: string[];
   rescore_score?: number;
+  neighbor_of_tail?: boolean;
 };
 
-export type GuideRagResult = {
-  sources: SearchResult[];
-  skipWebSearch: boolean;
-  hubWarning: boolean;
-  indexedCount: number;
-  totalGuides: number;
-  // All retrieved similarities (top-K), for calibration harness only. Populated
-  // when a match ran; undefined on ingest-miss/infra-miss short-circuits.
-  scores?: number[];
-  // Retrieved chunk texts (top-K), calibration harness only — lets it check
-  // whether the targeted paragraph landed anywhere in top-K, not just rank 1.
-  chunkTexts?: string[];
-};
+type ProgressTurn = { role?: string; content?: string };
 
 function hostLabel(guideUrl: string): string {
   if (guideUrl.startsWith("upload://")) {
@@ -119,6 +115,52 @@ function resolveRagTargets(urls: string[]) {
   return guideUrls;
 }
 
+/** Ensure chunk_index+1 from the best tail-endpoint parent is in the pool (fetch or mark). */
+async function ensureTailNeighbor(
+  supabase: NonNullable<ReturnType<typeof getServerClient>>,
+  rows: MatchRow[],
+  landmarks: string[],
+): Promise<MatchRow[]> {
+  if (!landmarks.length || !rows.length) return rows;
+
+  const { rows: markedRows, parent, marked } = markTailNeighborInPool(rows, landmarks);
+  if (!parent?.guide_url || parent.chunk_index == null) return markedRows;
+  if (marked) return markedRows as MatchRow[];
+
+  const nextIndex = parent.chunk_index + 1;
+  const { data, error } = await supabase
+    .from("guide_chunks")
+    .select("guide_url, chunk_text, chunk_index, section_path, section_confidence")
+    .eq("guide_url", parent.guide_url)
+    .eq("chunk_index", nextIndex)
+    .maybeSingle();
+
+  if (error || !data || !hasContinuationOpening(data.chunk_text)) return markedRows as MatchRow[];
+
+  return [
+    ...(markedRows as MatchRow[]),
+    {
+      guide_url: data.guide_url,
+      chunk_text: data.chunk_text,
+      chunk_index: data.chunk_index,
+      section_path: data.section_path ?? [],
+      section_confidence: data.section_confidence ?? null,
+      similarity: (Number(parent.similarity) || 0) * 0.94,
+      neighbor_of_tail: true,
+    },
+  ];
+}
+
+export type GuideRagResult = {
+  sources: SearchResult[];
+  skipWebSearch: boolean;
+  hubWarning: boolean;
+  indexedCount: number;
+  totalGuides: number;
+  scores?: number[];
+  chunkTexts?: string[];
+};
+
 /**
  * Preferred-guide RAG path: ingest (lazy), embed query, retrieve top-K chunks
  * across one or more guide URLs and/or bundles. Returns null when RAG
@@ -129,6 +171,8 @@ export async function retrieveFromPreferredGuides(input: {
   query: string;
   /** Raw player question — used for rules rescoring (progress/location tokens). */
   question?: string;
+  /** Chat history — used for owned-item penalties during rescoring. */
+  history?: ProgressTurn[];
   signal?: AbortSignal;
   game?: string;
   platform?: string;
@@ -192,6 +236,7 @@ export async function retrieveFromPreferredGuides(input: {
   if (!supabase) return null;
 
   let matches: MatchRow[] = [];
+  const history = input.history ?? [];
   try {
     const start = Date.now();
     const { data, error } = await supabase.rpc("match_guide_chunks", {
@@ -202,10 +247,17 @@ export async function retrieveFromPreferredGuides(input: {
     });
     if (error) throw error;
     const raw = dedupeByChunkText((data ?? []) as MatchRow[]);
-    matches = rulesRescoreMatches(raw, input.question ?? input.query, input.query).slice(
-      0,
-      RETRIEVE_K,
+    const landmarks = extractPositionLandmarks(
+      `${input.question ?? ""} ${input.query}`.trim(),
     );
+    const neighbors = await ensureTailNeighbor(supabase, raw, landmarks);
+    const pool = dedupeByChunkText(neighbors);
+    matches = rulesRescoreMatches(
+      pool,
+      input.question ?? input.query,
+      input.query,
+      history,
+    ).slice(0, RETRIEVE_K);
     void logTraceEvent("rag_db_check", "Checked DB for RAG chunks", Date.now() - start, { matchCount: matches.length });
   } catch (error) {
     console.error("Guide chunk retrieval failed:", error);
@@ -247,7 +299,12 @@ export async function retrieveFromPreferredGuides(input: {
       matches = rr.order.map((i) => matches[i]).filter(Boolean);
       rerankRelevant = rr.relevant;
       if (rulesRescoreAfterCohereEnabled()) {
-        matches = rulesRescoreMatches(matches, input.question ?? input.query, input.query);
+        matches = rulesRescoreMatches(
+          matches,
+          input.question ?? input.query,
+          input.query,
+          history,
+        );
         rulesAfterCohere = true;
       }
     }

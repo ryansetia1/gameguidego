@@ -246,6 +246,36 @@ per-game tables.
 Cheap token overlap score between `searchTopic` and `chunk_text` (already in top-20).
 Small weight — embeddings already do most of this; helps exact names embeddings blur.
 
+#### S6 — Chunk boundary continuation (shipped 2026-07-26)
+
+**Module:** `lib/guide-progress.js` + `expandNeighborChunks` in `lib/guide-rag.ts`
+
+When the rewrite/query names a position (elevator, stairs, directions) and a retrieved
+chunk **tail** matches those landmarks at an endpoint, fetch **one** `chunk_index + 1`
+neighbor from the **best** tail-endpoint parent only (`pickBestTailEndpointChunk`).
+The neighbor must open with a continuation cue (`In this room`, `Now,`, etc.) —
+village/overworld arcs are rejected.
+
+Rescore signals:
+
+| Signal | When | Delta |
+|--------|------|-------|
+| `tail_position_match` | Query landmarks hit chunk tail | +0.04–0.10 |
+| `tail_endpoint_penalty` | Progress follow-up + chunk **ends** at player position | −0.18 |
+| `neighbor_continuation_boost` | Row is the fetched neighbor | +0.16 |
+| `neighbor_rank_pin` | Position follow-up + neighbor in pool (post-sort) | force rank-1 |
+| `history_owned_acquire_penalty` | Chunk opening re-acquires item from chat history | −0.14 |
+
+On **position** follow-ups (elevator/stairs in the question), `continuation_boost`, **`acquisition_anchor`**, and
+broad `tail_position_match` are suppressed so overworld "stairs" chunks do not outrank
+the dungeon neighbor. **`limitSourcesForPositionFollowUp`** in `lib/guide-progress.js`
+then sends only the top-ranked preferred excerpt to summarize (web supplement sources
+are kept).
+
+**Summarize:** `buildPrompt` adds **PROGRESS FOLLOW-UP (strict)** when
+`isProgressFollowUp(question)` — answer primarily from the **first** preferred excerpt;
+do not re-acquire items already obtained in the thread.
+
 ### 2.3 Trace / debug
 
 Extend `rag_similarity_score` metadata:

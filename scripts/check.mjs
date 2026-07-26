@@ -83,6 +83,16 @@ import { dateRangeForPreset } from "../lib/admin-date-range.ts";
 import { chunkGuide, chunkGuideWithMeta, formatEmbedPrefix } from "../lib/chunk-guide.js";
 import { buildOutline, detectHeading, sectionAtLine } from "../lib/guide-outline.js";
 import { rescoreGuideChunks } from "../lib/guide-rescore.js";
+import {
+  extractOwnedItemsFromHistory,
+  hasContinuationOpening,
+  isPositionProgressFollowUp,
+  isProgressFollowUp,
+  limitSourcesForPositionFollowUp,
+  markTailNeighborInPool,
+  pickBestTailEndpointChunk,
+  tailMatchesLandmarks,
+} from "../lib/guide-progress.js";
 import { sourcesForSolveLog } from "../lib/solve-log-sources.js";
 import {
   guideIngestHint,
@@ -547,6 +557,198 @@ assert.ok(
   ),
   "post-acquisition follow-up should penalize forward-jump chunks",
 );
+const laBossAfterStairs =
+  "In this room, follow the path to the southern end, then jump across the middle ledges with Roc's Feather. Unlock the boss door and enter the final room. You will meet the Genie inside;";
+const laTailAfterStairs =
+  "pick up a pot and carry it onto the second elevator to weigh it down. Then, go west and up the stairs to reach the next room.";
+const laWrongDungeonAcquire =
+  "go into the north room and knock the Hardhat Beetle into the pit. Activate the Blade Trap and run past. Open the chest to get Roc's Feather.";
+const laTurn4Query = "udah turun elevator dan ke barat naik tangga, setelah itu?";
+const laTurn4Search =
+  "After descending the second elevator in the basement, going west, and climbing the stairs, what is the next step in the dungeon?";
+assert.ok(
+  tailMatchesLandmarks(laTailAfterStairs, ["elevator", "west", "stairs", "go west and up the stairs"]),
+  "tailMatchesLandmarks should detect player position at chunk boundary",
+);
+const laTurn4Ranked = rescoreGuideChunks({
+  query: laTurn4Query,
+  searchTopic: laTurn4Search,
+  history: [
+    { role: "user", content: "baru aja dapetin power bracelet" },
+    { role: "assistant", content: "Kamu mendapatkan Power Bracelet." },
+    { role: "user", content: "setelah dapet kunci" },
+    { role: "assistant", content: "Kamu mendapatkan Nightmare's Key." },
+  ],
+  chunks: [
+    { chunk_text: laWrongDungeonAcquire, similarity: 0.71, chunk_index: 2 },
+    { chunk_text: laTailAfterStairs, similarity: 0.65, chunk_index: 10 },
+    { chunk_text: laBossAfterStairs, similarity: 0.62, chunk_index: 11, neighbor_of_tail: true },
+  ],
+});
+assert.ok(
+  laTurn4Ranked[0].chunk_text.includes("Genie"),
+  "neighbor continuation chunk should rank first after stairs follow-up",
+);
+assert.ok(
+  laTurn4Ranked[0].rescore_reasons?.includes("neighbor_continuation_boost"),
+  "stairs follow-up should record neighbor_continuation_boost",
+);
+assert.ok(
+  laTurn4Ranked.find((row) => row.chunk_text.includes("reach the next room"))?.rescore_reasons?.includes(
+    "tail_endpoint_penalty",
+  ),
+  "tail endpoint chunk should be penalized on progress follow-up",
+);
+const laWrongNeighbor =
+  "Talk to her and she will start to sing on the Ocarina. Go east and up the stairs to progress.";
+assert.equal(hasContinuationOpening(laWrongNeighbor), false, "village arc should fail continuation opening");
+const laTailParent = pickBestTailEndpointChunk(
+  [
+    { chunk_text: laWrongNeighbor, similarity: 0.71, chunk_index: 17 },
+    { chunk_text: laTailAfterStairs, similarity: 0.65, chunk_index: 10 },
+  ],
+  ["elevator", "west", "stairs", "go west and up the stairs"],
+);
+assert.ok(
+  laTailParent?.chunk_text.includes("reach the next room"),
+  "pickBestTailEndpointChunk should prefer dungeon tail endpoint over overworld stairs",
+);
+const laTurn4NoContinuationBoost = rescoreGuideChunks({
+  query: laTurn4Query,
+  searchTopic: laTurn4Search,
+  history: [],
+  chunks: [
+    {
+      chunk_text: laWrongNeighbor,
+      similarity: 0.71,
+      chunk_index: 17,
+    },
+    {
+      chunk_text: "Then, go north and open the boss door.",
+      similarity: 0.68,
+      chunk_index: 11,
+      neighbor_of_tail: true,
+    },
+  ],
+});
+assert.ok(
+  !laTurn4NoContinuationBoost[0].rescore_reasons?.includes("continuation_boost"),
+  "position follow-up should not apply continuation_boost",
+);
+assert.ok(
+  isPositionProgressFollowUp(laTurn4Query, laTurn4Search),
+  "elevator/stairs follow-up should count as position progress",
+);
+assert.ok(
+  !isPositionProgressFollowUp(
+    "trus setelah itu kemana?",
+    "After obtaining the Nightmare's Key in Bottle Grotto, what are the next steps?",
+  ),
+  "vague item follow-up should not count as position progress",
+);
+const laTurn4TraceSearch =
+  "After descending the second elevator in the basement of Bottle Grotto and then going west up a staircase, what are the next steps? The player has already obtained the Nightmare's Key and navigated through the basement areas. Please provide the subsequent actions to progress through the dungeon.";
+const laTurn4TraceEarly =
+  "They'll light up and open the door, so head into the east room. In this room, defeat the two Stalfos and take the Key that appears after you beat them. Use it to open the southern door, then enter that room. Defeat the Mask-Mimic (hold your Sword button charged, then move around so you end up behind the enemy, and perform the spinning attack to kill it). Open the chest that appears to get the Compass, then exit the room. Then, continue east. In the new area, hit the crystal switch and go into the southern room. Beat the Sword Stalfos if you want, then hit the crystal switch and open the chest ";
+const laTurn4TraceGenie =
+  "In this room, follow the path to the southern end, then jump across the middle ledges with Roc's Feather. Unlock the boss door and enter the final room. You will meet the Genie inside; read the Bosses section if you need help. Once it's over, take the Heart Container and go to the next room, and take the Conch Horn! ========= Overworld ========= After you are brought back outside of the Bottle Grotto, have BowWow eat a passageway through the flowers, then go south to the next screen. Use the Power Bracelet to lift up the two stones, then continue south to the next screen. Jump over the pits an";
+const laTurn4TraceTail =
+  "Hop across the pits and grab another winged heart in the southeast corner. Defeat the Keese and enter the north room. Here, be cautious of the Vacuum Mouth in the corner which will affect your movement. Open the chest to get the Stone Slab if you want it, then continue going north. In the next room, open the chest to get 20 rupees. Grab the winged Magic Powder and unlock the west door. There, light a lantern with some Magic Powder, and beat the Boo Buddies to make another chest appear. Open it to get the Power Bracelet, which is another really useful item! Now, leave the room and lift up the p";
+const laTurn4TraceRanked = rescoreGuideChunks({
+  query: laTurn4Query,
+  searchTopic: laTurn4TraceSearch,
+  chunks: [
+    { chunk_text: laTurn4TraceEarly, similarity: 0.713144289906075, chunk_index: 9 },
+    {
+      chunk_text: laTurn4TraceGenie,
+      similarity: 0.67618334798832,
+      chunk_index: 11,
+      neighbor_of_tail: true,
+    },
+    { chunk_text: laTurn4TraceTail, similarity: 0.764922559357691, chunk_index: 10 },
+  ],
+});
+assert.ok(
+  laTurn4TraceRanked[0].chunk_text.includes("Genie"),
+  "trace 3fe93542 fixture: neighbor Genie chunk should pin to rank-1 on position follow-up",
+);
+assert.ok(
+  laTurn4TraceRanked[0].rescore_reasons?.includes("neighbor_rank_pin"),
+  "position follow-up should record neighbor_rank_pin when neighbor was not top score",
+);
+assert.ok(
+  !laTurn4TraceRanked.some((row) => row.rescore_reasons?.includes("acquisition_anchor")),
+  "position follow-up should suppress acquisition_anchor on all chunks",
+);
+const laTurn4Sources = [
+  { title: "Genie", url: "https://guide.test/g", content: "meet the Genie", preferred: true, score: 0.75 },
+  { title: "Hinox", url: "https://guide.test/g", content: "find the Hinox", preferred: true, score: 0.76 },
+  { title: "Web", url: "https://web.test", content: "web snippet", score: 0.5 },
+];
+const laTurn4Limited = limitSourcesForPositionFollowUp(
+  laTurn4Sources,
+  laTurn4Query,
+  laTurn4TraceSearch,
+);
+assert.equal(laTurn4Limited.length, 2, "position follow-up should keep one preferred plus web");
+assert.ok(laTurn4Limited[0].content.includes("Genie"), "first preferred excerpt should stay rank-1");
+assert.equal(
+  limitSourcesForPositionFollowUp(laTurn4Sources, "trus setelah itu kemana?", "after key").length,
+  3,
+  "vague progress follow-up should not trim preferred sources",
+);
+const laMarkNeighbor = markTailNeighborInPool(
+  [
+    { guide_url: "g", chunk_text: laTailAfterStairs, similarity: 0.74, chunk_index: 10 },
+    { guide_url: "g", chunk_text: laBossAfterStairs, similarity: 0.62, chunk_index: 11 },
+    { guide_url: "g", chunk_text: laWrongNeighbor, similarity: 0.71, chunk_index: 17 },
+  ],
+  ["elevator", "west", "stairs", "go west and up the stairs"],
+);
+assert.ok(
+  laMarkNeighbor.marked && laMarkNeighbor.rows.find((row) => row.chunk_index === 11)?.neighbor_of_tail,
+  "markTailNeighborInPool should flag an already-recalled neighbor chunk",
+);
+const ownedItems = extractOwnedItemsFromHistory([
+  { role: "assistant", content: "Kamu mendapatkan Power Bracelet dan Nightmare's Key." },
+]);
+assert.ok(
+  ownedItems.some((item) => item.includes("power bracelet")),
+  "extractOwnedItemsFromHistory should parse assistant acquisition lines",
+);
+const laOwnedPenaltyRanked = rescoreGuideChunks({
+  query: "setelah itu kemana?",
+  searchTopic: "After obtaining the Power Bracelet, what are the next steps?",
+  history: [{ role: "assistant", content: "Kamu mendapatkan Power Bracelet." }],
+  chunks: [
+    {
+      chunk_text: "Open the chest to get the Power Bracelet, then go east.",
+      similarity: 0.72,
+      chunk_index: 1,
+    },
+    {
+      chunk_text: "Now, leave the room and lift up the pots behind the chest, then continue east.",
+      similarity: 0.68,
+      chunk_index: 2,
+    },
+  ],
+});
+assert.ok(
+  laOwnedPenaltyRanked[0].chunk_text.includes("lift up the pots"),
+  "history-owned penalty should demote re-acquire chunks",
+);
+assert.ok(
+  isProgressFollowUp("trus setelah itu kemana?"),
+  "isProgressFollowUp should detect vague Indonesian follow-ups",
+);
+const progressPrompt = buildPrompt({
+  game: "Test Game",
+  question: "trus setelah itu kemana?",
+  history: [{ role: "user", content: "I got the key" }],
+  sources: [{ title: "Guide", content: "Go north.", preferred: true }],
+});
+assert.match(progressPrompt, /PROGRESS FOLLOW-UP \(strict\)/);
+assert.match(progressPrompt, /primarily from the FIRST \[PREFERRED GUIDE\]/);
 const cited = sourcesForSolveLog([
   {
     title: "Guide (section 1)",
