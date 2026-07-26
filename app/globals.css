@@ -2931,6 +2931,7 @@ details.sources small {
 /* Reference image on an assistant answer (Serper visual lookup) */
 .answer-illustration {
   margin-top: 10px;
+  margin-inline: auto;
   max-width: 220px;
 }
 
@@ -2981,6 +2982,7 @@ details.sources small {
 .answer-illustration-caption {
   margin-top: 4px;
   font-size: 0.72rem;
+  text-align: center;
 }
 
 .answer-illustration-caption a {
