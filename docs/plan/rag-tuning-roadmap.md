@@ -287,6 +287,11 @@ on more guides shows genuine recall misses (targeted paragraph absent from top-K
 - [ ] Add BM25 (or Postgres `tsvector`) on `chunk_text` scoped to `guide_url`.
 - [ ] Merge vector + keyword hits (RRF or simple union) before rerank.
 
+**See also:** [rag-outline-rescore.md](./rag-outline-rescore.md) — planned
+game-agnostic outline metadata + rules-based rescoring (Phases 1–3) to improve
+rank-1 without requiring Cohere. Partial overlap with Phase D via lightweight
+lexical overlap on the over-fetched top-20.
+
 ### Phase E — Parent–child chunks (DEFERRED — no symptom observed)
 
 No "right section, wrong steps" failures in calibration. Revisit if procedural

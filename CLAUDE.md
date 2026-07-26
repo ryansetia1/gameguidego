@@ -739,6 +739,10 @@ large chat or persistence work:
 - [`docs/plan/rag-tuning-roadmap.md`](docs/plan/rag-tuning-roadmap.md): RAG quality
   research (chunk size, `RETRIEVE_K`, `GUIDE_HIT` calibration, reranker vs learned
   router). Phased backlog for the next preferred-guide upgrade; no runtime change yet.
+- [`docs/plan/rag-outline-rescore.md`](docs/plan/rag-outline-rescore.md): **Planned**
+  game-agnostic guide outline metadata (`section_path`), rules-based rescoring without
+  Cohere (progress/tier/overlap signals), and summarize contradiction guardrails.
+  Motivated by Bottle Grotto trace `765789c7` / `86e594bb`.
 - [`docs/plan/guide-web-override.md`](docs/plan/guide-web-override.md): **Shipped**
   composer toggles when a preferred guide is attached — **Search web instead**
   (`skipPreferredGuide` / `web_skip_guide`) and **Also search web**
