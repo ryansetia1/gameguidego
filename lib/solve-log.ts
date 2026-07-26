@@ -1,5 +1,7 @@
 import { getServerClient } from "@/lib/supabase-server";
 
+export { sourcesForSolveLog } from "@/lib/solve-log-sources.js";
+
 // Log when Supabase vars are set. Set LLM_DB_LOG=0 to disable (e.g. local tests).
 const ENABLED = process.env.LLM_DB_LOG !== "0";
 
@@ -10,26 +12,6 @@ export type SolveLogSource = {
   preview?: string;
   preferred?: boolean;
 };
-
-/** Crawled snippet + metadata for admin `solve_logs.sources` (client SSE stays title+url only). */
-export function sourcesForSolveLog(
-  sources: Array<{ title: string; url: string; content?: string; score?: number; preferred?: boolean }>,
-): SolveLogSource[] {
-  const seen = new Set<string>();
-  return sources.flatMap((source) => {
-    if (seen.has(source.url)) return [];
-    seen.add(source.url);
-    return [
-      {
-        title: source.title.replace(/\s*\(section \d+\)\s*$/i, ""),
-        url: source.url,
-        score: source.score,
-        preview: (source.content ?? "").slice(0, 800),
-        ...(source.preferred ? { preferred: true } : {}),
-      },
-    ];
-  });
-}
 
 export type SolveJourneyEntry = {
   userId?: string | null;

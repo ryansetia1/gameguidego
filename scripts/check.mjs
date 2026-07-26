@@ -83,6 +83,7 @@ import { dateRangeForPreset } from "../lib/admin-date-range.ts";
 import { chunkGuide, chunkGuideWithMeta, formatEmbedPrefix } from "../lib/chunk-guide.js";
 import { buildOutline, detectHeading, sectionAtLine } from "../lib/guide-outline.js";
 import { rescoreGuideChunks } from "../lib/guide-rescore.js";
+import { sourcesForSolveLog } from "../lib/solve-log-sources.js";
 import {
   guideIngestHint,
   guideIngestHintFromResponse,
@@ -486,6 +487,44 @@ assert.ok(
   laRanked[0].chunk_text.includes("lift up the pots"),
   "rescoreGuideChunks should promote acquisition chunk over forward-jump chunk",
 );
+const laRooster =
+  "Now that you have the Rooster, you can use the Power Bracelet to pick it up and fly around across very wide gaps.";
+const laRoosterRanked = rescoreGuideChunks({
+  query: laQuery,
+  searchTopic: laSearch,
+  chunks: [
+    { chunk_text: laRooster, similarity: 0.635, chunk_index: 1 },
+    { chunk_text: laCorrect, similarity: 0.648, chunk_index: 11 },
+    { chunk_text: laForward, similarity: 0.716, chunk_index: 4 },
+  ],
+});
+assert.ok(
+  laRoosterRanked[0].chunk_text.includes("lift up the pots"),
+  "rescoreGuideChunks should demote prerequisite-mismatch chunks (now that you have X)",
+);
+assert.ok(
+  laRoosterRanked.find((row) => row.chunk_text.includes("Rooster"))?.rescore_reasons?.includes(
+    "prerequisite_mismatch",
+  ),
+  "wrong-era chunk should record prerequisite_mismatch",
+);
+const cited = sourcesForSolveLog([
+  {
+    title: "Guide (section 1)",
+    url: "https://example.com/guide",
+    content: "Now that you have the Rooster, use the Power Bracelet to fly.",
+    score: 0.7,
+    preferred: true,
+  },
+  {
+    title: "Guide (section 2)",
+    url: "https://example.com/guide",
+    content: "Open it to get the Power Bracelet! Now, leave the room and lift up the pots.",
+    score: 0.81,
+    preferred: true,
+  },
+]);
+assert.match(cited[0]?.preview ?? "", /lift up the pots/i, "sourcesForSolveLog should cite the highest-scored chunk per URL");
 assert.ok(detectHeading("## Act 2", undefined), "detectHeading should accept markdown");
 const singleLineMd =
   "# Suikoden Guide and Walkthrough by Cyril ### Version 1.1 ### Part 1 - Beginning";

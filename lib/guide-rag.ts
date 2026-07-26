@@ -273,7 +273,7 @@ export async function retrieveFromPreferredGuides(input: {
       title: hit ? `${label} (section ${index + 1})` : label,
       url: row.guide_url,
       content: row.chunk_text,
-      score: row.similarity,
+      score: row.rescore_score ?? row.similarity,
       preferred: hit,
     };
   });
