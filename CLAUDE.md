@@ -748,6 +748,10 @@ large chat or persistence work:
   **PROGRESS FOLLOW-UP** guardrails (first excerpt priority). Apply
   `db/guide-chunk-outline.sql` on existing installs; guides re-ingest lazily when
   `section_confidence` is null.
+- [`docs/plan/rag-bottle-grotto-calibration.md`](docs/plan/rag-bottle-grotto-calibration.md):
+  **Recorded** LA Bottle Grotto turns 1–4 live calibration (July 2026): traces,
+  `acquisition_anchor` / neighbor pin / rank-1 summarize trim fixes, automated
+  regression (`scripts/test-la-turns-1-4.mjs`), with/without Cohere results.
 - [`docs/plan/guide-web-override.md`](docs/plan/guide-web-override.md): **Shipped**
   composer toggles when a preferred guide is attached — **Search web instead**
   (`skipPreferredGuide` / `web_skip_guide`) and **Also search web**

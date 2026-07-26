@@ -10,6 +10,7 @@ they describe where the codebase is going, not necessarily what is shipped yet.
 | [page-decomposition.md](./page-decomposition.md) | **Done** | Split `app/page.tsx` into focused modules without behaviour change |
 | [rag-tuning-roadmap.md](./rag-tuning-roadmap.md) | **Research** | RAG chunk/K/threshold tuning and reranker upgrade backlog (July 2026) |
 | [rag-outline-rescore.md](./rag-outline-rescore.md) | **Shipped** | Game-agnostic guide outline metadata + rules-based rescoring + summarize guardrails (no Cohere dependency) |
+| [rag-bottle-grotto-calibration.md](./rag-bottle-grotto-calibration.md) | **Recorded** | LA Bottle Grotto turns 1–4 live calibration — traces, fixes, regression results, conclusions (July 2026) |
 | [image-character-recognition.md](./image-character-recognition.md) | **Experimental** | Prompt-only vision character naming — try in prod, revert if quality drops |
 | [user-memory.md](./user-memory.md) | **Experimental** | Opt-in player style memory — daily summarize, 5/10 tiers, profile UI |
 | [player-memory-game-lifecycle.md](./player-memory-game-lifecycle.md) | **Planned** | Delete-game memory choice, per-game forget, not-in-library badge, catalog ID matching (Phases 1–4) |

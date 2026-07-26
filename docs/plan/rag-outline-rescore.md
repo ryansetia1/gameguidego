@@ -276,6 +276,10 @@ are kept).
 `isProgressFollowUp(question)` — answer primarily from the **first** preferred excerpt;
 do not re-acquire items already obtained in the thread.
 
+**Live calibration (LA Bottle Grotto turns 1–4):** see
+[rag-bottle-grotto-calibration.md](./rag-bottle-grotto-calibration.md) for traces,
+regression script, and conclusions from July 2026.
+
 ### 2.3 Trace / debug
 
 Extend `rag_similarity_score` metadata:
