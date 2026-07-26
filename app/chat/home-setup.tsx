@@ -150,11 +150,11 @@ export function HomeSetup({
               Companion for <RotatingWord />
             </p>
             <RotatingHeadline />
-            <p className="intro">
-              Say the game and ask away.
-              {!hasRecent &&
-                " Add a walkthrough you trust and answers come straight from it."}
-            </p>
+            {!hasRecent && (
+              <p className="intro">
+                Say the game and ask away. Add a walkthrough you trust and answers come straight from it.
+              </p>
+            )}
           </section>
         </div>
       )}
