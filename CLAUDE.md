@@ -474,6 +474,20 @@ do not sync to the cloud or use Storage uploads.
   by `db/cover-metadata.sql`. `public.search_cache` is a shared public cache table
   (see Known limits).
 
+## Top-tier guide providers
+
+Three walkthrough hosts are **first-class** preferred-guide sources. Each has a
+**dedicated ingest system**; all share `guide_chunks` + RAG downstream.
+
+| Provider | Module | Status | Doc |
+|----------|--------|--------|-----|
+| GameFAQs | `lib/gamefaqs-bundle.js` | Shipped | [`docs/preferred-guide.md`](docs/preferred-guide.md) |
+| Neoseeker | `lib/neoseeker-bundle.js` (planned) | Research | [`docs/plan/neoseeker-bundle.md`](docs/plan/neoseeker-bundle.md) |
+| IGN wiki | `lib/ign-wiki.js` (planned) | Research | [`docs/plan/ign-wiki-bundle.md`](docs/plan/ign-wiki-bundle.md) |
+
+Overview + ingest router shape: [`docs/plan/guide-providers.md`](docs/plan/guide-providers.md).
+Read before implementing Neoseeker or IGN.
+
 ## GameFAQs guides (`?print=1` ingest)
 
 Full design doc: [`docs/preferred-guide.md`](docs/preferred-guide.md). GameFAQs
@@ -756,12 +770,19 @@ large chat or persistence work:
   composer toggles when a preferred guide is attached — **Search web instead**
   (`skipPreferredGuide` / `web_skip_guide`) and **Also search web**
   (`alsoSearchWeb` / `rag_supplemented`); default OFF; `lib/guide-retrieval-mode.js`.
+- [`docs/plan/guide-providers.md`](docs/plan/guide-providers.md): **Architecture**
+  top-tier preferred-guide providers (GameFAQs, Neoseeker, IGN): dedicated ingest
+  per host, shared RAG pipeline, `guide-ingest` router shape — read before provider work.
 - [`docs/plan/neoseeker-bundle.md`](docs/plan/neoseeker-bundle.md): **Research**
   Neoseeker as a top-tier preferred-guide source (multi-page bundle like GameFAQs
   `?print=1`): **three URL patterns** — flat wiki, nested `/walkthrough/`, and FAQ
   single-page `/faqs/{id}-*.html`; Tavily discovery cascade for wikis; calibration
   on Hades / Uncharted 4 / TLOU / Pokémon Platinum.
   Test scripts: `scripts/test-neoseeker*.mjs`. Read before implementing.
+- [`docs/plan/ign-wiki-bundle.md`](docs/plan/ign-wiki-bundle.md): **Research**
+  IGN `/wikis/` preferred guides: direct fetch + `__NEXT_DATA__` `htmlEntities` (Tavily
+  is too thin); `nextPage`/`prevPage` chain for multi-page bundle; calibration on
+  Pokémon D/P/Pt + Elden Ring. Test: `scripts/test-ign-guide.mjs`.
 - [`docs/plan/image-character-recognition.md`](docs/plan/image-character-recognition.md):
   **Experimental (shipped, prompt-only):** vision character naming on image attachments.
   Worth trying in production; revert via `git revert` or manual `lib/prompt.js` rollback

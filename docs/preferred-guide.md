@@ -2,6 +2,18 @@
 
 Build plan. Implemented 2026-07-19. See architecture in `CLAUDE.md`.
 
+## Top-tier guide providers (GameFAQs, Neoseeker, IGN)
+
+GameFAQs is **shipped** (below). **Neoseeker** and **IGN** are planned as equal-tier
+sources with their own modules (`lib/neoseeker-bundle.js`, `lib/ign-wiki.js`), not
+generic Tavily-only URLs. Shared RAG (`guide_chunks`, `match_guide_chunks`,
+`chunkGuide`, embed) stays one pipeline; extract, discovery, and noise filters are
+per provider.
+
+Read [`docs/plan/guide-providers.md`](plan/guide-providers.md) before any provider
+work. Provider-specific research: [`neoseeker-bundle.md`](plan/neoseeker-bundle.md),
+[`ign-wiki-bundle.md`](plan/ign-wiki-bundle.md).
+
 ## The vision (narrow, on purpose)
 
 When the player fills in a **preferred guide** URL, the app behaves like an

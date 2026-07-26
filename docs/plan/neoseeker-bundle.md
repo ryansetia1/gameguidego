@@ -3,8 +3,12 @@
 **Status:** Research / not implemented (July 2026).
 
 Intent: make [Neoseeker](https://www.neoseeker.com) a **top-tier preferred-guide source**
-alongside GameFAQs — paste one URL, ingest the full guide, answer via the
+alongside GameFAQs and IGN — paste one URL, ingest the full guide, answer via the
 existing RAG pipeline (`guide_chunks` + `match_guide_chunks`).
+
+**Architecture:** Neoseeker is a **dedicated provider system** (`lib/neoseeker-bundle.js`).
+See [`guide-providers.md`](./guide-providers.md) for how the three top-tier hosts
+share RAG downstream but not ingest upstream.
 
 Neoseeker is **not one layout**. Research found **three URL families**: flat wiki
 walkthroughs, nested `/walkthrough/` chapter wikis, and legacy **FAQ single-page**
@@ -12,6 +16,7 @@ guides (GameFAQs-like). Parser and bundle logic must branch on pattern.
 
 Related prior art:
 
+- Provider hub (GameFAQs + Neoseeker + IGN): [`guide-providers.md`](./guide-providers.md)
 - GameFAQs bundle: `lib/gamefaqs-bundle.js` + `?print=1` single-page ingest
 - [GuideForge](https://github.com/Gerype150/GuideForge) (NeoseekerToPdf): Playwright
   discovery + BeautifulSoup `#wiki-content` cleaning → unified HTML/PDF
