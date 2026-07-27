@@ -11,6 +11,7 @@ import {
 } from "@/lib/admin-activity";
 import { formatApiSpendCompact } from "@/lib/admin-api-spend";
 import type { ApiCostSummary } from "@/lib/admin-api-cost";
+import { costFromSingleLlmCall } from "@/lib/admin-trace-event-cost";
 import type { ActivityPipeline, PipelineCohere, PipelineRerank, PipelineSourceRow } from "@/lib/admin-pipeline";
 import { TraceEventsTable } from "@/app/admin/trace-events-table";
 
@@ -79,8 +80,15 @@ function SourcePanel({ source, index }: { source: PipelineSourceRow; index: numb
   );
 }
 
-function LlmCallPanel({ call }: { call: LlmCallRow }) {
+function LlmCallPanel({
+  call,
+  formatCost,
+}: {
+  call: LlmCallRow;
+  formatCost: (usd: number | null) => string;
+}) {
   const label = LLM_KIND_LABELS[call.kind] ?? call.kind;
+  const costUsd = costFromSingleLlmCall(call);
   return (
     <details className="llm-panel">
       <summary className="llm-panel-summary">
@@ -90,6 +98,7 @@ function LlmCallPanel({ call }: { call: LlmCallRow }) {
           {formatLatency(call.duration_ms)}
           {call.input_tokens != null ? ` · ${call.input_tokens} in` : ""}
           {call.output_tokens != null ? ` · ${call.output_tokens} out` : ""}
+          {costUsd != null ? ` · ${formatCost(costUsd)}` : ""}
         </span>
       </summary>
       <div className="llm-panel-body">
@@ -434,7 +443,7 @@ export function ActivityCard({
           <CollapsibleSection title="LLM calls" count={row.llmCalls.length} defaultOpen>
             <div className="llm-panel-list">
               {row.llmCalls.map((call) => (
-                <LlmCallPanel key={call.id} call={call} />
+                <LlmCallPanel key={call.id} call={call} formatCost={formatCost} />
               ))}
             </div>
           </CollapsibleSection>

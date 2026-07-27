@@ -1,7 +1,6 @@
 import Replicate from "replicate";
 
 import { logLlmCall } from "@/lib/llm-log";
-import { logLlmCallToDb } from "@/lib/llm-db-log";
 import { JOURNAL_BODY_MAX } from "@/lib/player-journey.js";
 import { getTraceId, logTraceEvent } from "@/lib/trace";
 
@@ -92,9 +91,8 @@ export async function synthesizeJournalBody(
   });
 
   let output = "";
-  let predictTimeMs: number | null = null;
-  let inputTokens: number | null = null;
-  let outputTokens: number | null = null;
+  let metrics: { predict_time?: number } | undefined;
+  let logs: string | undefined;
 
   try {
     const raw = await replicate.run(
@@ -108,6 +106,10 @@ export async function synthesizeJournalBody(
           thinking_budget: 0,
         },
         wait: { mode: "poll", interval: 500 },
+      },
+      (prediction: { metrics?: { predict_time?: number }; logs?: string }) => {
+        metrics = prediction.metrics;
+        if (prediction.logs) logs = prediction.logs;
       },
     );
     if (typeof raw === "string") output = raw;
@@ -124,6 +126,12 @@ export async function synthesizeJournalBody(
   }
 
   const durationMs = Date.now() - started;
+  const predictTimeMs =
+    metrics?.predict_time != null ? Math.round(metrics.predict_time * 1000) : null;
+  const inputMatch = logs?.match(/Input token count:\s*(\d+)/i)?.[1];
+  const outputMatch = logs?.match(/Output token count:\s*(\d+)/i)?.[1];
+  const inputTokens = inputMatch ? Number(inputMatch) : null;
+  const outputTokens = outputMatch ? Number(outputMatch) : null;
   const body = parseBody(output);
   if (!body) {
     await logTraceEvent("journal_update_error", "Journal synthesize parse failed", durationMs, {
@@ -146,21 +154,7 @@ export async function synthesizeJournalBody(
     game: input.game,
     platform: input.platform,
     userId: input.userId,
-  });
-  void logLlmCallToDb({
-    kind: "journal_synthesize",
-    model,
-    system: JOURNAL_SYNTHESIZE_INSTRUCTION,
-    prompt,
-    response: output,
-    durationMs,
-    predictTimeMs,
-    inputTokens,
-    outputTokens,
-    game: input.game,
-    platform: input.platform,
-    userId: input.userId,
-    traceId: input.traceId ?? getTraceId(),
+    traceId: input.traceId ?? getTraceId() ?? null,
   });
 
   await logTraceEvent("journal_synthesize_end", "Journal body synthesized", durationMs, {
