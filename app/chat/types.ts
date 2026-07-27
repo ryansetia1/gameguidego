@@ -19,6 +19,7 @@ export type RetryContext = {
   sources?: Source[];
   pipelineType?: string;
   guideHint?: string;
+  ragGuideUrls?: string[] | null;
 } | null;
 
 /** Normalized thread sync scope. */
@@ -33,6 +34,8 @@ export type Message = {
   images?: string[];
   illustration?: Illustration;
   pipelineType?: string;
+  /** Subset of preferred guides used for this user turn; omitted when Auto. */
+  ragGuideUrls?: string[];
   variants?: Omit<Message, "role" | "variants" | "activeVariantIndex">[];
   activeVariantIndex?: number;
 };

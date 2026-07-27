@@ -13,6 +13,8 @@ export type ChatTurnDeps = {
   platform: string;
   preferredUrls: string[];
   guideRetrievalMode: "default" | "skip" | "supplement";
+  guideSourceSelection: string[] | null;
+  setGuideSourceSelection: (value: string[] | null) => void;
   cover: string;
   releaseYear: string;
   messages: Message[];

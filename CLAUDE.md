@@ -770,7 +770,7 @@ large chat or persistence work:
   composer toggles when a preferred guide is attached — **Search web instead**
   (`skipPreferredGuide` / `web_skip_guide`) and **Also search web**
   (`alsoSearchWeb` / `rag_supplemented`); default OFF; `lib/guide-retrieval-mode.js`.
-- [`docs/plan/guide-source-selector.md`](docs/plan/guide-source-selector.md): **Planned**
+- [`docs/plan/guide-source-selector.md`](docs/plan/guide-source-selector.md): **Shipped**
   per-turn multi-select RAG source strip on the composer (Auto = all guides vs subset);
   `ragGuideUrls` on `POST /api/solve` + user message for retry/edit.
 - [`docs/plan/guide-providers.md`](docs/plan/guide-providers.md): **Architecture**

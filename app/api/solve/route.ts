@@ -18,6 +18,10 @@ import {
   WEB_KNOWLEDGE_FALLBACK_HINT,
 } from "@/lib/guide-hints.js";
 import { coerceGuideRetrievalFlags } from "@/lib/guide-retrieval-mode.js";
+import {
+  coerceRagGuideUrls,
+  effectiveRagGuideUrls,
+} from "@/lib/guide-source-selection.js";
 import { coerceGuideUrlsFromBody } from "@/lib/guide-urls.js";
 import { limitSourcesForPositionFollowUp } from "@/lib/guide-progress.js";
 import { retrieveFromPreferredGuides } from "@/lib/guide-rag";
@@ -150,6 +154,8 @@ export async function POST(request: Request) {
   const game = cleanText(record.game, 120);
   const platform = cleanText(record.platform, 40);
   const preferredUrls = coerceGuideUrlsFromBody(record);
+  const ragGuideSubset = coerceRagGuideUrls(record, preferredUrls);
+  const ragPoolUrls = effectiveRagGuideUrls(preferredUrls, ragGuideSubset);
   const history = parseHistory(record.history);
   const images = parseImages(record.images);
   const spoilerPrefs = coerceSpoilerPrefs(record.spoilerPrefs);
@@ -247,6 +253,7 @@ export async function POST(request: Request) {
           images,
           skipPreferredGuide,
           alsoSearchWeb,
+          ragGuideUrls: ragGuideSubset,
         });
         const rewriteCacheKey = `rewrite::${createHash("sha256").update(rawInputs).digest("hex")}`;
 
@@ -348,7 +355,7 @@ export async function POST(request: Request) {
         } else if (preferredUrls.length) {
           sendEvent("status", { text: "Searching your guide..." });
           rag = await retrieveFromPreferredGuides({
-            guideUrls: preferredUrls,
+            guideUrls: ragPoolUrls,
             query: searchTopic,
             question,
             history,
@@ -433,7 +440,8 @@ export async function POST(request: Request) {
           visualSubject,
           sources,
           pipelineType,
-          guideHint
+          guideHint,
+          ragGuideUrls: ragGuideSubset,
         });
 
         await logTraceEvent("retrieval_complete", "Finished gathering sources", retrievalLatencyMs, {
@@ -441,6 +449,8 @@ export async function POST(request: Request) {
           pipelineType,
           skipPreferredGuide,
           alsoSearchWeb,
+          ragMode: ragGuideSubset ? "subset" : "auto",
+          ragGuideUrls: ragGuideSubset ?? preferredUrls,
           positionFollowUpRankOne,
           preferredBeforeTrim,
           webSources: sources

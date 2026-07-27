@@ -84,6 +84,7 @@ import {
   saveGuideRetrievalMode,
   toggleGuideRetrievalMode,
 } from "@/lib/guide-retrieval-mode.js";
+import { guideUrlsBlockingComposer } from "@/lib/guide-source-selection.js";
 import { getSpeechRecognition } from "@/lib/voice.js";
 import {
   clearSessionDraft,
@@ -141,6 +142,7 @@ export default function Home() {
   const [guideRetrievalMode, setGuideRetrievalMode] = useState<
     "default" | "skip" | "supplement"
   >("default");
+  const [guideSourceSelection, setGuideSourceSelection] = useState<string[] | null>(null);
   // Which optional section shows below the trigger row — only one at a time, so
   // toggling keeps the two triggers fixed in place instead of reflowing them.
   const [optPanel, setOptPanel] = useState<"guide" | "spoiler" | null>(null);
@@ -1016,6 +1018,10 @@ export default function Home() {
       setGuideRetrievalMode("default");
     }
   }, [preferredUrls.length, guideRetrievalMode]);
+
+  useEffect(() => {
+    if (preferredUrls.length <= 1) setGuideSourceSelection(null);
+  }, [preferredUrls.length]);
 
   const toggleSkipGuide = useCallback(() => {
     setGuideRetrievalMode((prev) => toggleGuideRetrievalMode(prev, "skip"));
@@ -2000,6 +2006,8 @@ export default function Home() {
     platform,
     preferredUrls,
     guideRetrievalMode,
+    guideSourceSelection,
+    setGuideSourceSelection,
     cover,
     releaseYear,
     messages,
@@ -2110,10 +2118,12 @@ export default function Home() {
   // guide is intentional, so the first answer should use it, not fall back to web.
   // Only "checking"/"pending" lock; terminal states (failed/blocked/unavailable)
   // don't, so a bad guide never traps the user (they can send with web fallback).
-  const guideIndexing = preferredUrls.some((url) => {
-    const state = guideIndexState[url];
-    return state === "checking" || state === "pending";
-  });
+  const guideIndexing = guideUrlsBlockingComposer(guideSourceSelection, preferredUrls).some(
+    (url) => {
+      const state = guideIndexState[url];
+      return state === "checking" || state === "pending";
+    },
+  );
   const composerLocked = loading || !hasGame || guideIndexing || showTopicList;
   const gameRooms = groupChatsByRoom(chats);
   // Hide empty "save for later" topics from the list (the row still persists the
@@ -2558,6 +2568,11 @@ export default function Home() {
           coverEnabled={coverEnabled}
           hasGame={hasGame}
           preferredUrlCount={preferredUrls.length}
+          preferredUrls={preferredUrls}
+          guideMeta={guideMeta}
+          guideIndexState={guideIndexState}
+          guideSourceSelection={guideSourceSelection}
+          onGuideSourceSelectionChange={setGuideSourceSelection}
           input={input}
           editingIndex={editingIndex}
           loading={loading}

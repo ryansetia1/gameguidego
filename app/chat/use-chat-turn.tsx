@@ -6,6 +6,7 @@ import type { ChatTurnDeps } from "./chat-turn-deps";
 import { executeChatTurn, type RunTurnFn } from "./execute-chat-turn";
 import { createTurnPersist } from "./turn-persist";
 import type { Message, RetryContext } from "./types";
+import { guideSourceSendBlockReason } from "@/lib/guide-source-selection.js";
 
 export type { ChatTurnDeps } from "./chat-turn-deps";
 
@@ -25,6 +26,7 @@ export function useChatTurn(deps: ChatTurnDeps) {
     images: string[] = [],
     retryContext: RetryContext = null,
     oldAssistantMessage?: Message,
+    ragGuideUrls?: string[] | null,
   ) => {
     await executeChatTurn({
       deps: depsRef.current,
@@ -38,6 +40,7 @@ export function useChatTurn(deps: ChatTurnDeps) {
       images,
       retryContext,
       oldAssistantMessage,
+      ragGuideUrls,
     });
   };
 
@@ -69,6 +72,19 @@ export function useChatTurn(deps: ChatTurnDeps) {
     );
   }
 
+  async function confirmGuideSourceSelection() {
+    const d = depsRef.current;
+    const blockReason = guideSourceSendBlockReason(
+      d.guideSourceSelection,
+      d.preferredUrls,
+      d.guideIndexState,
+      d.guideRetrievalMode === "skip",
+    );
+    if (!blockReason) return true;
+    d.setToast(blockReason);
+    return false;
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     const d = depsRef.current;
     event.preventDefault();
@@ -80,6 +96,7 @@ export function useChatTurn(deps: ChatTurnDeps) {
     if (!d.game.trim() || question.length < 2 || d.loading) return;
 
     if (!(await confirmGuidePending())) return;
+    if (!(await confirmGuideSourceSelection())) return;
 
     d.setInput("");
 
@@ -108,6 +125,7 @@ export function useChatTurn(deps: ChatTurnDeps) {
     d.setEditingIndex(index);
     const msg = d.messages[index];
     d.setInput(msg.content);
+    d.setGuideSourceSelection(msg.ragGuideUrls ?? null);
     d.setPendingImages(
       msg.images?.length
         ? msg.images.map((url) => ({ preview: url, isExisting: true }))
@@ -123,6 +141,7 @@ export function useChatTurn(deps: ChatTurnDeps) {
     const d = depsRef.current;
     d.setEditingIndex(null);
     d.setInput("");
+    d.setGuideSourceSelection(null);
     d.clearPendingImages();
   }
 
@@ -148,6 +167,7 @@ export function useChatTurn(deps: ChatTurnDeps) {
     if (text.length < 2 || d.loading) return;
 
     if (!(await confirmGuidePending())) return;
+    if (!(await confirmGuideSourceSelection())) return;
 
     const dropped = d.messages.slice(index + 2);
     if (!(await confirmDropFollowups(dropped, "edit"))) return;
@@ -184,7 +204,8 @@ export function useChatTurn(deps: ChatTurnDeps) {
     if (d.loading || index < 1 || d.messages[index - 1].role !== "user") return;
     if (!(await confirmGuidePending())) return;
     const question = d.messages[index - 1].content;
-    const existingImages = d.messages[index - 1].images || [];
+    const userMsg = d.messages[index - 1];
+    const existingImages = userMsg.images || [];
     const dropped = d.messages.slice(index + 1);
     if (!(await confirmDropFollowups(dropped, "retry"))) return;
     await d.deleteMessageImages(dropped);
@@ -195,6 +216,7 @@ export function useChatTurn(deps: ChatTurnDeps) {
       existingImages,
       null,
       d.messages[index],
+      userMsg.ragGuideUrls ?? null,
     );
   }
 

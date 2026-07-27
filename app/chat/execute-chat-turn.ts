@@ -12,6 +12,7 @@ import {
 } from "@/lib/chat-messages.js";
 import { solveTurnToast } from "@/lib/guide-hints.js";
 import { guideRetrievalModeToApi } from "@/lib/guide-retrieval-mode.js";
+import { effectiveRagGuideUrls } from "@/lib/guide-source-selection.js";
 import { coerceHighlights, coerceSpoilers } from "@/lib/highlights.js";
 import { coerceIllustration } from "@/lib/chat-messages.js";
 import { proxifyIllustration } from "@/lib/visual-image-proxy.js";
@@ -36,6 +37,7 @@ export type RunTurnFn = (
   images?: string[],
   retryContext?: RetryContext,
   oldAssistantMessage?: Message,
+  ragGuideUrls?: string[] | null,
 ) => Promise<void>;
 
 type PersistFn = (
@@ -64,6 +66,7 @@ type ExecuteChatTurnParams = {
   images?: string[];
   retryContext?: RetryContext;
   oldAssistantMessage?: Message;
+  ragGuideUrls?: string[] | null;
 };
 
 export async function executeChatTurn({
@@ -78,6 +81,7 @@ export async function executeChatTurn({
   images = [],
   retryContext = null,
   oldAssistantMessage,
+  ragGuideUrls,
 }: ExecuteChatTurnParams) {
   const traceId = crypto.randomUUID();
   d.setError("");
@@ -92,11 +96,15 @@ export async function executeChatTurn({
   d.setEditingIndex(null);
   let succeeded = false;
   const guideUrls = normalizedGuideUrls(d.preferredUrls);
+  const guideSelection =
+    ragGuideUrls !== undefined ? ragGuideUrls : d.guideSourceSelection;
+  const ingestTargets = effectiveRagGuideUrls(guideUrls, guideSelection);
   const history = priorMessages.slice(-10).map(({ role, content }) => ({ role, content }));
   const userMessage: Message = {
     role: "user",
     content: question,
     ...(images.length ? { images } : {}),
+    ...(guideSelection?.length ? { ragGuideUrls: guideSelection } : {}),
   };
   const optimistic: Message[] = oldAssistantMessage
     ? [
@@ -129,8 +137,8 @@ export async function executeChatTurn({
   const controller = new AbortController();
   if (activeId) d.abortRefs.current[activeId] = controller;
 
-  const ingestPromise = urlsNeedingIngestForTurn(d, guideUrls).length
-    ? runGuideIngestForTurn({ deps: d, guideUrls, traceId, signal: controller.signal })
+  const ingestPromise = urlsNeedingIngestForTurn(d, ingestTargets).length
+    ? runGuideIngestForTurn({ deps: d, guideUrls: ingestTargets, traceId, signal: controller.signal })
     : null;
   let streamStarted = false;
   let currentContext: RetryContext = retryContext;
@@ -211,6 +219,7 @@ export async function executeChatTurn({
         question,
         history,
         preferredUrls: guideUrls,
+        ...(guideSelection?.length ? { ragGuideUrls: guideSelection } : {}),
         images,
         spoilerPrefs: d.spoilerPrefs,
         visualAuto: d.visualAuto,
@@ -438,6 +447,7 @@ export async function executeChatTurn({
               images,
               currentContext,
               oldAssistantMessage,
+              guideSelection,
             ),
         );
       }
@@ -453,6 +463,7 @@ export async function executeChatTurn({
       if (succeeded) d.setGenerationStatus(null);
     }
     if (succeeded) {
+      d.setGuideSourceSelection(null);
       const touchPrimary = window.matchMedia?.("(pointer: coarse) and (hover: none)")?.matches;
       if (!touchPrimary) {
         requestAnimationFrame(() => d.composerRef.current?.focus());

@@ -9,6 +9,9 @@ import {
   IconX,
 } from "../icons";
 import { VoiceVisualizer } from "../voice-visualizer";
+import { GuideSourceStrip } from "./guide-source-strip";
+import type { GuideIndexState } from "@/lib/guide-index-state";
+import type { GuideMeta } from "../guide-link-field";
 
 export type PendingImage = {
   blob?: Blob;
@@ -27,6 +30,11 @@ export type ComposerShellProps = {
   coverEnabled: boolean;
   hasGame: boolean;
   preferredUrlCount: number;
+  preferredUrls: string[];
+  guideMeta: Record<string, GuideMeta>;
+  guideIndexState: GuideIndexState;
+  guideSourceSelection: string[] | null;
+  onGuideSourceSelectionChange: (selection: string[] | null) => void;
   input: string;
   editingIndex: number | null;
   loading: boolean;
@@ -66,6 +74,11 @@ export function ComposerShell({
   coverEnabled,
   hasGame,
   preferredUrlCount,
+  preferredUrls,
+  guideMeta,
+  guideIndexState,
+  guideSourceSelection,
+  onGuideSourceSelectionChange,
   input,
   editingIndex,
   loading,
@@ -159,6 +172,15 @@ export function ComposerShell({
           ))}
         </div>
       )}
+      <GuideSourceStrip
+        preferredUrls={preferredUrls}
+        guideMeta={guideMeta}
+        guideIndexState={guideIndexState}
+        selection={guideSourceSelection}
+        onChange={onGuideSourceSelectionChange}
+        disabled={composerLocked}
+        skipPreferredGuide={guideRetrievalMode === "skip"}
+      />
       <div className={`composer-inner ${isExpanded ? "expanded" : ""}`}>
         <div className="composer-input-row">
           <div className="composer-field">

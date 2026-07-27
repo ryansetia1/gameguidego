@@ -153,6 +153,13 @@ import {
   normalizePreferredGuideUrl,
 } from "../lib/guide-urls.js";
 import {
+  coerceRagGuideUrls,
+  coerceStoredRagGuideUrls,
+  effectiveRagGuideUrls,
+  guideSourceSendBlockReason,
+  guideUrlsBlockingComposer,
+} from "../lib/guide-source-selection.js";
+import {
   steamIdFromClaimedId,
   steamIdFromMetadata,
   steamAppIdFromCoverUrl,
@@ -989,6 +996,28 @@ assert.deepEqual(
 assert.deepEqual(
   coerceGuideUrlsFromBody({ preferredUrl: "https://example.com/legacy" }),
   ["https://example.com/legacy"],
+);
+const guideA = "https://gamefaqs.gamespot.com/a";
+const guideB = "https://gamefaqs.gamespot.com/b";
+const guidePreferred = [guideA, guideB];
+assert.deepEqual(coerceRagGuideUrls({ ragGuideUrls: [guideA] }, guidePreferred), [guideA]);
+assert.equal(coerceRagGuideUrls({ ragGuideUrls: guidePreferred }, guidePreferred), null);
+assert.equal(coerceRagGuideUrls({ ragGuideUrls: ["https://evil.com/x"] }, guidePreferred), null);
+assert.deepEqual(effectiveRagGuideUrls(guidePreferred, [guideA]), [guideA]);
+assert.deepEqual(effectiveRagGuideUrls(guidePreferred, null), guidePreferred);
+assert.deepEqual(coerceStoredRagGuideUrls([guideA]), [guideA]);
+assert.equal(
+  guideSourceSendBlockReason([guideA], guidePreferred, { [guideA]: "checking" }, false),
+  "Wait for your guide to finish indexing, or choose Auto.",
+);
+assert.equal(guideSourceSendBlockReason(null, guidePreferred, {}, false), null);
+assert.deepEqual(guideUrlsBlockingComposer(null, guidePreferred), guidePreferred);
+assert.deepEqual(guideUrlsBlockingComposer([guideA], guidePreferred), [guideA]);
+assert.deepEqual(
+  coerceMessages([
+    { role: "user", content: "hi", ragGuideUrls: [guideA] },
+  ])[0].ragGuideUrls,
+  [guideA],
 );
 assert.deepEqual(
   guideUrlsFromChat({

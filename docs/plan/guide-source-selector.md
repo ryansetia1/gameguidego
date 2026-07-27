@@ -1,6 +1,6 @@
 # Guide source selector (per-turn RAG targeting)
 
-**Status:** Planned (July 2026)  
+**Status:** Shipped (July 2026)  
 **Audience:** Future agents implementing or maintaining this feature  
 **Last updated:** 2026-07-27  
 **Related:** `lib/guide-rag.ts`, `lib/guide-retrieval-mode.js`, `app/chat/composer-shell.tsx`, `app/api/solve/route.ts`
