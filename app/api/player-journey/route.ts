@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { journalChunksExist } from "@/lib/player-journey-rag";
 import {
   loadPlayerJourney,
+  pendingManualJournalUpdate,
   saveManualJournalEdit,
 } from "@/lib/player-journey-server";
 import { cleanJourneyText } from "@/lib/player-journey-client.js";
@@ -53,6 +54,13 @@ export async function GET(request: Request) {
     platform,
     catalogGameId,
   );
+  const pending = await pendingManualJournalUpdate(
+    supabase,
+    auth.user.id,
+    game,
+    platform,
+    row?.last_chat_message_at ?? null,
+  );
 
   return NextResponse.json({
     body: row?.body ?? "",
@@ -62,6 +70,7 @@ export async function GET(request: Request) {
     lastToastSummary: row?.last_toast_summary ?? "",
     indexed,
     bodyChars: row?.body_chars ?? 0,
+    canManualUpdate: pending.canManualUpdate,
   });
 }
 

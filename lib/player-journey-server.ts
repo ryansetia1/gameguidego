@@ -13,6 +13,7 @@ import {
   JOURNAL_IN_FLIGHT_STALE_MS,
   JOURNAL_MANUAL_PIN_MS,
   journalBodyChars,
+  journalUpdateSkipMessage,
   journalUpdateSkipReason,
   maxDeltaTimestamp,
   playerJourneyEnabledFromMetadata,
@@ -197,6 +198,32 @@ async function loadChatsForDelta(
   return data ?? [];
 }
 
+async function loadJournalDelta(
+  supabase: SupabaseClient,
+  userId: string,
+  game: string,
+  platform: string,
+  sinceIso: string | null,
+) {
+  const chats = await loadChatsForDelta(supabase, userId, sinceIso);
+  return extractGameDeltaFromChats(chats, sinceIso, game, platform);
+}
+
+export async function pendingManualJournalUpdate(
+  supabase: SupabaseClient,
+  userId: string,
+  game: string,
+  platform: string,
+  sinceIso: string | null,
+) {
+  try {
+    const delta = await loadJournalDelta(supabase, userId, game, platform, sinceIso);
+    return { canManualUpdate: delta.length > 0, deltaCount: delta.length };
+  } catch {
+    return { canManualUpdate: false, deltaCount: 0 };
+  }
+}
+
 export async function runJournalUpdate(input: {
   supabase: SupabaseClient;
   userId: string;
@@ -225,8 +252,13 @@ export async function runJournalUpdate(input: {
   let delta = [];
 
   try {
-    const chats = await loadChatsForDelta(input.supabase, input.userId, sinceIso);
-    delta = extractGameDeltaFromChats(chats, sinceIso, input.game, input.platform);
+    delta = await loadJournalDelta(
+      input.supabase,
+      input.userId,
+      input.game,
+      input.platform,
+      sinceIso,
+    );
   } catch (error) {
     await logTraceEvent("journal_update_error", "Could not load chats", Date.now() - startedAt, {
       step: "load_chats",
@@ -252,7 +284,19 @@ export async function runJournalUpdate(input: {
       platform: input.platform,
       userId: input.userId,
     });
-    return { ok: true, skipped: skip, bodyChars: journalBodyChars(existing?.body ?? ""), chunkCount: 0, toastSummary: "", trigger: input.trigger };
+    return {
+      ok: true,
+      skipped: skip,
+      bodyChars: journalBodyChars(existing?.body ?? ""),
+      chunkCount: 0,
+      toastSummary:
+        input.trigger === "manual"
+          ? journalUpdateSkipMessage(skip, {
+              hadPriorSync: Boolean(existing?.last_chat_message_at),
+            })
+          : "",
+      trigger: input.trigger,
+    };
   }
 
   await logTraceEvent("journal_update_start", "Journal update started", undefined, {

@@ -7,6 +7,8 @@ import { IconChevronDown, IconRefresh } from "@/app/icons";
 import {
   JOURNEY_EMPTY_HINT,
   JOURNEY_UPDATE_LABEL,
+  isLongJournalBody,
+  journalBodyPreview,
 } from "@/lib/player-journey.js";
 import { journeyAuthedFetch } from "@/lib/player-journey-client.js";
 
@@ -53,6 +55,7 @@ export function JourneyPanel({
   const [updatingAt, setUpdatingAt] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadState, setLoadState] = useState<"idle" | "loading" | "error">("idle");
+  const [canManualUpdate, setCanManualUpdate] = useState(false);
 
   const load = useCallback(async () => {
     if (!user || !journeyEnabled || !game.trim()) {
@@ -60,6 +63,7 @@ export function JourneyPanel({
       setDraft("");
       setLastUpdatedAt(null);
       setUpdatingAt(null);
+      setCanManualUpdate(false);
       setLoadState("idle");
       return;
     }
@@ -77,6 +81,7 @@ export function JourneyPanel({
       setDraft(nextBody);
       setLastUpdatedAt(typeof payload.lastUpdatedAt === "string" ? payload.lastUpdatedAt : null);
       setUpdatingAt(typeof payload.updatingAt === "string" ? payload.updatingAt : null);
+      setCanManualUpdate(payload.canManualUpdate === true);
       setLoadState("idle");
     } catch {
       setLoadState("error");
@@ -100,6 +105,10 @@ export function JourneyPanel({
 
   const isUpdating = Boolean(updatingAt) || busy;
   const updatedLabel = formatUpdated(lastUpdatedAt);
+  const trimmedBody = body.trim();
+  const hasBody = Boolean(trimmedBody);
+  const isLongBody = hasBody && isLongJournalBody(trimmedBody);
+  const summaryPreview = hasBody ? journalBodyPreview(trimmedBody) : "";
 
   async function handleUpdate() {
     if (!user || isUpdating) return;
@@ -153,7 +162,12 @@ export function JourneyPanel({
       }}
     >
       <summary className="game-card-guides-summary journey-panel-summary">
-        <span className="game-card-guides-summary-label">Your journal</span>
+        <span className="game-card-guides-summary-label">
+          Your journal
+          {!open && summaryPreview ? (
+            <span className="journey-panel-summary-preview">{summaryPreview}</span>
+          ) : null}
+        </span>
         {isUpdating ? (
           <span className="guide-status-chip is-pending" aria-live="polite">
             Updating…
@@ -180,10 +194,10 @@ export function JourneyPanel({
               disabled={isUpdating || loading}
               aria-label="Edit your journal"
             />
-            <div className="journey-panel-actions">
+            <div className="journey-panel-actions journey-panel-actions--edit">
               <button
                 type="button"
-                className="nav-button"
+                className="nav-button journey-panel-edit-btn"
                 disabled={isUpdating || loading}
                 onClick={() => {
                   setDraft(body);
@@ -194,7 +208,7 @@ export function JourneyPanel({
               </button>
               <button
                 type="button"
-                className="nav-button player-memory-update-btn"
+                className="nav-button journey-panel-update-btn"
                 disabled={isUpdating || loading}
                 onClick={() => void handleSaveEdit()}
               >
@@ -204,32 +218,48 @@ export function JourneyPanel({
           </>
         ) : (
           <>
-            <p className="journey-panel-text">
-              {body.trim() ? body : JOURNEY_EMPTY_HINT}
+            <p
+              className={`journey-panel-text${isLongBody ? " is-scrollable" : ""}`}
+            >
+              {hasBody ? trimmedBody : JOURNEY_EMPTY_HINT}
             </p>
-            <div className="journey-panel-actions">
+            <div className="journey-panel-footer">
               {updatedLabel ? (
-                <span className="journey-panel-meta">Updated {updatedLabel}</span>
-              ) : (
-                <span className="journey-panel-meta" />
-              )}
-              <button
-                type="button"
-                className="nav-button"
-                disabled={isUpdating || loading}
-                onClick={() => setEditing(true)}
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                className="nav-button player-memory-update-btn"
-                disabled={isUpdating || loading}
-                onClick={() => void handleUpdate()}
-              >
-                <IconRefresh size={14} className={isUpdating ? "spin" : ""} aria-hidden />
-                {JOURNEY_UPDATE_LABEL}
-              </button>
+                <p className="journey-panel-meta">Updated {updatedLabel}</p>
+              ) : null}
+              <div className="journey-panel-actions">
+                <button
+                  type="button"
+                  className="nav-button journey-panel-edit-btn"
+                  disabled={isUpdating || loading}
+                  onClick={() => setEditing(true)}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className="nav-button journey-panel-update-btn"
+                  disabled={isUpdating || loading || !canManualUpdate}
+                  title={
+                    canManualUpdate
+                      ? undefined
+                      : hasBody
+                        ? "No new chat messages to pull in yet"
+                        : "Share progress in chat first"
+                  }
+                  aria-label={
+                    canManualUpdate
+                      ? JOURNEY_UPDATE_LABEL
+                      : hasBody
+                        ? "Update journal (no new chat messages)"
+                        : "Update journal (share progress in chat first)"
+                  }
+                  onClick={() => void handleUpdate()}
+                >
+                  <IconRefresh size={14} className={isUpdating ? "spin" : ""} aria-hidden />
+                  {JOURNEY_UPDATE_LABEL}
+                </button>
+              </div>
             </div>
           </>
         )}

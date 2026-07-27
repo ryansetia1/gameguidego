@@ -70,6 +70,7 @@ export async function POST(request: Request) {
       ok: true,
       skipped: result.skipped,
       bodyChars: result.bodyChars,
+      summary: result.toastSummary || undefined,
       traceId,
     });
   }

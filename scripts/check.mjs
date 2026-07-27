@@ -248,7 +248,10 @@ import {
 import {
   coerceJournalReminder,
   coerceJournalReminderSummary,
+  isLongJournalBody,
+  journalBodyPreview,
   journalUpdateSkipReason,
+  journalUpdateSkipMessage,
 } from "../lib/player-journey.js";
 import {
   buildVisualSearchQuery,
@@ -2795,5 +2798,20 @@ assert.equal(
 );
 assert.equal(coerceJournalReminder("  team update  "), "team update");
 assert.equal(coerceJournalReminderSummary("  Saved progress  "), "Saved progress");
+assert.equal(isLongJournalBody("x".repeat(281)), true);
+assert.equal(isLongJournalBody("x".repeat(280)), false);
+assert.equal(
+  journalBodyPreview("At Eterna Forest with Monferno L28 and a long party list"),
+  "At Eterna Forest with Monferno L28 and a long party list",
+);
+assert.match(journalBodyPreview("a".repeat(100)), /…$/);
+assert.equal(
+  journalUpdateSkipMessage("empty_delta", { hadPriorSync: false }),
+  "Share progress in chat first, then tap Update journal.",
+);
+assert.equal(
+  journalUpdateSkipMessage("empty_delta", { hadPriorSync: true }),
+  "No new chat messages since the last update.",
+);
 
 console.log("Self-check passed.");
