@@ -64,10 +64,13 @@ export function ProfileShell({
     if (remote !== null) {
       setJourneyEnabled(remote);
       saveJourneyEnabled(remote);
+      return;
     }
+    setJourneyEnabled(loadJourneyEnabled());
   }, [user]);
 
   async function updateJourneyEnabled(next: boolean) {
+    if (next === journeyEnabled) return;
     const supabase = getSupabase();
     const result = await applyPlayerJourneyEnabled({
       supabase,

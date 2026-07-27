@@ -22,11 +22,6 @@ import {
   visualAutoFromUserMetadata,
 } from "@/lib/visual-search-prefs.js";
 import { JOURNEY_TOGGLE_HINT, JOURNEY_TOGGLE_LABEL } from "@/lib/player-journey.js";
-import {
-  journeyEnabledFromUserMetadata,
-  loadJourneyEnabled,
-  saveJourneyEnabled,
-} from "@/lib/player-journey-prefs.js";
 import { getSupabase } from "@/lib/supabase";
 import {
   applyTheme,
@@ -177,16 +172,7 @@ export function ProfileMenu({
       onVisualAutoChange(remoteVisual);
       saveVisualAuto(remoteVisual);
     }
-
-    const remoteJourney = journeyEnabledFromUserMetadata(user.user_metadata);
-    if (remoteJourney !== null) {
-      onJourneyChange(remoteJourney);
-      saveJourneyEnabled(remoteJourney);
-    } else {
-      const localJourney = loadJourneyEnabled();
-      onJourneyChange(localJourney);
-    }
-  }, [onJourneyChange, onSpoilerChange, onVisualAutoChange, user]);
+  }, [onSpoilerChange, onVisualAutoChange, user]);
 
   // ponytail: uncontrolled pages (/profile) manage their own history entry.
   useEffect(() => {

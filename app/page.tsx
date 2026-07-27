@@ -959,11 +959,14 @@ export default function Home() {
     if (remote !== null) {
       setJourneyEnabled(remote);
       saveJourneyEnabled(remote);
+      return;
     }
+    setJourneyEnabled(loadJourneyEnabled());
   }, [user]);
 
   const updateJourneyEnabled = useCallback(
     async (next: boolean) => {
+      if (next === journeyEnabled) return;
       const supabase = getSupabase();
       const result = await applyPlayerJourneyEnabled({
         supabase,
@@ -976,7 +979,7 @@ export default function Home() {
       if (!result.ok || result.cancelled) return;
       setJourneyEnabled(result.enabled ?? next);
     },
-    [askConfirm, user],
+    [askConfirm, journeyEnabled, user],
   );
 
   // Load per-topic spoiler when switching game/topic — not on every chats refresh
