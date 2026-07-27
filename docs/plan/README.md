@@ -13,6 +13,7 @@ they describe where the codebase is going, not necessarily what is shipped yet.
 | [rag-bottle-grotto-calibration.md](./rag-bottle-grotto-calibration.md) | **Recorded** | LA Bottle Grotto turns 1–4 live calibration — traces, fixes, regression results, conclusions (July 2026) |
 | [image-character-recognition.md](./image-character-recognition.md) | **Experimental** | Prompt-only vision character naming — try in prod, revert if quality drops |
 | [user-memory.md](./user-memory.md) | **Experimental** | Opt-in player style memory — daily summarize, 5/10 tiers, profile UI |
+| [player-journey-tracker.md](./player-journey-tracker.md) | **Planned** | Per-game progress journal: long-form RAG, mandatory auto-update (`journalReminder`), daily cap, solve-persist ordering gotchas, toast + `journal_*` traces |
 | [player-memory-game-lifecycle.md](./player-memory-game-lifecycle.md) | **Planned** | Delete-game memory choice, per-game forget, not-in-library badge, catalog ID matching (Phases 1–4) |
 | [answer-satisfaction-signals.md](./answer-satisfaction-signals.md) | **Future** | Retry / feedback as answer-quality signals — phased experiment backlog |
 | [guide-web-override.md](./guide-web-override.md) | **Shipped** | **Search web instead** + **Also search web** toggles when a preferred guide is attached |

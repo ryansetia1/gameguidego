@@ -797,6 +797,13 @@ large chat or persistence work:
   editor + **Update now**,
   disable wipes memory; cron `GET /api/cron/player-memory` (needs `CRON_SECRET` +
   `SUPABASE_SERVICE_ROLE_KEY`).
+- [`docs/plan/player-journey-tracker.md`](docs/plan/player-journey-tracker.md):
+ **Shipped** — **Track my progress** (toggle separate from Learn my style): per-game
+  long-form journal in `player_journey` + `player_journal_chunks` (RLS), mandatory
+  smart auto-update when summarize emits `journalReminder` (daily cap + debounce),
+  manual Update force refresh, RAG recall every turn when indexed, toast + SSE
+  `journal_updated`, full `journal_*` traces; auto-update must run nested `after()`
+  inside solve `backgroundTask` after chat persist. Read before journal work.
 - [`docs/plan/player-memory-game-lifecycle.md`](docs/plan/player-memory-game-lifecycle.md):
   **Planned** — delete-game memory checkbox (default keep), **Forget this game**,
   **Not in library** badge (Phase 1); stronger `normGameKey` (Phase 2);

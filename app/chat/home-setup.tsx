@@ -63,7 +63,13 @@ export type HomeSetupProps = {
   onSetNewGameOpen: (open: boolean) => void;
   onSetOptPanel: (panel: "guide" | "spoiler" | null | ((cur: "guide" | "spoiler" | null) => "guide" | "spoiler" | null)) => void;
   onGameChange: (value: string) => void;
-  onPickGame: (picked: { name: string; year: string; cover: string; platform: string }) => void;
+  onPickGame: (picked: {
+    name: string;
+    year: string;
+    cover: string;
+    platform: string;
+    catalogGameId?: number;
+  }) => void;
   onPlatformChange: (value: string) => void;
   onSelectCover: (file: File) => void;
   onPickCoverUrl: (url: string) => void;

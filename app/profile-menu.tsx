@@ -21,6 +21,12 @@ import {
   saveVisualAuto,
   visualAutoFromUserMetadata,
 } from "@/lib/visual-search-prefs.js";
+import { JOURNEY_TOGGLE_HINT, JOURNEY_TOGGLE_LABEL } from "@/lib/player-journey.js";
+import {
+  journeyEnabledFromUserMetadata,
+  loadJourneyEnabled,
+  saveJourneyEnabled,
+} from "@/lib/player-journey-prefs.js";
 import { getSupabase } from "@/lib/supabase";
 import {
   applyTheme,
@@ -51,6 +57,8 @@ type Props = {
   onSpoilerChange: (value: boolean) => void;
   visualAuto: boolean;
   onVisualAutoChange: (value: boolean) => void;
+  journeyEnabled: boolean;
+  onJourneyChange: (value: boolean) => void;
   onSignIn: () => void;
   onSignOut: () => void;
   /** When set, menu open state is owned by the parent (for hardware-back sync). */
@@ -97,6 +105,8 @@ export function ProfileMenu({
   onSpoilerChange,
   visualAuto,
   onVisualAutoChange,
+  journeyEnabled,
+  onJourneyChange,
   onSignIn,
   onSignOut,
   navMenu: navMenuProp,
@@ -167,7 +177,16 @@ export function ProfileMenu({
       onVisualAutoChange(remoteVisual);
       saveVisualAuto(remoteVisual);
     }
-  }, [onSpoilerChange, onVisualAutoChange, user]);
+
+    const remoteJourney = journeyEnabledFromUserMetadata(user.user_metadata);
+    if (remoteJourney !== null) {
+      onJourneyChange(remoteJourney);
+      saveJourneyEnabled(remoteJourney);
+    } else {
+      const localJourney = loadJourneyEnabled();
+      onJourneyChange(localJourney);
+    }
+  }, [onJourneyChange, onSpoilerChange, onVisualAutoChange, user]);
 
   // ponytail: uncontrolled pages (/profile) manage their own history entry.
   useEffect(() => {
@@ -241,6 +260,10 @@ export function ProfileMenu({
     onVisualAutoChange(next);
     saveVisualAuto(next);
     if (user) void persistVisualAutoForUser(next);
+  }
+
+  function toggleJourney() {
+    onJourneyChange(!journeyEnabled);
   }
 
   function handleSignOut() {
@@ -356,6 +379,19 @@ export function ProfileMenu({
                   checked={visualAuto}
                   onChange={toggleVisualAuto}
                   aria-label={VISUAL_SEARCH_TOGGLE_LABEL}
+                />
+              </label>
+
+              <label className="profile-menu-item profile-menu-toggle profile-menu-toggle-stacked">
+                <span className="profile-menu-toggle-copy">
+                  <span>{JOURNEY_TOGGLE_LABEL}</span>
+                  <small className="profile-menu-toggle-hint">{JOURNEY_TOGGLE_HINT}</small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={journeyEnabled}
+                  onChange={toggleJourney}
+                  aria-label={JOURNEY_TOGGLE_LABEL}
                 />
               </label>
 

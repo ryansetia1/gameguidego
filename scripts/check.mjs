@@ -246,6 +246,11 @@ import {
   writeStyleRecord,
 } from "../lib/player-memory-pins.js";
 import {
+  coerceJournalReminder,
+  coerceJournalReminderSummary,
+  journalUpdateSkipReason,
+} from "../lib/player-journey.js";
+import {
   buildVisualSearchQuery,
   parseRewriteVisual,
   pickBestSerperImage,
@@ -2749,5 +2754,38 @@ assert.equal(
   ),
   true,
 );
+
+assert.equal(
+  journalUpdateSkipReason({
+    trigger: "auto",
+    temporary: true,
+    journalReminder: "Monferno L28",
+    row: null,
+    deltaCount: 1,
+  }),
+  "temporary",
+);
+assert.equal(
+  journalUpdateSkipReason({
+    trigger: "auto",
+    isRetry: true,
+    journalReminder: "Monferno L28",
+    row: null,
+    deltaCount: 1,
+  }),
+  "retry",
+);
+assert.equal(
+  journalUpdateSkipReason({
+    trigger: "auto",
+    enabled: false,
+    journalReminder: "Monferno L28",
+    row: null,
+    deltaCount: 1,
+  }),
+  "disabled",
+);
+assert.equal(coerceJournalReminder("  team update  "), "team update");
+assert.equal(coerceJournalReminderSummary("  Saved progress  "), "Saved progress");
 
 console.log("Self-check passed.");

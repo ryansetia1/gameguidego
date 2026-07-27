@@ -11,6 +11,7 @@ export type ChatTurnDeps = {
   user: User | null;
   game: string;
   platform: string;
+  catalogGameId: number | null;
   preferredUrls: string[];
   guideRetrievalMode: "default" | "skip" | "supplement";
   guideSourceSelection: string[] | null;
@@ -77,4 +78,9 @@ export type ChatTurnDeps = {
     existing?: GuideMeta,
   ) => GuideMeta | undefined;
   normGameKey: (value: string) => string;
+  /** Signed-in journey toggle; used for post-turn journal poll. */
+  journeyEnabled: boolean;
+  /** Toast copy for journal updates (tap expands panel via onJournalUpdated). */
+  onJournalToast?: (summary: string) => void;
+  onJournalUpdated?: (payload: { summary: string; trigger: string; bodyChars: number }) => void;
 };

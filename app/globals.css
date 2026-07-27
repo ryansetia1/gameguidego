@@ -5799,6 +5799,25 @@ details.sources small {
   background: var(--spoiler-surface);
 }
 
+.profile-menu-toggle-stacked {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.profile-menu-toggle-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.profile-menu-toggle-hint {
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
 .profile-menu-section {
   display: flex;
   flex-direction: column;
@@ -7004,6 +7023,15 @@ details.sources small {
   animation: rise 200ms ease-out backwards;
 }
 
+.snackbar-action {
+  cursor: pointer;
+}
+
+.snackbar-action:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
 /* Trailing "clear the field" button, shared by text/search/url inputs.
    Wrap the input in `.field-clear-wrap` (position:relative). */
 .field-clear-wrap {
@@ -7491,4 +7519,85 @@ details.sources small {
   text-align: center;
   color: var(--text-subtle);
   font-size: 0.9rem;
+}
+
+.journey-panel {
+  margin-top: 10px;
+}
+
+.journey-panel-body {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.journey-panel-text,
+.journey-panel-hint {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.journey-panel-hint {
+  color: var(--muted);
+}
+
+.journey-panel-edit {
+  width: 100%;
+  min-height: 120px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--line);
+  border-radius: 0;
+  background: var(--paper-strong);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+.journey-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.journey-panel-meta {
+  flex: 1;
+  min-width: 120px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.player-journey-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.player-journey-row {
+  border: 1px solid var(--line);
+  background: var(--paper-strong);
+}
+
+.player-journey-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.player-journey-row-meta {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
 }

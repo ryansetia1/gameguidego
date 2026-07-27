@@ -30,9 +30,17 @@ import { coerceDisplayName } from "@/lib/profile.js";
 import {
   bumpPlayerMemoryCount,
   createAuthedSupabase,
+  getAuthedUser,
   loadMemoryForSolve,
   refreshPlayerMemory,
 } from "@/lib/player-memory-server";
+import {
+  coerceJournalReminder,
+  coerceJournalReminderSummary,
+  playerJourneyEnabledFromMetadata,
+} from "@/lib/player-journey.js";
+import { retrieveFromPlayerJournal } from "@/lib/player-journey-rag";
+import { runJournalUpdate } from "@/lib/player-journey-server";
 import { searchGuides, searchSerperImages, type SearchResult } from "@/lib/tavily";
 import {
   buildVisualSearchQuery,
@@ -172,6 +180,11 @@ export async function POST(request: Request) {
     pipelineType?: string;
     guideHint?: string;
   } | undefined;
+  const isTemporary = record.temporary === true;
+  const catalogGameId =
+    typeof record.catalogGameId === "number" && Number.isFinite(record.catalogGameId)
+      ? Math.floor(record.catalogGameId)
+      : null;
   // We explicitly IGNORE request.signal so the AI continues running if the connection drops.
 
   if (question.length < 2) {
@@ -207,11 +220,16 @@ export async function POST(request: Request) {
         const isRetry = Boolean(retryContext);
         let playerMemory = null;
         let authedSupabase = null;
+        let journeyEnabled = false;
 
         if (authHeader && userId) {
           authedSupabase = createAuthedSupabase(authHeader.replace(/^Bearer\s+/i, ""));
           if (authedSupabase) {
             try {
+              const auth = await getAuthedUser(authedSupabase);
+              if (!("error" in auth)) {
+                journeyEnabled = playerJourneyEnabledFromMetadata(auth.user.user_metadata);
+              }
               playerMemory = await loadMemoryForSolve(authedSupabase, userId, game, platform);
             } catch (memoryError) {
               console.error("Player memory load failed (continuing):", memoryError);
@@ -427,6 +445,24 @@ export async function POST(request: Request) {
           }
         }
 
+        if (journeyEnabled && authedSupabase && userId && !isTemporary) {
+          try {
+            const journalSources = await retrieveFromPlayerJournal({
+              supabase: authedSupabase,
+              userId,
+              game,
+              platform,
+              query: searchTopic,
+              catalogGameId,
+            });
+            if (journalSources.length) {
+              sources = [...journalSources, ...sources];
+            }
+          } catch (journalRagError) {
+            console.error("Journal RAG failed (continuing):", journalRagError);
+          }
+        }
+
         const preferredBeforeTrim = sources.filter((s) => s.preferred).length;
         sources = limitSourcesForPositionFollowUp(sources, question, searchTopic);
         const positionFollowUpRankOne =
@@ -501,7 +537,15 @@ export async function POST(request: Request) {
             }
           }
         }
-        let { answer, highlights, spoilers, spoilerRisk, topicTitle: generatedTitle } =
+        let {
+          answer,
+          highlights,
+          spoilers,
+          spoilerRisk,
+          topicTitle: generatedTitle,
+          journalReminder,
+          journalReminderSummary,
+        } =
           await summarize({
           game,
           platform,
@@ -516,11 +560,31 @@ export async function POST(request: Request) {
           userId,
           webSupplement: pipelineType === "rag_supplemented",
           isFirstTurn: shouldGenerateTitle,
+          journeyEnabled,
           onProgress: (msg: string, id?: string) => {
             if (id) sendEvent("prediction_id", { id });
             sendEvent("status", { text: msg });
           },
         });
+
+        const journalReminderCoerced = coerceJournalReminder(journalReminder);
+        if (journalReminderCoerced && authedSupabase && userId) {
+          if (isTemporary) {
+            void logTraceEvent(
+              "journal_update_skipped",
+              "Journal update skipped: temporary",
+              undefined,
+              { reason: "temporary", trigger: "auto", game, platform },
+            );
+          } else if (isRetry) {
+            void logTraceEvent(
+              "journal_update_skipped",
+              "Journal update skipped: retry",
+              undefined,
+              { reason: "retry", trigger: "auto", game, platform },
+            );
+          }
+        }
 
         if (!spoilerPrefs.major && spoilerRisk) {
           const censorStart = Date.now();
@@ -702,9 +766,61 @@ export async function POST(request: Request) {
         }).catch(console.error);
 
         if (authedSupabase && userId && !isRetry) {
+          const journalReminderForAuto = journalReminderCoerced;
+          const journalSummaryForAuto = coerceJournalReminderSummary(journalReminderSummary);
           after(async () => {
             try {
               await runWithTrace(traceId, async () => {
+                let resolvedCatalogGameId = catalogGameId;
+                if (chatId && resolvedCatalogGameId == null) {
+                  const { data: chatRow } = await authedSupabase!
+                    .from("chats")
+                    .select("catalog_game_id")
+                    .eq("id", chatId)
+                    .maybeSingle();
+                  if (typeof (chatRow as { catalog_game_id?: number } | null)?.catalog_game_id === "number") {
+                    resolvedCatalogGameId = (chatRow as { catalog_game_id: number }).catalog_game_id;
+                  }
+                }
+
+                if (journeyEnabled && !isTemporary) {
+                  try {
+                    const result = await runJournalUpdate({
+                      supabase: authedSupabase!,
+                      userId,
+                      game,
+                      platform,
+                      trigger: "auto",
+                      journalReminder: journalReminderForAuto,
+                      journalReminderSummary: journalSummaryForAuto,
+                      temporary: isTemporary,
+                      isRetry,
+                      catalogGameId: resolvedCatalogGameId,
+                    });
+                    if (result.ok && !result.skipped && result.toastSummary) {
+                      sendEvent("journal_updated", {
+                        summary: result.toastSummary,
+                        trigger: result.trigger,
+                        bodyChars: result.bodyChars,
+                      });
+                    }
+                  } catch (journalError) {
+                    console.error("Journal auto-update failed:", journalError);
+                  }
+                } else if (journalReminderForAuto) {
+                  await logTraceEvent(
+                    "journal_update_skipped",
+                    "Journal update skipped: disabled",
+                    undefined,
+                    {
+                      reason: "disabled",
+                      trigger: "auto",
+                      game,
+                      platform,
+                    },
+                  );
+                }
+
                 const bump = await bumpPlayerMemoryCount(authedSupabase!, userId);
                 if (!bump) return;
                 if (bump.hitDraft || bump.hitFull) {
@@ -719,6 +835,18 @@ export async function POST(request: Request) {
               console.error("Player memory bump failed:", memoryBumpError);
             }
           });
+        } else if (journalReminderCoerced && !journeyEnabled) {
+          void logTraceEvent(
+            "journal_update_skipped",
+            "Journal update skipped: disabled",
+            undefined,
+            {
+              reason: "disabled",
+              trigger: "auto",
+              game,
+              platform,
+            },
+          );
         }
       } catch (error) {
         console.error("Guide generation failed:", error);

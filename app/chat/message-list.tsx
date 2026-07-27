@@ -26,6 +26,7 @@ import {
 } from "@/lib/chat-message-ui.js";
 import type { GuideMeta } from "../guide-link-field";
 import { isUploadedGuideUrl } from "@/lib/guide-urls.js";
+import { isJournalSourceUrl } from "@/lib/player-journey.js";
 import { visualImageProxyUrl } from "@/lib/visual-image-proxy.js";
 
 /** Stop nudging for a guide after this many answers; re-nudge naturally in a new game. */
@@ -313,7 +314,7 @@ function AnswerFoot({
             // Uploaded files have no real URL to open (upload://…), so render
             // them as plain text, not a broken link.
             const badge = sourceBadge(source, preferredUrls);
-            if (isUploadedGuideUrl(source.url)) {
+            if (isUploadedGuideUrl(source.url) || isJournalSourceUrl(source.url)) {
               return (
                 <li key={`${source.url}-${i}`}>
                   <div className="source-static-row">

@@ -19,6 +19,7 @@ import { CoverThumb, displayPlatform } from "./cover-thumb";
 import { GuideStatusChip } from "./guide-status-chip";
 import { SpoilerToggle } from "./spoiler-toggle";
 import { TopicTitleTypewriter } from "./topic-title-typewriter";
+import { JourneyPanel } from "./journey-panel";
 
 import type { GuideIndexState } from "@/lib/guide-index-state";
 
@@ -28,6 +29,7 @@ export type ActiveGameCardProps = {
   cover: string;
   game: string;
   platform: string;
+  catalogGameId?: number | null;
   releaseYear: string;
   activeChatId: string | null;
   temporary: boolean;
@@ -72,6 +74,10 @@ export type ActiveGameCardProps = {
   topicTitle?: string;
   topicTitlePending?: boolean;
   onDeleteAllTopics?: () => void;
+  journeyEnabled?: boolean;
+  journeyExpanded?: boolean;
+  onJourneyExpandedChange?: (open: boolean) => void;
+  onJourneyToast?: (message: string) => void;
   className?: string;
 };
 
@@ -81,6 +87,7 @@ export function ActiveGameCard({
   cover,
   game,
   platform,
+  catalogGameId = null,
   releaseYear,
   activeChatId,
   temporary,
@@ -118,6 +125,10 @@ export function ActiveGameCard({
   topicTitle = "",
   topicTitlePending = false,
   onDeleteAllTopics,
+  journeyEnabled = false,
+  journeyExpanded = false,
+  onJourneyExpandedChange,
+  onJourneyToast,
   className,
 }: ActiveGameCardProps) {
   const hasBlocked = preferredUrls.some(
@@ -440,6 +451,17 @@ export function ActiveGameCard({
           pending={topicTitlePending}
         />
       ) : null}
+      <JourneyPanel
+        user={user}
+        game={game}
+        platform={platform}
+        catalogGameId={catalogGameId}
+        journeyEnabled={journeyEnabled}
+        loading={loading}
+        expanded={journeyExpanded}
+        onExpandedChange={onJourneyExpandedChange}
+        onToast={onJourneyToast}
+      />
       <div className="game-card-guides">
         <details
           className={isCollapsible ? "sources game-card-guides-hidden" : ""}

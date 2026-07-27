@@ -5,6 +5,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { ClearButton } from "@/app/clear-button";
 import { Snackbar } from "@/app/snackbar";
 import { PlayerMemoryLink } from "@/app/profile/player-memory-link";
+import { PlayerJourneyLink } from "@/app/profile/player-journey-link";
 import { ProfileShell } from "@/app/profile/profile-shell";
 import { useProfileSession } from "@/app/profile/use-profile-session";
 import { compressImage } from "@/lib/image.js";
@@ -262,6 +263,7 @@ export default function ProfilePage() {
             </label>
 
             <PlayerMemoryLink session={session} />
+            <PlayerJourneyLink user={user} />
           </div>
         )}
       <Snackbar message={notice} onDismiss={() => setNotice("")} />

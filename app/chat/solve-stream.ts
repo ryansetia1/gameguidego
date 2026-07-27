@@ -11,9 +11,16 @@ export type SolveStreamPayload = {
   topicTitle?: string;
 };
 
+export type JournalUpdatedPayload = {
+  summary: string;
+  trigger: "auto" | "manual";
+  bodyChars: number;
+};
+
 export type SolveStreamCallbacks = {
   onStatus?: (text: string) => void;
   onPredictionId?: (id: string) => void;
+  onJournalUpdated?: (payload: JournalUpdatedPayload) => void;
 };
 
 export type SolveStreamResult = {
@@ -60,6 +67,8 @@ export async function readSolveStream(
           retryContext = payload as RetryContext;
         } else if (eventName === "result") {
           answerData = payload as SolveStreamPayload;
+        } else if (eventName === "journal_updated") {
+          callbacks.onJournalUpdated?.(payload as JournalUpdatedPayload);
         } else if (eventName === "error" && payload.error) {
           streamError = new Error(payload.error);
         }

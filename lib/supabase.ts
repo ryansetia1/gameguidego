@@ -28,6 +28,8 @@ export type Chat = {
   // Supabase Storage public URL from a device upload.
   cover_url?: string;
   release_year?: string;
+  /** TheGamesDB id when picked from autocomplete; absent for manual entry. */
+  catalog_game_id?: number | null;
   /** Topic title; auto-truncated on first persist, LLM-refined after first answer. */
   title?: string;
   /** Per-topic major-spoiler toggle (global profile toggle still ORs in). */

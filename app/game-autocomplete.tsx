@@ -83,7 +83,13 @@ function groupByPlatform(results: Game[]) {
 type Props = {
   value: string;
   onChange: (value: string) => void;
-  onPick?: (game: { name: string; year: string; cover: string; platform: string }) => void;
+  onPick?: (game: {
+    name: string;
+    year: string;
+    cover: string;
+    platform: string;
+    catalogGameId?: number;
+  }) => void;
   showCover?: boolean;
   disabled?: boolean;
 };
@@ -187,6 +193,7 @@ export function GameAutocomplete({
       year: game.year,
       cover: game.cover,
       platform: game.platform,
+      catalogGameId: game.id,
     });
     setResults([]);
     setOpen(false);

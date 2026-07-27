@@ -109,11 +109,14 @@ export function createTurnPersist(depsRef: RefObject<ChatTurnDeps>) {
         ? (loadLocalGames().find((row) => row.id === targetChatId)?.title?.trim() ?? "")
         : "";
       const resolvedTitle = topicTitleForPersist(existingTitle, nextMessages, explicitTitle);
-      const sharedMeta = {
-        ...guideUrlsPayload(d.preferredUrls),
-        cover_url: d.cover.startsWith("blob:") ? "" : d.cover,
-        release_year: d.releaseYear,
-      };
+    const sharedMeta = {
+      ...guideUrlsPayload(d.preferredUrls),
+      cover_url: d.cover.startsWith("blob:") ? "" : d.cover,
+      release_year: d.releaseYear,
+      ...(d.catalogGameId != null && Number.isFinite(d.catalogGameId)
+        ? { catalog_game_id: Math.floor(d.catalogGameId) }
+        : {}),
+    };
       const entry = {
         id,
         game: d.game,
@@ -136,6 +139,9 @@ export function createTurnPersist(depsRef: RefObject<ChatTurnDeps>) {
       ...guideUrlsPayload(d.preferredUrls),
       cover_url: coverUrl,
       release_year: d.releaseYear,
+      ...(d.catalogGameId != null && Number.isFinite(d.catalogGameId)
+        ? { catalog_game_id: Math.floor(d.catalogGameId) }
+        : {}),
     };
     let resolvedTitle = topicTitleForPersist("", nextMessages, explicitTitle);
     const payload: Record<string, unknown> = {

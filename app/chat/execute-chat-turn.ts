@@ -11,6 +11,10 @@ import {
   snapshotAssistantVariants,
 } from "@/lib/chat-messages.js";
 import { solveTurnToast } from "@/lib/guide-hints.js";
+import {
+  fetchJournalLastUpdatedMs,
+  pollJournalUpdateAfterTurn,
+} from "@/lib/journal-client-poll.js";
 import { guideRetrievalModeToApi } from "@/lib/guide-retrieval-mode.js";
 import { effectiveRagGuideUrls } from "@/lib/guide-source-selection.js";
 import { coerceHighlights, coerceSpoilers } from "@/lib/highlights.js";
@@ -95,6 +99,8 @@ export async function executeChatTurn({
   d.setGenerationStatus(null);
   d.setEditingIndex(null);
   let succeeded = false;
+  let journalNotified = false;
+  let journalPollSinceMs = 0;
   const guideUrls = normalizedGuideUrls(d.preferredUrls);
   const guideSelection =
     ragGuideUrls !== undefined ? ragGuideUrls : d.guideSourceSelection;
@@ -146,9 +152,18 @@ export async function executeChatTurn({
   try {
     const supabase = getSupabase();
     let accessToken = "";
+    let authSession: Awaited<ReturnType<NonNullable<typeof supabase>["auth"]["getSession"]>>["data"]["session"] = null;
     if (supabase) {
       const { data: sessionData } = await supabase.auth.getSession();
-      accessToken = sessionData.session?.access_token || "";
+      authSession = sessionData.session;
+      accessToken = authSession?.access_token || "";
+      if (d.journeyEnabled && authSession && !d.temporary && d.game.trim()) {
+        journalPollSinceMs = await fetchJournalLastUpdatedMs(authSession, {
+          game: d.game,
+          platform: d.platform,
+          catalogGameId: d.catalogGameId,
+        }).catch(() => 0);
+      }
     }
 
     const ingestResult = ingestPromise ? await ingestPromise : null;
@@ -227,8 +242,10 @@ export async function executeChatTurn({
           ? displayNameFromMetadata(d.user.user_metadata) || d.user.email?.split("@")[0] || ""
           : "",
         userId: d.user?.id ?? null,
+        catalogGameId: d.catalogGameId,
         ...guideRetrievalModeToApi(d.guideRetrievalMode),
         retryContext,
+        temporary: d.temporary,
       }),
     });
 
@@ -246,6 +263,15 @@ export async function executeChatTurn({
         },
         onPredictionId: (id) => {
           if (activeId) d.predictionIdsRef.current[activeId] = id;
+        },
+        onJournalUpdated: (payload) => {
+          const summary = typeof payload.summary === "string" ? payload.summary.trim() : "";
+          if (!summary) return;
+          journalNotified = true;
+          if (activeId === d.activeChatIdRef.current || !activeId) {
+            d.onJournalToast?.(summary);
+          }
+          d.onJournalUpdated?.(payload);
         },
       });
       streamStarted = streamResult.streamStarted;
@@ -297,6 +323,27 @@ export async function executeChatTurn({
     d.conversationGame.current = d.game;
     if (activeId) delete d.abortRefs.current[activeId];
     succeeded = true;
+    if (
+      !journalNotified &&
+      d.journeyEnabled &&
+      authSession &&
+      !d.temporary &&
+      d.game.trim()
+    ) {
+      const pollChatId = activeId;
+      void pollJournalUpdateAfterTurn(authSession, {
+        game: d.game,
+        platform: d.platform,
+        catalogGameId: d.catalogGameId,
+        sinceMs: journalPollSinceMs,
+      }).then((result) => {
+        if (!result) return;
+        if (pollChatId === d.activeChatIdRef.current || !pollChatId) {
+          d.onJournalToast?.(result.summary);
+          d.onJournalUpdated?.(result);
+        }
+      });
+    }
     if (activeId === d.activeChatIdRef.current || !activeId) {
       d.setLoading(false);
       d.setGenerationStatus(null);

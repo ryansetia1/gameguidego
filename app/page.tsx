@@ -71,6 +71,14 @@ import {
 } from "@/lib/topic-title.js";
 import { getSupabase, type Chat } from "@/lib/supabase";
 import { playerMemoryEnabledFromMetadata } from "@/lib/player-memory.js";
+import { playerJourneyEnabledFromMetadata } from "@/lib/player-journey.js";
+import { applyPlayerJourneyEnabled } from "@/lib/player-journey-client.js";
+import {
+  journeyEnabledFromUserMetadata,
+  loadJourneyEnabled,
+  saveJourneyEnabled,
+} from "@/lib/player-journey-prefs.js";
+import { forgetGameJourney } from "@/lib/player-journey-game.js";
 import { forgetGameMemory } from "@/lib/player-memory-game.js";
 import {
   loadLocalGames,
@@ -139,6 +147,7 @@ async function deleteMessageImages(messages: Message[]) {
 export default function Home() {
   const [game, setGame] = useState("");
   const [platform, setPlatform] = useState("");
+  const [catalogGameId, setCatalogGameId] = useState<number | null>(null);
   const [preferredUrls, setPreferredUrls] = useState<string[]>([]);
   const [guideRetrievalMode, setGuideRetrievalMode] = useState<
     "default" | "skip" | "supplement"
@@ -225,12 +234,15 @@ export default function Home() {
   const [globalSpoilerMajor, setGlobalSpoilerMajor] = useState(false);
   const [gameSpoilerMajor, setGameSpoilerMajor] = useState(false);
   const [visualAuto, setVisualAuto] = useState(true);
+  const [journeyEnabled, setJourneyEnabled] = useState(false);
+  const [journeyExpanded, setJourneyExpanded] = useState(false);
   const spoilerPrefs = effectiveSpoilerPrefs(globalSpoilerMajor, gameSpoilerMajor);
   const [voiceListening, setVoiceListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [librarySearch, setLibrarySearch] = useState("");
   const { confirmState, askConfirm, askConfirmWithCheckbox, closeConfirm } = useConfirmDialog();
   const [toast, setToast] = useState("");
+  const [toastOpensJournal, setToastOpensJournal] = useState(false);
   const [lastLibrary, setLastLibrary] = useState<"saved" | "steam">("saved");
   const {
     promptState,
@@ -646,7 +658,7 @@ export default function Home() {
       return;
     }
     const fullSelect =
-      "id, game, platform, preferred_guide_url, preferred_guide_urls, cover_url, release_year, title, spoiler_major, updated_at, messages";
+      "id, game, platform, preferred_guide_url, preferred_guide_urls, cover_url, release_year, catalog_game_id, title, spoiler_major, updated_at, messages";
     const legacySelect =
       "id, game, platform, preferred_guide_url, preferred_guide_urls, cover_url, release_year, updated_at, messages";
     const fullResult = await supabase
@@ -822,10 +834,21 @@ export default function Home() {
   }, [menuOpenId]);
 
   useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(""), 3500);
+    if (!toast) {
+      setToastOpensJournal(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setToast("");
+      setToastOpensJournal(false);
+    }, 3500);
     return () => clearTimeout(timer);
   }, [toast]);
+
+  const showJournalToast = useCallback((summary: string) => {
+    setToast(summary);
+    setToastOpensJournal(true);
+  }, []);
 
   // Mobile edge-swipe. Closed: swipe in from the left edge → sidebar; from the
   // right edge → last-opened library (Steam if connected + last used, else saved).
@@ -926,6 +949,35 @@ export default function Home() {
       saveGlobalSpoilerPrefs({ major: remote });
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      setJourneyEnabled(loadJourneyEnabled());
+      return;
+    }
+    const remote = journeyEnabledFromUserMetadata(user.user_metadata);
+    if (remote !== null) {
+      setJourneyEnabled(remote);
+      saveJourneyEnabled(remote);
+    }
+  }, [user]);
+
+  const updateJourneyEnabled = useCallback(
+    async (next: boolean) => {
+      const supabase = getSupabase();
+      const result = await applyPlayerJourneyEnabled({
+        supabase,
+        userId: user?.id,
+        next,
+        confirmDisable: (message) => askConfirm(message, "Turn off", true),
+        onError: setToast,
+        onDisabled: () => setJourneyExpanded(false),
+      });
+      if (!result.ok || result.cancelled) return;
+      setJourneyEnabled(result.enabled ?? next);
+    },
+    [askConfirm, user],
+  );
 
   // Load per-topic spoiler when switching game/topic — not on every chats refresh
   // (loadChats after toggle would reset the checkbox via stale server rows).
@@ -1096,6 +1148,7 @@ export default function Home() {
     setMessages([]);
     setGame("");
     setPlatform("");
+    setCatalogGameId(null);
     setPreferredUrls([]);
     resetGuideMeta();
     if (cover.startsWith("blob:")) URL.revokeObjectURL(cover);
@@ -1227,6 +1280,11 @@ export default function Home() {
     replacedCoverRef.current = null;
     clearPendingImages();
     setReleaseYear(chat.release_year ?? "");
+    setCatalogGameId(
+      typeof chat.catalog_game_id === "number" && Number.isFinite(chat.catalog_game_id)
+        ? Math.floor(chat.catalog_game_id)
+        : null,
+    );
     conversationGame.current = chat.game;
     conversationPlatform.current = chat.platform;
     setGameSpoilerMajor(loadTopicSpoilerPrefs(chat, chat.game).major);
@@ -1349,17 +1407,24 @@ export default function Home() {
     year: string;
     cover: string;
     platform: string;
+    catalogGameId?: number;
   }) {
     setGame(picked.name);
     setReleaseYear(picked.year);
     setPendingCover(null);
     setCover(coverEnabled ? picked.cover : "");
+    setCatalogGameId(
+      typeof picked.catalogGameId === "number" && Number.isFinite(picked.catalogGameId)
+        ? Math.floor(picked.catalogGameId)
+        : null,
+    );
     const label = tgdbPlatformToLabel(picked.platform);
     if (label) setPlatform(label);
   }
 
   function handleGameChange(value: string) {
     setGame(value);
+    setCatalogGameId(null);
     if (cover) setCover("");
     if (pendingCover) setPendingCover(null);
     if (releaseYear) setReleaseYear("");
@@ -1857,17 +1922,26 @@ export default function Home() {
     // ponytail: gate the forget-memory checkbox on the metadata flag, not a row-exists
     // query. If enabled but no memory for this game, checking it deletes nothing (fine).
     const memoryEnabled = Boolean(user && playerMemoryEnabledFromMetadata(user.user_metadata));
+    const journeyTrackingOn = Boolean(user && playerJourneyEnabledFromMetadata(user.user_metadata));
     let forgetMemory = false;
-    if (memoryEnabled) {
+    let forgetJourney = false;
+    if (memoryEnabled || journeyTrackingOn) {
+      const forgetLabel =
+        memoryEnabled && journeyTrackingOn
+          ? "Also forget saved memory and progress journal for this game"
+          : memoryEnabled
+            ? "Also forget saved memory for this game"
+            : "Also forget progress journal for this game";
       const { confirmed, checked } = await askConfirmWithCheckbox(
-        `${message} Your saved progress and notes stay in Learn my style if you add this game again.`,
+        `${message} Your saved progress stays if you add this game again unless you check below.`,
         {
-          checkbox: { label: "Also forget saved memory for this game" },
+          checkbox: { label: forgetLabel },
           confirmLabel: "Delete game",
         },
       );
       if (!confirmed) return;
-      forgetMemory = checked;
+      forgetMemory = memoryEnabled && checked;
+      forgetJourney = journeyTrackingOn && checked;
     } else if (!(await askConfirm(message, "Delete game"))) {
       return;
     }
@@ -1913,6 +1987,19 @@ export default function Home() {
         await forgetGameMemory(supabase, user.id, normGameKey(chat.game), chat.platform || "");
       } catch (memoryError) {
         console.error("Failed to forget game memory:", memoryError);
+      }
+    }
+    if (forgetJourney && user) {
+      try {
+        await forgetGameJourney(
+          supabase,
+          user.id,
+          normGameKey(chat.game),
+          chat.platform || "",
+          chat.catalog_game_id,
+        );
+      } catch (journeyError) {
+        console.error("Failed to forget game journal:", journeyError);
       }
     }
     const roomIds = new Set(roomTopics.map((row) => row.id));
@@ -2023,6 +2110,7 @@ export default function Home() {
     user,
     game,
     platform,
+    catalogGameId,
     preferredUrls,
     guideRetrievalMode,
     guideSourceSelection,
@@ -2039,6 +2127,7 @@ export default function Home() {
     spoilerPrefs,
     topicSpoilerMajor: gameSpoilerMajor,
     visualAuto,
+    journeyEnabled,
     setActiveChatId,
     setChats,
     setMessages,
@@ -2075,6 +2164,8 @@ export default function Home() {
     askConfirm,
     applyIngestRowToMeta,
     normGameKey,
+    onJournalToast: showJournalToast,
+    onJournalUpdated: () => setJourneyExpanded(true),
   });
 
   const clearActiveChat = useCallback(async () => {
@@ -2193,6 +2284,7 @@ export default function Home() {
       cover={cover}
       game={game}
       platform={platform}
+      catalogGameId={catalogGameId}
       releaseYear={releaseYear}
       activeChatId={menuVariant === "thread" ? activeChatId : null}
       temporary={menuVariant === "thread" ? temporary : false}
@@ -2235,6 +2327,10 @@ export default function Home() {
       onRetryGuideIngest={(url) => void retryGuideIngest(url)}
       onReindexAllPending={() => void reindexAllPending()}
       onGameSpoilerChange={updateGameSpoiler}
+      journeyEnabled={journeyEnabled}
+      journeyExpanded={journeyExpanded}
+      onJourneyExpandedChange={setJourneyExpanded}
+      onJourneyToast={showJournalToast}
     />
   );
 
@@ -2281,6 +2377,8 @@ export default function Home() {
             onSpoilerChange={updateGlobalSpoiler}
             visualAuto={visualAuto}
             onVisualAutoChange={setVisualAuto}
+            journeyEnabled={journeyEnabled}
+            onJourneyChange={(next) => void updateJourneyEnabled(next)}
             navMenu={navMenu}
             onNavMenuChange={handleNavMenuChange}
             onNavMenuNavigate={closeNavMenuForNav}
@@ -2721,7 +2819,32 @@ export default function Home() {
       )}
 
       {toast && (
-        <div className="snackbar" role="status" aria-live="polite">
+        <div
+          className={`snackbar${toastOpensJournal ? " snackbar-action" : ""}`}
+          role="status"
+          aria-live="polite"
+          tabIndex={toastOpensJournal ? 0 : undefined}
+          onClick={
+            toastOpensJournal
+              ? () => {
+                  setJourneyExpanded(true);
+                  setToast("");
+                  setToastOpensJournal(false);
+                }
+              : undefined
+          }
+          onKeyDown={
+            toastOpensJournal
+              ? (event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  setJourneyExpanded(true);
+                  setToast("");
+                  setToastOpensJournal(false);
+                }
+              : undefined
+          }
+        >
           {toast}
         </div>
       )}

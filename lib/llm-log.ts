@@ -20,6 +20,7 @@ export type LlmLogEntry = {
     | "embed_index"
     | "embed_query"
     | "memory_summarize"
+    | "journal_synthesize"
     | "topic_title"
     | "visual_query";
   model: string;

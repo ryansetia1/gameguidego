@@ -1,0 +1,239 @@
+"use client";
+
+import type { User } from "@supabase/supabase-js";
+import { useCallback, useEffect, useState } from "react";
+
+import { IconChevronDown, IconRefresh } from "@/app/icons";
+import {
+  JOURNEY_EMPTY_HINT,
+  JOURNEY_UPDATE_LABEL,
+} from "@/lib/player-journey.js";
+import { journeyAuthedFetch } from "@/lib/player-journey-client.js";
+
+type Props = {
+  user: User | null;
+  game: string;
+  platform: string;
+  catalogGameId?: number | null;
+  journeyEnabled: boolean;
+  loading: boolean;
+  expanded?: boolean;
+  onExpandedChange?: (open: boolean) => void;
+  onToast?: (message: string) => void;
+};
+
+function formatUpdated(iso: string | null) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+export function JourneyPanel({
+  user,
+  game,
+  platform,
+  catalogGameId = null,
+  journeyEnabled,
+  loading,
+  expanded = false,
+  onExpandedChange,
+  onToast,
+}: Props) {
+  const [open, setOpen] = useState(expanded);
+  const [body, setBody] = useState("");
+  const [draft, setDraft] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
+  const [updatingAt, setUpdatingAt] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [loadState, setLoadState] = useState<"idle" | "loading" | "error">("idle");
+
+  const load = useCallback(async () => {
+    if (!user || !journeyEnabled || !game.trim()) {
+      setBody("");
+      setDraft("");
+      setLastUpdatedAt(null);
+      setUpdatingAt(null);
+      setLoadState("idle");
+      return;
+    }
+    setLoadState("loading");
+    try {
+      const params = new URLSearchParams({ game, platform: platform || "" });
+      if (catalogGameId != null && Number.isFinite(catalogGameId)) {
+        params.set("catalogGameId", String(Math.floor(catalogGameId)));
+      }
+      const response = await journeyAuthedFetch(`/api/player-journey?${params}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Could not load journal.");
+      const nextBody = typeof payload.body === "string" ? payload.body : "";
+      setBody(nextBody);
+      setDraft(nextBody);
+      setLastUpdatedAt(typeof payload.lastUpdatedAt === "string" ? payload.lastUpdatedAt : null);
+      setUpdatingAt(typeof payload.updatingAt === "string" ? payload.updatingAt : null);
+      setLoadState("idle");
+    } catch {
+      setLoadState("error");
+    }
+  }, [user, journeyEnabled, game, platform, catalogGameId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    setOpen(expanded);
+  }, [expanded]);
+
+  function setPanelOpen(next: boolean) {
+    setOpen(next);
+    onExpandedChange?.(next);
+  }
+
+  if (!user || !journeyEnabled || !game.trim()) return null;
+
+  const isUpdating = Boolean(updatingAt) || busy;
+  const updatedLabel = formatUpdated(lastUpdatedAt);
+
+  async function handleUpdate() {
+    if (!user || isUpdating) return;
+    setBusy(true);
+    try {
+      const response = await journeyAuthedFetch("/api/player-journey/update", {
+        method: "POST",
+        body: JSON.stringify({ game, platform, catalogGameId }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Could not update journal.");
+      if (typeof payload.summary === "string" && payload.summary.trim()) {
+        onToast?.(payload.summary.trim());
+      }
+      await load();
+    } catch (error) {
+      onToast?.(error instanceof Error ? error.message : "Could not update journal.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveEdit() {
+    if (!user || isUpdating) return;
+    setBusy(true);
+    try {
+      const response = await journeyAuthedFetch("/api/player-journey", {
+        method: "PATCH",
+        body: JSON.stringify({ game, platform, body: draft, catalogGameId }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Could not save journal.");
+      if (typeof payload.summary === "string" && payload.summary.trim()) {
+        onToast?.(payload.summary.trim());
+      }
+      setEditing(false);
+      await load();
+    } catch (error) {
+      onToast?.(error instanceof Error ? error.message : "Could not save journal.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <details
+      className="journey-panel sources game-card-guides-hidden"
+      open={open}
+      onToggle={(event) => {
+        setPanelOpen((event.currentTarget as HTMLDetailsElement).open);
+      }}
+    >
+      <summary className="game-card-guides-summary journey-panel-summary">
+        <span className="game-card-guides-summary-label">Your journal</span>
+        {isUpdating ? (
+          <span className="guide-status-chip is-pending" aria-live="polite">
+            Updating…
+          </span>
+        ) : null}
+        <span className="chevron-toggle" aria-hidden>
+          <IconChevronDown size={14} />
+        </span>
+      </summary>
+      <div className="journey-panel-body">
+        {loadState === "loading" ? (
+          <p className="journey-panel-hint" aria-busy="true">
+            Loading journal…
+          </p>
+        ) : loadState === "error" ? (
+          <p className="journey-panel-hint">Could not load your journal.</p>
+        ) : editing ? (
+          <>
+            <textarea
+              className="journey-panel-edit"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              rows={6}
+              disabled={isUpdating || loading}
+              aria-label="Edit your journal"
+            />
+            <div className="journey-panel-actions">
+              <button
+                type="button"
+                className="nav-button"
+                disabled={isUpdating || loading}
+                onClick={() => {
+                  setDraft(body);
+                  setEditing(false);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="nav-button player-memory-update-btn"
+                disabled={isUpdating || loading}
+                onClick={() => void handleSaveEdit()}
+              >
+                Save
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="journey-panel-text">
+              {body.trim() ? body : JOURNEY_EMPTY_HINT}
+            </p>
+            <div className="journey-panel-actions">
+              {updatedLabel ? (
+                <span className="journey-panel-meta">Updated {updatedLabel}</span>
+              ) : (
+                <span className="journey-panel-meta" />
+              )}
+              <button
+                type="button"
+                className="nav-button"
+                disabled={isUpdating || loading}
+                onClick={() => setEditing(true)}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                className="nav-button player-memory-update-btn"
+                disabled={isUpdating || loading}
+                onClick={() => void handleUpdate()}
+              >
+                <IconRefresh size={14} className={isUpdating ? "spin" : ""} aria-hidden />
+                {JOURNEY_UPDATE_LABEL}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </details>
+  );
+}

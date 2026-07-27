@@ -34,6 +34,7 @@ import {
 import type { PlayerStyleUserPins } from "@/lib/player-memory-pins.js";
 import { gameRoomKey } from "@/lib/game-room.js";
 import { forgetGameMemory } from "@/lib/player-memory-game.js";
+import { forgetGameJourney } from "@/lib/player-journey-game.js";
 import { getSupabase } from "@/lib/supabase";
 
 type PlayerStyleShape = ReturnType<typeof coercePlayerStyle>;
@@ -436,7 +437,7 @@ export function PlayerMemorySection({ session, onToast }: Props) {
   async function forgetGame(gameKey: string, platform: string, title: string) {
     if (!session) return;
     const ok = await askConfirm(
-      `Forget saved progress and notes for "${title}"? This cannot be undone.`,
+      `Forget saved progress, notes, and journal for "${title}"? This cannot be undone.`,
       "Forget",
     );
     if (!ok) return;
@@ -444,6 +445,7 @@ export function PlayerMemorySection({ session, onToast }: Props) {
     if (!supabase) return;
     try {
       await forgetGameMemory(supabase, session.user.id, gameKey, platform);
+      await forgetGameJourney(supabase, session.user.id, gameKey, platform);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not forget this game.");
       return;
@@ -452,7 +454,7 @@ export function PlayerMemorySection({ session, onToast }: Props) {
       prev.filter((g) => !(g.game_key === gameKey && g.platform === platform)),
     );
     await load();
-    onToast?.(`Forgot memory for ${title}.`);
+    onToast?.(`Forgot memory and journal for ${title}.`);
   }
 
   async function addGameNote(

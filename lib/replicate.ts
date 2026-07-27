@@ -46,6 +46,8 @@ export type SummaryResult = {
   // Model self-flag (spoilers OFF only): its answer may brush a major reveal.
   spoilerRisk: boolean;
   topicTitle: string;
+  journalReminder: string;
+  journalReminderSummary: string;
 };
 
 type ModelName = `${string}/${string}` | `${string}/${string}:${string}`;
@@ -243,6 +245,8 @@ export type SummarizeInput = {
   onProgress?: (msg: string, id?: string) => void;
   /** First turn with auto-derived title — ask summarize for topicTitle in JSON. */
   isFirstTurn?: boolean;
+  /** Track my progress — ask summarize for journalReminder fields. */
+  journeyEnabled?: boolean;
 };
 
 export async function summarize(input: SummarizeInput): Promise<SummaryResult> {
@@ -257,7 +261,10 @@ export async function summarize(input: SummarizeInput): Promise<SummaryResult> {
   }
 
   const images = (input.images ?? []).filter((url) => typeof url === "string" && url);
-  const systemInstruction = summarizeSystemInstruction(Boolean(input.isFirstTurn));
+  const systemInstruction = summarizeSystemInstruction(
+    Boolean(input.isFirstTurn),
+    Boolean(input.journeyEnabled),
+  );
   const prompt = buildPrompt({
     ...input,
     imageCount: images.length,
