@@ -374,14 +374,16 @@ export function ActiveGameCard({
             </button>
             {menuVariant === "topics" ? (
               <>
-                <button
-                  type="button"
-                  className="row-menu-item row-menu-delete"
-                  disabled={topicCount === 0 || loading}
-                  onClick={() => void onDeleteAllTopics?.()}
-                >
-                  Delete all topics
-                </button>
+                {topicCount > 0 ? (
+                  <button
+                    type="button"
+                    className="row-menu-item row-menu-delete"
+                    disabled={loading}
+                    onClick={() => void onDeleteAllTopics?.()}
+                  >
+                    Delete all topics
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="row-menu-item row-menu-delete"

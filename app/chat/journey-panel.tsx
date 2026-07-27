@@ -5,6 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { IconChevronDown, IconRefresh } from "@/app/icons";
 import {
+  JOURNEY_ADD_LABEL,
+  JOURNEY_EDIT_LABEL,
   JOURNEY_EMPTY_HINT,
   JOURNEY_UPDATE_LABEL,
   isLongJournalBody,
@@ -18,6 +20,7 @@ type Props = {
   platform: string;
   catalogGameId?: number | null;
   journeyEnabled: boolean;
+  readOnly?: boolean;
   loading: boolean;
   expanded?: boolean;
   onExpandedChange?: (open: boolean) => void;
@@ -46,6 +49,7 @@ export function JourneyPanel({
   expanded = false,
   onExpandedChange,
   onToast,
+  readOnly = false,
 }: Props) {
   const [open, setOpen] = useState(expanded);
   const [body, setBody] = useState("");
@@ -58,7 +62,7 @@ export function JourneyPanel({
   const [canManualUpdate, setCanManualUpdate] = useState(false);
 
   const load = useCallback(async () => {
-    if (!user || !journeyEnabled || !game.trim()) {
+    if (!user || !game.trim() || (!journeyEnabled && !readOnly)) {
       setBody("");
       setDraft("");
       setLastUpdatedAt(null);
@@ -86,7 +90,7 @@ export function JourneyPanel({
     } catch {
       setLoadState("error");
     }
-  }, [user, journeyEnabled, game, platform, catalogGameId]);
+  }, [user, journeyEnabled, readOnly, game, platform, catalogGameId]);
 
   useEffect(() => {
     void load();
@@ -101,7 +105,7 @@ export function JourneyPanel({
     onExpandedChange?.(next);
   }
 
-  if (!user || !journeyEnabled || !game.trim()) return null;
+  if (!user || !game.trim() || (!journeyEnabled && !readOnly)) return null;
 
   const isUpdating = Boolean(updatingAt) || busy;
   const updatedLabel = formatUpdated(lastUpdatedAt);
@@ -109,6 +113,7 @@ export function JourneyPanel({
   const hasBody = Boolean(trimmedBody);
   const isLongBody = hasBody && isLongJournalBody(trimmedBody);
   const summaryPreview = hasBody ? journalBodyPreview(trimmedBody) : "";
+  const journalActionLabel = hasBody ? JOURNEY_EDIT_LABEL : JOURNEY_ADD_LABEL;
 
   async function handleUpdate() {
     if (!user || isUpdating) return;
@@ -192,7 +197,7 @@ export function JourneyPanel({
               onChange={(event) => setDraft(event.target.value)}
               rows={6}
               disabled={isUpdating || loading}
-              aria-label="Edit your journal"
+              aria-label={hasBody ? "Edit your journal" : "Add your journal"}
             />
             <div className="journey-panel-actions journey-panel-actions--edit">
               <button
@@ -219,7 +224,7 @@ export function JourneyPanel({
         ) : (
           <>
             <p
-              className={`journey-panel-text${isLongBody ? " is-scrollable" : ""}`}
+              className={`journey-panel-text${hasBody ? "" : " is-empty"}${isLongBody ? " is-scrollable" : ""}`}
             >
               {hasBody ? trimmedBody : JOURNEY_EMPTY_HINT}
             </p>
@@ -227,39 +232,41 @@ export function JourneyPanel({
               {updatedLabel ? (
                 <p className="journey-panel-meta">Updated {updatedLabel}</p>
               ) : null}
-              <div className="journey-panel-actions">
-                <button
-                  type="button"
-                  className="nav-button journey-panel-edit-btn"
-                  disabled={isUpdating || loading}
-                  onClick={() => setEditing(true)}
-                >
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  className="nav-button journey-panel-update-btn"
-                  disabled={isUpdating || loading || !canManualUpdate}
-                  title={
-                    canManualUpdate
-                      ? undefined
-                      : hasBody
-                        ? "No new chat messages to pull in yet"
-                        : "Share progress in chat first"
-                  }
-                  aria-label={
-                    canManualUpdate
-                      ? JOURNEY_UPDATE_LABEL
-                      : hasBody
-                        ? "Update journal (no new chat messages)"
-                        : "Update journal (share progress in chat first)"
-                  }
-                  onClick={() => void handleUpdate()}
-                >
-                  <IconRefresh size={14} className={isUpdating ? "spin" : ""} aria-hidden />
-                  {JOURNEY_UPDATE_LABEL}
-                </button>
-              </div>
+              {!readOnly ? (
+                <div className="journey-panel-actions">
+                  <button
+                    type="button"
+                    className="nav-button journey-panel-edit-btn"
+                    disabled={isUpdating || loading}
+                    onClick={() => setEditing(true)}
+                  >
+                    {journalActionLabel}
+                  </button>
+                  <button
+                    type="button"
+                    className="nav-button journey-panel-update-btn"
+                    disabled={isUpdating || loading || !canManualUpdate}
+                    title={
+                      canManualUpdate
+                        ? undefined
+                        : hasBody
+                          ? "No new chat messages to pull in yet"
+                          : "Share progress in chat first"
+                    }
+                    aria-label={
+                      canManualUpdate
+                        ? JOURNEY_UPDATE_LABEL
+                        : hasBody
+                          ? "Update journal (no new chat messages)"
+                          : "Update journal (share progress in chat first)"
+                    }
+                    onClick={() => void handleUpdate()}
+                  >
+                    <IconRefresh size={14} className={isUpdating ? "spin" : ""} aria-hidden />
+                    {JOURNEY_UPDATE_LABEL}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </>
         )}

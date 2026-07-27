@@ -7556,6 +7556,10 @@ details.sources small {
   white-space: pre-wrap;
 }
 
+.journey-panel-text.is-empty {
+  color: var(--muted);
+}
+
 .journey-panel-text.is-scrollable {
   /* ponytail: matches the old 6-line clamp height (~0.88rem × 1.45 × 6). */
   max-height: calc(6 * 1.45 * 0.88rem);

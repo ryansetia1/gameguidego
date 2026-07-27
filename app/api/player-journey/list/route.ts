@@ -21,9 +21,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
 
-  if (!playerJourneyEnabledFromMetadata(auth.user.user_metadata)) {
-    return NextResponse.json({ journeys: [] });
-  }
+  const journeyEnabled = playerJourneyEnabledFromMetadata(auth.user.user_metadata);
 
   const { data, error } = await supabase
     .from("player_journey")
@@ -38,6 +36,7 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json({
+    journeyEnabled,
     journeys: (data ?? []).map((row) => ({
       gameKey: row.game_key,
       platform: row.platform ?? "",

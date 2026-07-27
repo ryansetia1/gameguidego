@@ -972,7 +972,7 @@ export default function Home() {
         supabase,
         userId: user?.id,
         next,
-        confirmDisable: (message) => askConfirm(message, "Turn off", true),
+        confirmDisable: (message) => askConfirm(message, "Turn off", false),
         onError: setToast,
         onDisabled: () => setJourneyExpanded(false),
       });

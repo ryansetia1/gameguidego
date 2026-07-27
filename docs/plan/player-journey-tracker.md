@@ -30,7 +30,7 @@
 - Wrong merges will happen; manual edit + force Update are the safety net.
 - Auto-update is gated by model signal + throttle so cost stays bounded vs per-turn extract.
 - Temporary chats never touch the journal (same as style memory).
-- Disabling the feature wipes all journal rows and chunks (confirm dialog).
+- Disabling the feature pauses tracking and RAG; journal rows and chunks are kept until the user clears them or deletes a game.
 - Journal is game-agnostic free-form prose, not a Pokemon/Zelda-specific schema.
 
 ## Decision log
@@ -101,7 +101,8 @@ Manual **Update journal** calls the same `runJournalUpdate({ trigger: "manual" }
 { "player_journey_enabled": false }
 ```
 
-Disable confirm: `Turn off and clear your progress journals?`
+Disable confirm: `Turn off progress tracking?`  
+Clear all (profile): `Clear all progress journals? This cannot be undone.`
 
 ### Table `player_journey` (`db/player-journey.sql`)
 
@@ -274,7 +275,8 @@ Emitted after `journal_update_complete`. Client ([`app/chat/execute-chat-turn.ts
 |---------|------|
 | Toggle label | Track my progress |
 | Toggle hint | Keep a personal progress journal per game. Updates when you share new progress. Off by default. |
-| Disable confirm | Turn off and clear your progress journals? |
+| Disable confirm | Turn off progress tracking? |
+| Clear all journals | Clear all progress journals? This cannot be undone. |
 | Empty journal | Tell me where you are and what you have. I'll track it here. |
 | Update button | Update journal |
 | Toast fallback | Progress saved to your journal. |

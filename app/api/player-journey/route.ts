@@ -30,9 +30,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
 
-  if (!playerJourneyEnabledFromMetadata(auth.user.user_metadata)) {
-    return NextResponse.json({ enabled: false, body: "", indexed: false });
-  }
+  const journeyEnabled = playerJourneyEnabledFromMetadata(auth.user.user_metadata);
 
   const url = new URL(request.url);
   const game = cleanJourneyText(url.searchParams.get("game"), 120);
@@ -63,6 +61,7 @@ export async function GET(request: Request) {
   );
 
   return NextResponse.json({
+    journeyEnabled,
     body: row?.body ?? "",
     lastUpdatedAt: row?.last_updated_at ?? null,
     lastChatMessageAt: row?.last_chat_message_at ?? null,

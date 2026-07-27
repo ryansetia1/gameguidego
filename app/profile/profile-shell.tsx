@@ -76,7 +76,7 @@ export function ProfileShell({
       supabase,
       userId: user?.id,
       next,
-      confirmDisable: (message) => askConfirm(message, "Turn off", true),
+      confirmDisable: (message) => askConfirm(message, "Turn off", false),
       onError: setNotice,
     });
     if (!result.ok) return;

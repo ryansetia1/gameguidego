@@ -34,18 +34,14 @@ export function PlayerJourneyLink({ user }: Props) {
     const remote = journeyEnabledFromUserMetadata(user.user_metadata);
     const on = remote ?? playerJourneyEnabledFromMetadata(user.user_metadata);
     setEnabled(on);
-    if (!on) {
-      setCount(0);
-      setLoading(false);
-      return;
-    }
     setLoading(true);
     setLoadError(false);
     try {
       const response = await journeyAuthedFetch("/api/player-journey/list");
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Could not load journals.");
-      setCount(Array.isArray(payload.journeys) ? payload.journeys.length : 0);
+      const journeys = Array.isArray(payload.journeys) ? payload.journeys : [];
+      setCount(journeys.length);
     } catch {
       setCount(0);
       setLoadError(true);
@@ -64,11 +60,13 @@ export function PlayerJourneyLink({ user }: Props) {
     ? "…"
     : loadError
       ? "Unavailable"
-      : enabled
-        ? count > 0
-          ? `${count} game${count === 1 ? "" : "s"} tracked`
-          : "On, no journals yet"
-        : "Off";
+        : enabled
+          ? count > 0
+            ? `${count} game${count === 1 ? "" : "s"} tracked`
+            : "On, no journals yet"
+          : count > 0
+            ? `Off, ${count} saved`
+            : "Off";
 
   return (
     <div className="field profile-memory-link-field">
