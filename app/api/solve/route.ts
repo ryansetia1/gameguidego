@@ -768,73 +768,71 @@ export async function POST(request: Request) {
         if (authedSupabase && userId && !isRetry) {
           const journalReminderForAuto = journalReminderCoerced;
           const journalSummaryForAuto = coerceJournalReminderSummary(journalReminderSummary);
-          after(async () => {
-            try {
-              await runWithTrace(traceId, async () => {
-                let resolvedCatalogGameId = catalogGameId;
-                if (chatId && resolvedCatalogGameId == null) {
-                  const { data: chatRow } = await authedSupabase!
-                    .from("chats")
-                    .select("catalog_game_id")
-                    .eq("id", chatId)
-                    .maybeSingle();
-                  if (typeof (chatRow as { catalog_game_id?: number } | null)?.catalog_game_id === "number") {
-                    resolvedCatalogGameId = (chatRow as { catalog_game_id: number }).catalog_game_id;
-                  }
-                }
+          // ponytail: run inline inside backgroundTask (already in runWithTrace). Nested
+          // after() from here is outside the request lifecycle and trace events never land.
+          try {
+            let resolvedCatalogGameId = catalogGameId;
+            if (chatId && resolvedCatalogGameId == null) {
+              const { data: chatRow } = await authedSupabase
+                .from("chats")
+                .select("catalog_game_id")
+                .eq("id", chatId)
+                .maybeSingle();
+              if (typeof (chatRow as { catalog_game_id?: number } | null)?.catalog_game_id === "number") {
+                resolvedCatalogGameId = (chatRow as { catalog_game_id: number }).catalog_game_id;
+              }
+            }
 
-                if (journeyEnabled && !isTemporary) {
-                  try {
-                    const result = await runJournalUpdate({
-                      supabase: authedSupabase!,
-                      userId,
-                      game,
-                      platform,
-                      trigger: "auto",
-                      journalReminder: journalReminderForAuto,
-                      journalReminderSummary: journalSummaryForAuto,
-                      temporary: isTemporary,
-                      isRetry,
-                      catalogGameId: resolvedCatalogGameId,
-                    });
-                    if (result.ok && !result.skipped && result.toastSummary) {
-                      sendEvent("journal_updated", {
-                        summary: result.toastSummary,
-                        trigger: result.trigger,
-                        bodyChars: result.bodyChars,
-                      });
-                    }
-                  } catch (journalError) {
-                    console.error("Journal auto-update failed:", journalError);
-                  }
-                } else if (journalReminderForAuto) {
-                  await logTraceEvent(
-                    "journal_update_skipped",
-                    "Journal update skipped: disabled",
-                    undefined,
-                    {
-                      reason: "disabled",
-                      trigger: "auto",
-                      game,
-                      platform,
-                    },
-                  );
-                }
-
-                const bump = await bumpPlayerMemoryCount(authedSupabase!, userId);
-                if (!bump) return;
-                if (bump.hitDraft || bump.hitFull) {
-                  await refreshPlayerMemory(authedSupabase!, userId, {
-                    manual: false,
-                    force: true,
-                    trigger: bump.hitFull ? "solve_full_threshold" : "solve_draft_threshold",
+            if (journeyEnabled && !isTemporary) {
+              try {
+                const result = await runJournalUpdate({
+                  supabase: authedSupabase,
+                  userId,
+                  game,
+                  platform,
+                  trigger: "auto",
+                  journalReminder: journalReminderForAuto,
+                  journalReminderSummary: journalSummaryForAuto,
+                  temporary: isTemporary,
+                  isRetry,
+                  catalogGameId: resolvedCatalogGameId,
+                });
+                if (result.ok && !result.skipped && result.toastSummary) {
+                  sendEvent("journal_updated", {
+                    summary: result.toastSummary,
+                    trigger: result.trigger,
+                    bodyChars: result.bodyChars,
                   });
                 }
-              });
-            } catch (memoryBumpError) {
-              console.error("Player memory bump failed:", memoryBumpError);
+              } catch (journalError) {
+                console.error("Journal auto-update failed:", journalError);
+              }
+            } else if (journalReminderForAuto) {
+              await logTraceEvent(
+                "journal_update_skipped",
+                "Journal update skipped: disabled",
+                undefined,
+                {
+                  reason: "disabled",
+                  trigger: "auto",
+                  game,
+                  platform,
+                  userId,
+                },
+              );
             }
-          });
+
+            const bump = await bumpPlayerMemoryCount(authedSupabase, userId);
+            if (bump && (bump.hitDraft || bump.hitFull)) {
+              await refreshPlayerMemory(authedSupabase, userId, {
+                manual: false,
+                force: true,
+                trigger: bump.hitFull ? "solve_full_threshold" : "solve_draft_threshold",
+              });
+            }
+          } catch (postSolveError) {
+            console.error("Post-solve side effects failed:", postSolveError);
+          }
         } else if (journalReminderCoerced && !journeyEnabled) {
           void logTraceEvent(
             "journal_update_skipped",

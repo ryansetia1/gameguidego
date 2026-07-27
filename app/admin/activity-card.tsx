@@ -19,6 +19,7 @@ function badgeClass(type: ActivityType): string {
   if (type === "guide_ingest") return "activity-badge activity-badge--ingest";
   if (type === "guide_check") return "activity-badge activity-badge--check";
   if (type === "player_memory") return "activity-badge activity-badge--memory";
+  if (type === "player_journey") return "activity-badge activity-badge--journey";
   return "activity-badge activity-badge--upload";
 }
 

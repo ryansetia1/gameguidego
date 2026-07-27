@@ -17,7 +17,7 @@ export type GroupedTrace = {
   game?: string;
   platform?: string;
   question?: string;
-  category: "Chat" | "Upload" | "Checking" | "Ingest" | "Memory";
+  category: "Chat" | "Upload" | "Checking" | "Ingest" | "Memory" | "Journey";
   status: "Finished" | "New" | "Processing";
   statusColor: string;
   userName?: string;
@@ -359,13 +359,85 @@ function compactMemorySummarize(events: TraceEventRow[]): TraceEventRow[] {
   return out;
 }
 
+function compactJournalBand(events: TraceEventRow[]): TraceEventRow[] {
+  const out: TraceEventRow[] = [];
+  let i = 0;
+
+  while (i < events.length) {
+    const event = events[i]!;
+
+    if (event.event_type === "journal_rag_retrieve" || event.event_type === "journal_rag_skipped") {
+      out.push(
+        buildPhaseRow(
+          [event],
+          {
+            phaseType: "journal_rag",
+            label: event.event_type === "journal_rag_skipped" ? "Journal RAG (skipped)" : "Journal RAG",
+          },
+          true,
+          "trace_phase",
+        ),
+      );
+      i++;
+      continue;
+    }
+
+    if (event.event_type === "journal_update_skipped") {
+      out.push(
+        buildPhaseRow(
+          [event],
+          { phaseType: "journal_update", label: "Journal update" },
+          true,
+          "trace_phase",
+        ),
+      );
+      i++;
+      continue;
+    }
+
+    if (event.event_type !== "journal_update_start") {
+      out.push(event);
+      i++;
+      continue;
+    }
+
+    const block: TraceEventRow[] = [event];
+    i++;
+    while (
+      i < events.length &&
+      events[i]!.event_type !== "journal_update_complete" &&
+      events[i]!.event_type !== "journal_update_error"
+    ) {
+      block.push(events[i]!);
+      i++;
+    }
+
+    const tail = events[i];
+    if (tail?.event_type === "journal_update_complete" || tail?.event_type === "journal_update_error") {
+      block.push(tail);
+      i++;
+    }
+
+    out.push(
+      buildPhaseRow(
+        block,
+        { phaseType: "journal_update", label: "Journal update" },
+        tail?.event_type === "journal_update_complete",
+        "trace_phase",
+      ),
+    );
+  }
+
+  return out;
+}
+
 /** Collapse replicate polls, merge LLM phases, then compact Tavily/RAG/rerank steps. */
 export function compactTraceEvents(events: TraceEventRow[]): TraceEventRow[] {
   const llmCompact = mergeReplicatePhases(compactReplicateStatus(events));
   const paired = compactTracePairs(llmCompact);
   const web = mergeWebSearchBlock(paired);
   const rag = compactRagRetrieve(web);
-  return compactMemorySummarize(rag);
+  return compactJournalBand(compactMemorySummarize(rag));
 }
 
 /** Per-trace compact, then newest-first for the live feed. */
@@ -445,12 +517,26 @@ export function groupTraceEvents(traces: TraceEventRow[]): GroupedTrace[] {
     const discoveryStart = events.find((e) => e.event_type === "discovery_start");
     const ingestStart = events.find((e) => e.event_type === "ingest_start");
     const memoryStart = events.find((e) => e.event_type === "memory_refresh_start");
+    const journalStart = events.find(
+      (e) => e.event_type === "journal_update_start" || e.event_type === "journal_update_skipped",
+    );
+    const journalOnly =
+      !solveStart &&
+      !uploadStart &&
+      !discoveryStart &&
+      !ingestStart &&
+      !memoryStart &&
+      events.some((e) => e.event_type.startsWith("journal_"));
 
     const game =
       metaString(solveStart?.metadata, "game") ||
       metaString(uploadStart?.metadata, "game") ||
-      metaString(ingestStart?.metadata, "game");
-    const platform = metaString(solveStart?.metadata, "platform") || metaString(ingestStart?.metadata, "platform");
+      metaString(ingestStart?.metadata, "game") ||
+      metaString(journalStart?.metadata, "game");
+    const platform =
+      metaString(solveStart?.metadata, "platform") ||
+      metaString(ingestStart?.metadata, "platform") ||
+      metaString(journalStart?.metadata, "platform");
     const question =
       metaString(solveStart?.metadata, "question") ||
       (uploadStart?.metadata?.filename ? `Uploading: ${uploadStart.metadata.filename}` : undefined) ||
@@ -458,17 +544,24 @@ export function groupTraceEvents(traces: TraceEventRow[]): GroupedTrace[] {
       (ingestStart ? "Ingesting guides" : undefined) ||
       (memoryStart
         ? `Memory refresh (${metaString(memoryStart.metadata, "trigger") ?? "auto"})`
-        : undefined);
+        : undefined) ||
+      (journalStart
+        ? `Journal update (${metaString(journalStart.metadata, "trigger") ?? "auto"})`
+        : journalOnly
+          ? "Journal update"
+          : undefined);
 
     const category: GroupedTrace["category"] = memoryStart
       ? "Memory"
-      : uploadStart
-        ? "Upload"
-        : discoveryStart
-          ? "Checking"
-          : ingestStart
-            ? "Ingest"
-            : "Chat";
+      : journalOnly
+        ? "Journey"
+        : uploadStart
+          ? "Upload"
+          : discoveryStart
+            ? "Checking"
+            : ingestStart
+              ? "Ingest"
+              : "Chat";
 
     const isFinished = events.some(
       (e) =>
@@ -483,7 +576,10 @@ export function groupTraceEvents(traces: TraceEventRow[]): GroupedTrace[] {
         e.event_type === "ingest_url_error" ||
         e.event_type === "memory_refresh_complete" ||
         e.event_type === "memory_refresh_skipped" ||
-        e.event_type === "memory_refresh_error",
+        e.event_type === "memory_refresh_error" ||
+        e.event_type === "journal_update_complete" ||
+        e.event_type === "journal_update_skipped" ||
+        e.event_type === "journal_update_error",
     );
     const isNew = !isFinished && events.length <= 3;
     const status: GroupedTrace["status"] = isFinished ? "Finished" : isNew ? "New" : "Processing";
@@ -512,7 +608,8 @@ export function groupTraceEvents(traces: TraceEventRow[]): GroupedTrace[] {
         metaString(solveStart?.metadata, "userId") ||
         metaString(uploadStart?.metadata, "userId") ||
         metaString(ingestStart?.metadata, "userId") ||
-        metaString(memoryStart?.metadata, "userId"),
+        metaString(memoryStart?.metadata, "userId") ||
+        metaString(journalStart?.metadata, "userId"),
       pipelineType,
     };
   });

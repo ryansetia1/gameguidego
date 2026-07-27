@@ -8,6 +8,7 @@ import {
   getAuthedUser,
 } from "@/lib/player-memory-server";
 import { normGameKey } from "@/lib/player-memory.js";
+import { runWithTrace } from "@/lib/trace";
 
 export const runtime = "nodejs";
 
@@ -48,14 +49,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Game is required." }, { status: 400 });
   }
 
-  const result = await runJournalUpdate({
-    supabase,
-    userId: auth.user.id,
-    game,
-    platform,
-    trigger: "manual",
-    catalogGameId,
-  });
+  const traceId = request.headers.get("X-Trace-Id") || crypto.randomUUID();
+  const result = await runWithTrace(traceId, () =>
+    runJournalUpdate({
+      supabase,
+      userId: auth.user.id,
+      game,
+      platform,
+      trigger: "manual",
+      catalogGameId,
+    }),
+  );
 
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 500 });
@@ -66,7 +70,7 @@ export async function POST(request: Request) {
       ok: true,
       skipped: result.skipped,
       bodyChars: result.bodyChars,
-      chunkCount: result.chunkCount,
+      traceId,
     });
   }
 
@@ -75,5 +79,6 @@ export async function POST(request: Request) {
     bodyChars: result.bodyChars,
     chunkCount: result.chunkCount,
     summary: result.toastSummary,
+    traceId,
   });
 }

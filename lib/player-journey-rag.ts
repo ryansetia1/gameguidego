@@ -45,7 +45,14 @@ export async function retrieveFromPlayerJournal(input: {
     .eq("game_key", gameKey)
     .eq("platform", input.platform || "");
   const indexed = !error && (count ?? 0) > 0;
-  if (!indexed) return [];
+  if (!indexed) {
+    void logTraceEvent("journal_rag_skipped", "No indexed journal for this game", undefined, {
+      game: input.game,
+      platform: input.platform,
+      userId: input.userId,
+    });
+    return [];
+  }
 
   const start = Date.now();
   try {
@@ -72,6 +79,9 @@ export async function retrieveFromPlayerJournal(input: {
       {
         matchCount: matches.length,
         topSimilarity: matches[0]?.similarity ?? 0,
+        game: input.game,
+        platform: input.platform,
+        userId: input.userId,
       },
     );
     if (!matches.length) return [];

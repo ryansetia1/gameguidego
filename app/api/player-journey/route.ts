@@ -13,6 +13,7 @@ import {
 } from "@/lib/player-memory-server";
 import { normGameKey } from "@/lib/player-memory.js";
 import { JOURNAL_BODY_MAX, playerJourneyEnabledFromMetadata } from "@/lib/player-journey.js";
+import { runWithTrace } from "@/lib/trace";
 
 export const runtime = "nodejs";
 
@@ -101,14 +102,16 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Game is required." }, { status: 400 });
   }
 
-  const result = await saveManualJournalEdit({
-    supabase,
-    userId: auth.user.id,
-    game,
-    platform,
-    body: journalBody,
-    catalogGameId,
-  });
+  const result = await runWithTrace(request.headers.get("X-Trace-Id") || crypto.randomUUID(), () =>
+    saveManualJournalEdit({
+      supabase,
+      userId: auth.user.id,
+      game,
+      platform,
+      body: journalBody,
+      catalogGameId,
+    }),
+  );
 
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 500 });

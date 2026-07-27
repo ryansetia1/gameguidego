@@ -61,6 +61,7 @@ export function AdminStyles() {
         .activity-badge--check { background: var(--action); border-color: var(--action); color: #fff; }
         .activity-badge--upload { background: var(--paper-strong); }
         .activity-badge--memory { background: var(--warn); border-color: var(--ink); color: var(--ink); }
+        .activity-badge--journey { background: var(--accent); border-color: var(--ink); color: var(--ink); }
         .activity-status { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; }
         .activity-status--success { color: var(--accent); }
         .activity-status--error { color: var(--danger); }

@@ -8,7 +8,7 @@ import {
   traceStartMs,
 } from "@/lib/admin-link";
 
-export type ActivityType = "chat" | "guide_ingest" | "guide_check" | "guide_upload" | "player_memory";
+export type ActivityType = "chat" | "guide_ingest" | "guide_check" | "guide_upload" | "player_memory" | "player_journey";
 
 export type ActivityStatus = "success" | "error" | "processing";
 
@@ -275,6 +275,7 @@ function traceCategoryToType(category: GroupedTrace["category"]): ActivityType |
   if (category === "Checking") return "guide_check";
   if (category === "Upload") return "guide_upload";
   if (category === "Memory") return "player_memory";
+  if (category === "Journey") return "player_journey";
   return null;
 }
 
@@ -290,13 +291,19 @@ export function traceToActivity(trace: GroupedTrace): ActivityRow | null {
       : "processing";
 
   const provider =
-    type === "guide_check" ? "Tavily" : type === "player_memory" ? "Replicate" : "Tavily Extract";
+    type === "guide_check"
+      ? "Tavily"
+      : type === "player_memory" || type === "player_journey"
+        ? "Replicate"
+        : "Tavily Extract";
   const service =
     type === "guide_check"
       ? "Guide bundle check"
       : type === "player_memory"
         ? "Player memory"
-        : "Guide file upload";
+        : type === "player_journey"
+          ? "Player journey"
+          : "Guide file upload";
 
   return {
     id: `trace:${trace.traceId}`,
@@ -317,10 +324,16 @@ export function traceToActivity(trace: GroupedTrace): ActivityRow | null {
     technical: {
       event_count: trace.rawEventCount,
       category: trace.category,
-      pipeline_type: trace.category === "Memory" ? "memory" : trace.pipelineType,
+      pipeline_type:
+        trace.category === "Memory"
+          ? "memory"
+          : trace.category === "Journey"
+            ? "journal"
+            : trace.pipelineType,
       generation_latency_ms:
         trace.events.find((e) => e.event_type === "memory_summarize_complete")?.latency_ms ??
         trace.events.find((e) => e.event_type === "memory_refresh_complete")?.latency_ms ??
+        trace.events.find((e) => e.event_type === "journal_update_complete")?.latency_ms ??
         null,
     },
   };
@@ -380,6 +393,7 @@ export const ACTIVITY_TYPE_LABELS: Record<ActivityType, string> = {
   guide_check: "Guide check",
   guide_upload: "Guide upload",
   player_memory: "Player memory",
+  player_journey: "Player journey",
 };
 
 export const LLM_KIND_LABELS: Record<string, string> = {
@@ -387,6 +401,7 @@ export const LLM_KIND_LABELS: Record<string, string> = {
   summarize: "Answer generation",
   censor: "Spoiler censor",
   memory_summarize: "Memory summarize",
+  journal_synthesize: "Journal synthesize",
   embed_index: "Guide embed (index)",
   embed_query: "Guide embed (query)",
 };

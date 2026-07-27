@@ -250,6 +250,7 @@ export async function runJournalUpdate(input: {
       trigger: input.trigger,
       game: input.game,
       platform: input.platform,
+      userId: input.userId,
     });
     return { ok: true, skipped: skip, bodyChars: journalBodyChars(existing?.body ?? ""), chunkCount: 0, toastSummary: "", trigger: input.trigger };
   }
@@ -258,6 +259,7 @@ export async function runJournalUpdate(input: {
     trigger: input.trigger,
     game: input.game,
     platform: input.platform,
+    userId: input.userId,
     bodyCharsBefore: journalBodyChars(existing?.body ?? ""),
     deltaMessageCount: delta.length,
   });
