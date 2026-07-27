@@ -770,6 +770,9 @@ large chat or persistence work:
   composer toggles when a preferred guide is attached — **Search web instead**
   (`skipPreferredGuide` / `web_skip_guide`) and **Also search web**
   (`alsoSearchWeb` / `rag_supplemented`); default OFF; `lib/guide-retrieval-mode.js`.
+- [`docs/plan/guide-source-selector.md`](docs/plan/guide-source-selector.md): **Planned**
+  per-turn multi-select RAG source strip on the composer (Auto = all guides vs subset);
+  `ragGuideUrls` on `POST /api/solve` + user message for retry/edit.
 - [`docs/plan/guide-providers.md`](docs/plan/guide-providers.md): **Architecture**
   top-tier preferred-guide providers (GameFAQs, Neoseeker, IGN): dedicated ingest
   per host, shared RAG pipeline, `guide-ingest` router shape — read before provider work.

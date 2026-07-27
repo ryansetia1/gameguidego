@@ -16,6 +16,7 @@ they describe where the codebase is going, not necessarily what is shipped yet.
 | [player-memory-game-lifecycle.md](./player-memory-game-lifecycle.md) | **Planned** | Delete-game memory choice, per-game forget, not-in-library badge, catalog ID matching (Phases 1–4) |
 | [answer-satisfaction-signals.md](./answer-satisfaction-signals.md) | **Future** | Retry / feedback as answer-quality signals — phased experiment backlog |
 | [guide-web-override.md](./guide-web-override.md) | **Shipped** | **Search web instead** + **Also search web** toggles when a preferred guide is attached |
+| [guide-source-selector.md](./guide-source-selector.md) | **Planned** | Per-turn multi-select RAG source in composer (Auto vs subset of attached guides) |
 | [visual-search-rewrite-fold.md](./visual-search-rewrite-fold.md) | **Shipped** | Visual-intent detection folded into the rewrite (any language) + dropped the `visual_query` LLM call; auto-image by default with one global profile toggle (replaced the per-topic `+` menu toggle) |
 | [gamefaqs-toc-discovery.md](./gamefaqs-toc-discovery.md) | **Superseded** | Bundle discovery/dedup fixes — replaced by the "one `?print=1` page" refactor that deleted the whole bundle apparatus (retrieval dedup survives) |
 | [gamefaqs-print-hardening.md](./gamefaqs-print-hardening.md) | **Planned** | Follow-ups to the print-ingest simplification: soften the 20k quality gate for small guides, dead-code sweep, retire belt-and-suspenders RAG dedup, warm ingest on add |
