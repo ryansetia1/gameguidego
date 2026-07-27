@@ -14,6 +14,7 @@ import {
   summarizeSystemInstruction,
   trimImageResolvedSubject,
 } from "../lib/prompt.js";
+import { parseGuideTitleFromExtract } from "../lib/guide-title.js";
 import { selectSources } from "../lib/rank.js";
 import { parseBlocks, parseInline } from "../lib/markdown.js";
 import {
@@ -22,6 +23,7 @@ import {
   groupChatsByRoom,
   isTopicColumnDbError,
   mergeChatsFromServer,
+  mergeChatRows,
   syncSharedMetaToLocalGames,
   topicsForRoom,
 } from "../lib/game-room.js";
@@ -149,6 +151,7 @@ import {
   isGamefaqsFaqGuideUrl,
   isGamefaqsBundleUrl,
   MAX_GUIDE_URLS,
+  mergeRoomPreferredUrls,
   normalizeGuideUrlList,
   normalizePreferredGuideUrl,
 } from "../lib/guide-urls.js";
@@ -1503,6 +1506,104 @@ assert.equal(
     [{ id: "remote", game: "Hades", platform: "PC", preferred_guide_url: "", updated_at: "2026-01-03T00:00:00.000Z" }],
   ).some((row) => row.id === "stale-local"),
   false,
+);
+assert.deepEqual(
+  normalizeGuideUrlList([
+    "https://gamefaqs.gamespot.com/a",
+    "https://gamefaqs.gamespot.com/b",
+  ]),
+  [
+    "https://gamefaqs.gamespot.com/a",
+    "https://gamefaqs.gamespot.com/b",
+  ],
+);
+assert.deepEqual(
+  mergeRoomPreferredUrls(
+    ["https://gamefaqs.gamespot.com/a"],
+    ["https://gamefaqs.gamespot.com/a", "https://gamefaqs.gamespot.com/b"],
+  ),
+  [
+    "https://gamefaqs.gamespot.com/a",
+    "https://gamefaqs.gamespot.com/b",
+  ],
+);
+assert.deepEqual(
+  mergeRoomPreferredUrls(
+    ["https://gamefaqs.gamespot.com/a"],
+    ["https://gamefaqs.gamespot.com/a"],
+  ),
+  ["https://gamefaqs.gamespot.com/a"],
+);
+assert.deepEqual(
+  guideUrlsFromChat(
+    mergeChatRows(
+      {
+        id: "t1",
+        game: "Hades",
+        platform: "PC",
+        preferred_guide_url: "https://gamefaqs.gamespot.com/a",
+        preferred_guide_urls: ["https://gamefaqs.gamespot.com/a"],
+        updated_at: "2026-01-03T00:00:00.000Z",
+        title: "Saved",
+      },
+      {
+        id: "t1",
+        game: "Hades",
+        platform: "PC",
+        preferred_guide_url: "https://gamefaqs.gamespot.com/a",
+        preferred_guide_urls: [
+          "https://gamefaqs.gamespot.com/a",
+          "https://gamefaqs.gamespot.com/b",
+        ],
+        updated_at: "2026-01-03T00:00:00.000Z",
+        title: "Stale",
+      },
+    ),
+  ),
+  ["https://gamefaqs.gamespot.com/a"],
+);
+assert.deepEqual(
+  guideUrlsFromChat(
+    mergeChatRows(
+      {
+        id: "t1",
+        game: "Hades",
+        platform: "PC",
+        preferred_guide_url: "",
+        preferred_guide_urls: [],
+        updated_at: "2026-01-03T00:00:00.000Z",
+        title: "Newer",
+      },
+      {
+        id: "t1",
+        game: "Hades",
+        platform: "PC",
+        preferred_guide_url: "https://gamefaqs.gamespot.com/guide",
+        preferred_guide_urls: ["https://gamefaqs.gamespot.com/guide"],
+        updated_at: "2026-01-03T00:00:00.000Z",
+        title: "Older",
+      },
+    ),
+  ),
+  ["https://gamefaqs.gamespot.com/guide"],
+);
+assert.equal(
+  parseGuideTitleFromExtract("upload://uid/my-walkthrough.pdf"),
+  "my-walkthrough.pdf",
+);
+assert.equal(
+  parseGuideTitleFromExtract(
+    "https://www.neoseeker.com/pokemon/faq/walkthrough",
+    "# Pokemon Platinum Walkthrough\n\n## Intro\n",
+  ),
+  "Pokemon Platinum Walkthrough",
+);
+assert.equal(
+  parseGuideTitleFromExtract(
+    "https://example.com/guides/elden-ring-walkthrough.html",
+    "<title>Elden Ring Complete Guide</title>",
+  ),
+  "Elden Ring Complete Guide",
 );
 assert.equal(isTopicColumnDbError({ message: 'column "title" does not exist' }), true);
 assert.equal(isTopicColumnDbError({ message: "network error" }), false);

@@ -7,7 +7,7 @@ import {
   type GuideIndexState,
   guideIndexStateFromIngest,
 } from "@/lib/guide-index-state";
-import { isUploadedGuideUrl } from "@/lib/guide-urls.js";
+import { isSamePreferredGuide } from "@/lib/guide-urls.js";
 import { displayNameFromMetadata } from "@/lib/profile.js";
 import type { GuideMeta } from "../guide-link-field";
 
@@ -63,9 +63,11 @@ export function useGuideBundle({
           let next = prev;
           for (const item of data.results) {
             if (!item.title) continue;
-            const existing = prev[item.url];
+            const key = preferredUrls.find((url) => isSamePreferredGuide(url, item.url));
+            if (!key) continue;
+            const existing = prev[key];
             if (existing?.title === item.title) continue;
-            next = { ...next, [item.url]: { ...existing, title: item.title } };
+            next = { ...next, [key]: { ...existing, title: item.title } };
           }
           return next === prev ? prev : next;
         });
@@ -74,7 +76,7 @@ export function useGuideBundle({
           const next: GuideIndexState = {};
           for (const url of preferredUrls) {
             const current = prev[url];
-            const item = data.results.find((r) => r.url === url);
+            const item = data.results.find((r) => isSamePreferredGuide(r.url, url));
             if (!data.available) {
               next[url] = "unavailable";
             } else if (current === "checking" || current === "failed" || current === "blocked") {

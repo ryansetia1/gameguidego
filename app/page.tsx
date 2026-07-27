@@ -32,6 +32,7 @@ import {
 import {
   guideUrlsFromChat,
   guideUrlsPayload,
+  mergeRoomPreferredUrls,
   normalizeGuideUrlList,
 } from "@/lib/guide-urls.js";
 import { compressImage, coverStoragePath } from "@/lib/image.js";
@@ -1217,7 +1218,9 @@ export default function Home() {
   function applyRoomContext(chat: Chat) {
     setGame(chat.game);
     setPlatform(chat.platform);
-    setPreferredUrls(guideUrlsFromChat(chat));
+    // Union with in-memory URLs so a guide added on the topic list (or mid-save)
+    // isn't wiped when opening a topic whose row hasn't caught up yet.
+    setPreferredUrls((prev) => mergeRoomPreferredUrls(guideUrlsFromChat(chat), prev));
     if (cover.startsWith("blob:")) URL.revokeObjectURL(cover);
     setCover(chat.cover_url ?? "");
     setPendingCover(null);
@@ -1472,6 +1475,10 @@ export default function Home() {
     setEditingGame(false);
     const priorGame = conversationGame.current || game;
     const priorPlatform = conversationPlatform.current || platform;
+    const roomKey = gameRoomKey(priorGame, priorPlatform);
+    const persistedUrls = normalizeGuideUrlList(
+      guideUrlsFromChat(chats.find((row) => gameRoomKey(row.game, row.platform) === roomKey)),
+    );
     const urls = normalizeGuideUrlList(preferredUrls);
     setPreferredUrls(urls);
     const supabase = getSupabase();
@@ -1481,33 +1488,45 @@ export default function Home() {
       ...guideUrlsPayload(urls),
       release_year: releaseYear,
     };
-    // Anon: sync metadata across every topic in this room.
+    const coverUrl = cover.startsWith("blob:") ? "" : cover;
+    const optimisticMeta = { ...sharedMeta, cover_url: coverUrl };
+
     if (!supabase || !user) {
-      const coverUrl = cover.startsWith("blob:") ? "" : cover;
       const priorKey = gameRoomKey(priorGame, priorPlatform);
-      const synced = syncSharedMetaToLocalGames(loadLocalGames(), priorGame, priorPlatform, {
-        ...guideUrlsPayload(urls),
-        cover_url: coverUrl,
-        release_year: releaseYear,
-      }).map((row) =>
-        gameRoomKey(row.game, row.platform) === priorKey ? { ...row, ...sharedMeta, cover_url: coverUrl } : row,
+      const synced = syncSharedMetaToLocalGames(loadLocalGames(), priorGame, priorPlatform, optimisticMeta).map(
+        (row) =>
+          gameRoomKey(row.game, row.platform) === priorKey
+            ? { ...row, ...sharedMeta, cover_url: coverUrl }
+            : row,
       );
       setChats(setLocalGames(synced));
       conversationGame.current = game;
       conversationPlatform.current = platform;
       return;
     }
+
+    setChats((prev) => syncSharedMetaToLocalGames(prev, priorGame, priorPlatform, optimisticMeta));
     try {
-      const coverUrl = await resolveCoverUrl();
+      const resolvedCoverUrl = await resolveCoverUrl();
       await syncRoomSharedMeta(supabase, user.id, priorGame, priorPlatform, {
         ...sharedMeta,
-        cover_url: coverUrl,
+        cover_url: resolvedCoverUrl,
       });
+      if (resolvedCoverUrl !== coverUrl) {
+        setChats((prev) =>
+          syncSharedMetaToLocalGames(prev, priorGame, priorPlatform, {
+            cover_url: resolvedCoverUrl,
+          }),
+        );
+      }
       conversationGame.current = game;
       conversationPlatform.current = platform;
       void loadChats();
     } catch (caught) {
       console.error("Failed to save game details:", caught);
+      setToast("Couldn't save those game details. Try again.");
+      setPreferredUrls(persistedUrls);
+      void loadChats({ replace: true });
     }
   }
 

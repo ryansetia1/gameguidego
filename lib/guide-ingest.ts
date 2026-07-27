@@ -9,7 +9,6 @@ import {
   canonicalGamefaqsBundleUrl,
   gamefaqsExtractQuality,
   parseGamefaqsFaqUrl,
-  parseGamefaqsGuideTitle,
 } from "@/lib/gamefaqs-bundle.js";
 import {
   extractGuidePage,
@@ -17,6 +16,8 @@ import {
   looksLikeHub,
 } from "@/lib/tavily";
 import { fetchGamefaqsWaybackRootTitle } from "@/lib/wayback.js";
+import { parseGuideTitleFromExtract } from "@/lib/guide-title.js";
+import { uploadedGuideFilename } from "@/lib/guide-urls.js";
 import { getServerClient } from "@/lib/supabase-server";
 import { logTraceEvent } from "@/lib/trace";
 
@@ -74,7 +75,7 @@ export function guideStorageKey(rawUrl: string): string {
     : normalizeGuideUrl(rawUrl);
 }
 
-/** Cached display title from a prior GameFAQs ingest (guide_bundle_cache). */
+/** Cached display title from a prior ingest (guide_bundle_cache). */
 export async function getGuideDisplayTitle(guideUrl: string): Promise<string | null> {
   const supabase = getServerClient();
   if (!supabase) return null;
@@ -87,6 +88,11 @@ export async function getGuideDisplayTitle(guideUrl: string): Promise<string | n
       .maybeSingle();
     const cached = (data?.data as { title?: string } | null)?.title;
     if (typeof cached === "string" && cached.trim()) return cached.trim();
+
+    if (guideUrl.startsWith("upload://")) {
+      const filename = uploadedGuideFilename(guideUrl);
+      return filename || null;
+    }
 
     // ponytail: Wayback multi-section ingest is plain text — title lives in root HTML only.
     if (!parseGamefaqsFaqUrl(guideUrl) || !(await isGuideIndexed(guideUrl))) return null;
@@ -132,20 +138,35 @@ async function persistGuideTitle(
   return trimmed;
 }
 
-async function cacheGamefaqsGuideTitle(
+async function indexedGuideCacheHit(
+  supabase: SupabaseClient,
+  guideUrl: string,
+): Promise<IngestResult> {
+  const { count } = await supabase
+    .from("guide_chunks")
+    .select("*", { count: "exact", head: true })
+    .eq("guide_url", guideUrl);
+  const title = await getGuideDisplayTitle(guideUrl);
+  return {
+    indexed: true,
+    chunkCount: count ?? 0,
+    hubWarning: false,
+    ...(title ? { title } : {}),
+  };
+}
+
+async function cacheGuideTitleFromExtract(
   supabase: SupabaseClient,
   guideUrl: string,
   rawContent: string,
   signal?: AbortSignal,
 ): Promise<string | undefined> {
-  const parsed = parseGamefaqsFaqUrl(guideUrl);
-  if (!parsed) return undefined;
-  let title = parseGamefaqsGuideTitle(rawContent, parsed);
-  if (!title) {
+  let title = parseGuideTitleFromExtract(guideUrl, rawContent);
+  if (!title && parseGamefaqsFaqUrl(guideUrl)) {
     title = (await fetchGamefaqsWaybackRootTitle(guideUrl, signal)) || "";
   }
   if (!title) return undefined;
-  return persistGuideTitle(supabase, guideUrl, title);
+  return persistGuideTitle(supabase, guideStorageKey(guideUrl), title);
 }
 
 /** True when guide_chunks already has rows for this URL. */
@@ -372,24 +393,10 @@ async function ingestGuidePage(
         );
         await deleteGuideChunks(supabase, guideUrl);
       } else {
-        const { count } = await supabase
-          .from("guide_chunks")
-          .select("*", { count: "exact", head: true })
-          .eq("guide_url", guideUrl);
-        const title = await getGuideDisplayTitle(guideUrl);
-        return {
-          indexed: true,
-          chunkCount: count ?? 0,
-          hubWarning: false,
-          ...(title ? { title } : {}),
-        };
+        return indexedGuideCacheHit(supabase, guideUrl);
       }
     } else {
-      const { count } = await supabase
-        .from("guide_chunks")
-        .select("*", { count: "exact", head: true })
-        .eq("guide_url", guideUrl);
-      return { indexed: true, chunkCount: count ?? 0, hubWarning: false };
+      return indexedGuideCacheHit(supabase, guideUrl);
     }
   }
 
@@ -449,8 +456,7 @@ async function ingestGuidePage(
     return { indexed: false, chunkCount: 0, hubWarning: false };
   }
 
-  // ponytail: title parse from extract text only — direct GameFAQs fetch is Cloudflare-blocked.
-  const title = await cacheGamefaqsGuideTitle(supabase, guideUrl, extracted.content, signal);
+  const title = await cacheGuideTitleFromExtract(supabase, guideUrl, extracted.content, signal);
 
   void logTraceEvent(
     "ingest_complete",
@@ -478,11 +484,10 @@ export async function ensureGuideIngested(
   if (rawUrl.startsWith("upload://")) {
     const supabase = getServerClient();
     if (!supabase) return { indexed: false, chunkCount: 0, hubWarning: false };
-    const { count } = await supabase
-      .from("guide_chunks")
-      .select("*", { count: "exact", head: true })
-      .eq("guide_url", rawUrl);
-    return { indexed: (count ?? 0) > 0, chunkCount: count ?? 0, hubWarning: false };
+    if (await isGuideIndexed(rawUrl)) {
+      return indexedGuideCacheHit(supabase, rawUrl);
+    }
+    return { indexed: false, chunkCount: 0, hubWarning: false };
   }
   return ingestGuidePage(rawUrl, signal, ctx);
 }
@@ -503,11 +508,7 @@ export async function ingestGuideFromText(input: {
   }
 
   if (await isGuideIndexed(input.guideUrl)) {
-    const { count } = await supabase
-      .from("guide_chunks")
-      .select("*", { count: "exact", head: true })
-      .eq("guide_url", input.guideUrl);
-    return { indexed: true, chunkCount: count ?? 0, hubWarning: false };
+    return indexedGuideCacheHit(supabase, input.guideUrl);
   }
 
   void logTraceEvent(
@@ -536,11 +537,18 @@ export async function ingestGuideFromText(input: {
     return { indexed: false, chunkCount: 0, hubWarning: false };
   }
 
+  const title = await cacheGuideTitleFromExtract(supabase, input.guideUrl, input.text);
+
   void logTraceEvent(
     "ingest_upload_complete",
     `Uploaded guide ingested: ${input.guideUrl}`,
     Date.now() - startMs,
-    { guideUrl: input.guideUrl, chunkCount: stored.chunkCount },
+    { guideUrl: input.guideUrl, chunkCount: stored.chunkCount, ...(title ? { title } : {}) },
   );
-  return { indexed: true, chunkCount: stored.chunkCount, hubWarning: false };
+  return {
+    indexed: true,
+    chunkCount: stored.chunkCount,
+    hubWarning: false,
+    ...(title ? { title } : {}),
+  };
 }
