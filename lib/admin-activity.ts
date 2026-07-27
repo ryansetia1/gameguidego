@@ -121,7 +121,15 @@ function pipelineService(pipeline: string | null | undefined): string {
 }
 
 export function providerFromLlmCalls(calls: LlmCallRow[]): string {
-  const priority = ["summarize", "memory_summarize", "rewrite", "censor", "embed_index", "embed_query"];
+  const priority = [
+    "summarize",
+    "memory_summarize",
+    "journal_synthesize",
+    "rewrite",
+    "censor",
+    "embed_index",
+    "embed_query",
+  ];
   for (const kind of priority) {
     const hit = calls.find((call) => call.kind === kind && call.model);
     if (hit) return hit.model;

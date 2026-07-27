@@ -2238,6 +2238,14 @@ assert.equal(
   4,
 );
 assert.equal(countApiSpendFromLlm([{ kind: "embed_index" }, { kind: "embed_query" }]).sumopod_embed, 2);
+assert.equal(
+  countApiSpendFromLlm([{ kind: "journal_synthesize" }, { kind: "embed_index" }]).replicate,
+  1,
+);
+assert.equal(
+  countApiSpendFromLlm([{ kind: "journal_synthesize" }, { kind: "embed_index" }]).sumopod_embed,
+  1,
+);
 const spendSummary = buildApiSpend(traceSpendFixture, [
   { kind: "rewrite" },
   { kind: "summarize" },
