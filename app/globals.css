@@ -7528,6 +7528,7 @@ details.sources small {
 
 .journey-panel-body {
   margin-top: 8px;
+  padding: 0 18px 14px;
   display: flex;
   flex-direction: column;
   gap: 10px;
