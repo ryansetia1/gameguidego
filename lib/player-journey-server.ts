@@ -308,28 +308,54 @@ export async function runJournalUpdate(input: {
     deltaMessageCount: delta.length,
   });
 
+  // Ensure the row exists first (insert-only: a concurrent racer's lock must
+  // never be clobbered by this recreating the row).
+  await input.supabase.from("player_journey").upsert(
+    {
+      user_id: input.userId,
+      game_key: gameKey,
+      platform: input.platform || "",
+      catalog_game_id: input.catalogGameId ?? existing?.catalog_game_id ?? null,
+    },
+    { onConflict: "user_id,game_key,platform", ignoreDuplicates: true },
+  );
+
+  // Atomic check-and-lock: the WHERE clause and the SET happen as one
+  // statement, so two concurrent callers can't both see "unlocked" and both
+  // proceed (see docs/plan/player-journey-tracker.md "Concurrency locks").
   const lockNow = new Date().toISOString();
-  const { error: lockError } = await input.supabase.from("player_journey").upsert({
-    user_id: input.userId,
-    game_key: gameKey,
-    platform: input.platform || "",
-    catalog_game_id: input.catalogGameId ?? existing?.catalog_game_id ?? null,
-    body: existing?.body ?? "",
-    body_chars: journalBodyChars(existing?.body ?? ""),
-    last_chat_message_at: existing?.last_chat_message_at ?? null,
-    last_auto_updated_at: existing?.last_auto_updated_at ?? null,
-    auto_update_day: existing?.auto_update_day ?? null,
-    auto_update_count: existing?.auto_update_count ?? 0,
-    manual_save_at: existing?.manual_save_at ?? null,
-    updating_at: lockNow,
-    updated_at: lockNow,
-  });
+  const staleBefore = new Date(Date.now() - JOURNAL_IN_FLIGHT_STALE_MS).toISOString();
+  const { data: lockedRows, error: lockError } = await input.supabase
+    .from("player_journey")
+    .update({ updating_at: lockNow, updated_at: lockNow })
+    .eq("user_id", input.userId)
+    .eq("game_key", gameKey)
+    .eq("platform", input.platform || "")
+    .or(`updating_at.is.null,updating_at.lt.${staleBefore}`)
+    .select("updating_at");
   if (lockError) {
     await logTraceEvent("journal_update_error", "Could not acquire journal lock", Date.now() - startedAt, {
       step: "lock",
       message: lockError.message,
     });
     return { ok: false, error: "Could not start journal update." };
+  }
+  if (!lockedRows?.length) {
+    await logTraceEvent("journal_update_skipped", "Journal update skipped: in_flight", Date.now() - startedAt, {
+      reason: "in_flight",
+      trigger: input.trigger,
+      game: input.game,
+      platform: input.platform,
+      userId: input.userId,
+    });
+    return {
+      ok: true,
+      skipped: "in_flight",
+      bodyChars: journalBodyChars(existing?.body ?? ""),
+      chunkCount: 0,
+      toastSummary: input.trigger === "manual" ? journalUpdateSkipMessage("in_flight") : "",
+      trigger: input.trigger,
+    };
   }
 
   try {
