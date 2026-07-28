@@ -4297,17 +4297,27 @@ details.sources small {
   cursor: not-allowed;
 }
 
-.game-card-quick-add-inline,
 .game-card-quick-add-summary {
   flex-shrink: 0;
   min-height: auto;
-  padding: 0;
+  padding: 2px 0;
   white-space: nowrap;
   font-size: 0.75rem;
 }
 
-.game-card-quick-add-summary {
-  padding: 2px 0;
+/* Own row below the guide list, not squeezed onto a truncating link line —
+   right-aligned for one-handed thumb reach on mobile. */
+.game-card-guide-add-row {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.game-card-quick-add-row {
+  min-height: 44px;
+  padding: 0 2px;
 }
 
 .game-card-quick-add-panel {
@@ -7567,6 +7577,20 @@ details.sources small {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
+  scrollbar-color: var(--muted) transparent;
+}
+
+.journey-panel-text.is-scrollable::-webkit-scrollbar {
+  width: 5px;
+}
+
+.journey-panel-text.is-scrollable::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.journey-panel-text.is-scrollable::-webkit-scrollbar-thumb {
+  background: var(--muted);
+  border-radius: 0;
 }
 
 .journey-panel-hint {

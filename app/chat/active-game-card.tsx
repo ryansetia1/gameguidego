@@ -217,9 +217,7 @@ export function ActiveGameCard({
     );
   };
 
-  const renderGuideStack = (url: string, index: number) => {
-    const isLastGuide = index === preferredUrls.length - 1;
-    const showInlineAdd = !showQuickAdd && !isCollapsible && preferredUrls.length > 0 && isLastGuide;
+  const renderGuideStack = (url: string) => {
     const row = gameCardGuideRow(url, guideMeta[url], guideIndexState[url]);
     return (
       <div key={guideUrlDedupeKey(url)} className="game-card-guide-stack">
@@ -333,11 +331,12 @@ export function ActiveGameCard({
           </a>
         )}
           </div>
-          {showInlineAdd ? renderAddGuideLink("game-card-quick-add-inline") : null}
         </div>
       </div>
     );
   };
+
+  const showAddGuideRow = !showQuickAdd && !isCollapsible && preferredUrls.length > 0;
 
   const gameCardClass = className ? `game-card ${className}` : "game-card";
   const showIncognito = !temporary && (Boolean(activeChatId) || menuVariant === "topics");
@@ -527,9 +526,12 @@ export function ActiveGameCard({
             className={isCollapsible ? "game-card-guides" : ""}
             style={isCollapsible ? { marginTop: "8px" } : undefined}
           >
-            {!showQuickAdd
-              ? preferredUrls.map((url, index) => renderGuideStack(url, index))
-              : null}
+            {!showQuickAdd ? preferredUrls.map((url) => renderGuideStack(url)) : null}
+            {showAddGuideRow ? (
+              <div className="game-card-guide-add-row">
+                {renderAddGuideLink("game-card-quick-add-row")}
+              </div>
+            ) : null}
             {renderQuickAdd()}
           </div>
         </details>
