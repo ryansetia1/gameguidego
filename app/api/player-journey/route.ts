@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 
-import { journalChunksExist } from "@/lib/player-journey-rag";
 import {
   loadPlayerJourney,
   pendingManualJournalUpdate,
@@ -35,6 +34,9 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const game = cleanJourneyText(url.searchParams.get("game"), 120);
   const platform = cleanJourneyText(url.searchParams.get("platform"), 40);
+  // Polling only reads lastUpdatedAt/bodyChars/lastToastSummary; skip the chats
+  // load (canManualUpdate) so a 15x poll loop doesn't re-scan chats each tick.
+  const light = url.searchParams.get("light") === "1";
   const catalogParam = url.searchParams.get("catalogGameId");
   const catalogGameId =
     catalogParam && Number.isFinite(Number(catalogParam))
@@ -45,13 +47,18 @@ export async function GET(request: Request) {
   }
 
   const row = await loadPlayerJourney(supabase, auth.user.id, game, platform, catalogGameId);
-  const indexed = await journalChunksExist(
-    supabase,
-    auth.user.id,
-    game,
-    platform,
-    catalogGameId,
-  );
+
+  const base = {
+    journeyEnabled,
+    body: row?.body ?? "",
+    lastUpdatedAt: row?.last_updated_at ?? null,
+    lastChatMessageAt: row?.last_chat_message_at ?? null,
+    updatingAt: row?.updating_at ?? null,
+    lastToastSummary: row?.last_toast_summary ?? "",
+    bodyChars: row?.body_chars ?? 0,
+  };
+  if (light) return NextResponse.json(base);
+
   const pending = await pendingManualJournalUpdate(
     supabase,
     auth.user.id,
@@ -60,17 +67,7 @@ export async function GET(request: Request) {
     row?.last_chat_message_at ?? null,
   );
 
-  return NextResponse.json({
-    journeyEnabled,
-    body: row?.body ?? "",
-    lastUpdatedAt: row?.last_updated_at ?? null,
-    lastChatMessageAt: row?.last_chat_message_at ?? null,
-    updatingAt: row?.updating_at ?? null,
-    lastToastSummary: row?.last_toast_summary ?? "",
-    indexed,
-    bodyChars: row?.body_chars ?? 0,
-    canManualUpdate: pending.canManualUpdate,
-  });
+  return NextResponse.json({ ...base, canManualUpdate: pending.canManualUpdate });
 }
 
 export async function PATCH(request: Request) {
