@@ -405,6 +405,10 @@ Ship PR1+2 together or back-to-back so we do not embed without metadata paths.
 | 2026-07-26 | Implementation order: Phase 1 → 2 → 3 |
 | 2026-07-26 | Motivated by traces `765789c7` (cosine fail) and `86e594bb` (Cohere ok) |
 | 2026-07-26 | **Rules-after-Cohere** (shipped): Cohere supplies `relevant`; rules own final order. Revert: `GUIDE_RULES_AFTER_COHERE=0` or revert `lib/guide-rag.ts` rules-after-cohere block |
+| 2026-08-06 | Rescoring ranks on `retrieval_score` (cosine fused with the exact-name hit), not raw `similarity`. Ranking on cosine silently discarded every upstream signal, Cohere's included — see [rag-tuning-roadmap.md](./rag-tuning-roadmap.md) Phase D |
+| 2026-08-06 | `boss` removed from `POSITION_FOLLOWUP`. "I beat the boss, what now?" is a milestone, not a position, and treating it as one cut summarize to one excerpt (trace `14a03ed6`) |
+| 2026-08-06 | `tier_match_boost` **deleted**. It added +0.05 whenever both query and chunk merely *had* a tier marker, never comparing the number, so a "Level 3" question pushed "Level 7" and "Level 2" chunks to rank 1 and 2. `tier_mismatch_penalty` stays: demoting an upgraded variant nobody asked for is still sound |
+| 2026-08-06 | `forward_jump_penalty` now yields to `queryLate`. A rewrite's boilerplate ("what are the next steps") matched the early pattern and outranked "after defeating", so a finished arc counted as mid-dungeon and the aftermath chunk was penalised 0.12 |
 
 ---
 

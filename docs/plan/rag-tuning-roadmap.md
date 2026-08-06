@@ -278,14 +278,150 @@ Recall@5 was already 100%, so the reranker scores the existing top-5 — no SQL
 `LIMIT` bump to 15–20 needed. Jina/Voyage would drop in the same way (new adapter
 returning `RerankResult`, add a branch in the `guide-rag.ts` gate).
 
-### Phase D — Hybrid retrieval (DEFERRED — data does not justify yet)
+**Correction (2026-08-06, trace `14a03ed6`):** that "score the existing top-5"
+decision does not hold once rules rescoring picks the 5. Cohere sees whatever the
+heuristics chose out of `RETRIEVE_FETCH = 20`, and on this trace the answer chunk was
+not among them — Cohere's top score was 0.342, versus **0.819 / 0.682 with a clear
+gap** when handed the full pool of 20. Worse, the rules-after-Cohere pass re-sorted on
+cosine, so Cohere's order was thrown away entirely. Ablation on that trace:
 
-Calibration disproved the original motivation (exact names were NOT missed — they
-were in top-K, just mis-ranked, which rerank fixes). Revisit only if a later eval
-on more guides shows genuine recall misses (targeted paragraph absent from top-K).
+| Pipeline | Excerpt sent to summarize |
+|----------|---------------------------|
+| Current, Cohere on | wrong chunk |
+| Current, Cohere off | **byte-identical** wrong chunk |
+| Cohere on the pool of 20, rules-after on | still the wrong chunk |
+| Cohere on the pool of 20, rules-after off | answer chunk at rank 2 |
 
-- [ ] Add BM25 (or Postgres `tsvector`) on `chunk_text` scoped to `guide_url`.
-- [ ] Merge vector + keyword hits (RRF or simple union) before rerank.
+So Cohere contributed nothing but the `relevant` verdict. Phase D (hybrid) is what
+fixed this turn, and it costs no API call, which is the right place for the load-bearing
+signal if the Cohere key ever lapses. If Cohere is re-promoted to own ordering, feed it
+the full pool and write its score into `retrieval_score`, or the rules pass will
+discard it again.
+
+### Phase D — Hybrid retrieval (SHIPPED 2026-08-06 — the Suikoden caveat bit)
+
+Phase C deferred this because the Suikoden set showed recall@5 = 100%, so exact names
+were assumed to be present but mis-ranked. A second guide disproved that. Trace
+`14a03ed6` (Link's Awakening GameFAQs `?print=1`, 78 chunks): the player asked what
+follows the **Slime Eyes** fight, and the chunk holding that answer sat at **cosine
+rank 16 of 20**, below the top-K cut. The 20 nearest chunks spanned 0.650–0.752, a
+0.10 band that is noise. The model got one wrong excerpt and invented a next dungeon.
+
+| Retrieval | Rank of the answer chunk |
+|-----------|--------------------------|
+| Cosine only (shipped before) | 16 of 20 |
+| Full-text, bag of every query word | 5 |
+| Phrase `slime <-> eye` | **1, and the only match at all** (0.099 vs 0.000) |
+| Vector ∪ phrase, fused | **2** |
+
+Bag-of-words is not the lever, the **phrase** is: it isolated the right chunk and
+still scored 0 on the chunk describing *Slime Eel*, a different boss that cosine
+ranked 2nd. Generic words dilute the signal, so extraction targets proper nouns only.
+
+- [x] Postgres `tsvector` phrase search on `chunk_text` scoped to `guide_url`
+  (`db/guide-chunks-hybrid.sql`, `match_guide_chunks_hybrid`).
+- [x] Union vector + lexical hits; every row keeps its true cosine plus `lexical_rank`.
+- [x] `lib/guide-lexical.js` — proper-noun extraction from the English rewrite using
+  capitalisation and sentence position only. No per-game vocabulary; `npm run check`
+  asserts it on three unrelated titles.
+- [x] Fuse via `retrieval_score = cosine + 0.25` on a lexical hit. The bonus exceeds
+  the largest single rescore penalty (0.18) so an exact-name match survives one
+  misfiring rule, and two rules together can still override it.
+
+**Structural fix that came with it:** `rescoreGuideChunks` used to rank on
+`similarity + delta`, where `similarity` was always raw cosine. That silently
+discarded **every** upstream ranking signal, including Cohere's. It now ranks on
+`retrieval_score`, so hybrid (and any future reranker) actually survives.
+
+**Rules pruned in the same pass** (`lib/guide-rescore.js`), both of which had actively
+pushed the wrong chunk up on this trace:
+
+- `tier_match_boost` **deleted**. It fired on the mere presence of a tier marker on
+  both sides, never comparing the number. `tier_mismatch_penalty` is kept.
+- `forward_jump_penalty` now yields to `queryLate`, so "after defeating the boss" is
+  no longer classified as still-inside-the-dungeon.
+
+Measured on trace `14a03ed6` after every change:
+
+| Path | Rank of the answer chunk |
+|------|--------------------------|
+| Before any fix | 16 of 20, never reached the model |
+| Hybrid, rules unpruned | 2 |
+| **Hybrid, rules pruned (shipped)** | **1** |
+| Vector-only fallback, rules pruned | 7 |
+
+The fallback row is the honest cost of skipping `db/guide-chunks-hybrid.sql`: pruning
+alone lifts the chunk from 16 to 7, but only the lexical hit gets it into the top-5.
+
+#### End-to-end validation, and the bug it caught (2026-08-06)
+
+Offline rank checks said shipped; a live run through `/api/solve` on four unrelated
+games said otherwise. `scripts/test-hybrid-retrieval.mjs` asks about a named entity per
+game and asserts the excerpt naming it lands in the top 3.
+
+| Guide | Chunks | Before | After |
+|-------|--------|--------|-------|
+| Link's Awakening (the `14a03ed6` turn) | 78 | rank 2, answer correct | rank 2, answer correct |
+| Pokémon Platinum | 1093 | **0 lexical hits** | rank 1, 5 hits |
+| Final Fantasy VIII | 781 | rank 1, 11 hits | rank 1, 11 hits |
+| Castlevania: SotN | 200 | rank 1, 12 hits | rank 1, 12 hits |
+
+Pokémon Platinum was retrieving on cosine alone while reporting the feature on. The
+function built `to_tsvector(chunk_text)` for every scoped row, which at 1093 chunks
+exceeded the statement timeout; `fetchCandidates` caught the error and fell back to
+`match_guide_chunks` with one `console.warn`. The phrase itself was fine (it matches 5
+chunks when run directly), so nothing in the extraction or the trace pointed at the
+cause. Fixed by storing the tsvector in a generated `chunk_tsv` column with a GIN index
+and marking the `scoped` CTE `not materialized`: **timeout → 30 ms** on that guide.
+
+Lesson worth keeping: a fail-open fallback around a query that can *time out* rather
+than merely be *absent* turns a hard failure into a silent one, and it degrades exactly
+on the large guides the feature was built for. `lexicalHits: 0` in `rag_db_check` is the
+symptom; the server warning is the only place the cause appears.
+
+#### Rank-aware lexical bonus + extraction fixes (2026-08-06)
+
+The flat `+0.25` misread both ends of the range. Reading the final scores of the runs
+above: on the Zelda guide the extracted phrases included "Link" and "Cavern", 15 of 34
+candidates matched, and an equal bonus on all of them ranked nothing. On the Pokémon
+guide only 5 of 24 matched, and there `+0.25` outweighed a 0.23 cosine gap, pushing the
+chunk that answers ("beat her → Forest Badge → north → Cynthia → Cut HM") down to rank 4
+behind a chunk that merely says her name while describing how to *enter* the gym.
+
+Chasing that exposed two extraction bugs, both of which mattered more than the bonus:
+
+- **A colon was treated as a sentence end.** Guides label areas "Level 3: Key Cavern",
+  so "Key" looked sentence-initial and was dropped as grammar, leaving the useless
+  "cavern". The single most discriminating phrase in that query was being destroyed.
+- **The game's own name was searched for.** "Link" is a real proper noun and appears in
+  most chunks of a Link's Awakening guide. Phrases built *only* from title words are now
+  dropped (`extractEntityPhrases(text, gameName)`); a phrase that merely contains one
+  ("Link's House") is kept.
+
+Rank of the excerpt that actually answers, measured live per config:
+
+| Config | Zelda | Pokémon | FF VIII | SotN |
+|--------|-------|---------|---------|------|
+| Flat bonus, buggy extraction (first ship) | 2 | 4 | 1 | 1 |
+| `1/rank`, buggy extraction | **not retrieved, answer wrong** | 1 | 1 | 1 |
+| Flat bonus, fixed extraction | 2 | 4 | 1 | 1 |
+| **`1/sqrt(rank)`, fixed extraction (shipped)** | 3 | 2 | 1 | 1 |
+
+`1/rank` overshot: the Zelda answer chunk is only a mediocre name match (lexical rank 9),
+so removing its lift dropped it out of the top-5 and the model went back to "the guide
+does not cover this" — the original bug, reintroduced by the fix for a different one.
+The shipped shape costs Zelda one rank position to buy Pokémon two.
+
+**Harness caveat worth remembering:** the Pokémon case originally asserted only that some
+retrieved excerpt said "Gardenia", which the *entering the gym* chunk satisfies, so it
+passed while the regression was live. It now asserts on "Forest Badge", which only the
+answering chunk contains. An end-to-end test that matches too loosely is worse than none,
+because it reports safety it never checked.
+
+The Bottle Grotto suite (`scripts/test-la-turns-1-4.mjs`) stays mixed across runs on the
+"did the answer mention X" checks, since each answer picks a different granularity of
+next step. The markers that matter are stable: no `forward_jump` on T1/T2 and no
+hallucinated Hinox on T3/T4 in either run.
 
 **See also:** [rag-outline-rescore.md](./rag-outline-rescore.md) — planned
 game-agnostic outline metadata + rules-based rescoring (Phases 1–3) to improve

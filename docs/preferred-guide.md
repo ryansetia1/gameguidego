@@ -127,8 +127,10 @@ Per question, when `preferredUrl` is set:
    first question.
 2. **Embed the question** (the rewritten standalone query from `resolveQuestion`,
    which we already compute) → one embed call.
-3. **Retrieve** top-K chunks for this guide by cosine similarity
-   (`WHERE guide_url = ? ORDER BY embedding <=> $q LIMIT K`).
+3. **Retrieve** candidates for this guide: the cosine top-K **unioned** with chunks
+   that match the query's proper nouns literally (`match_guide_chunks_hybrid`, see
+   Retrieval below). Cosine alone cannot separate paragraphs within one walkthrough,
+   since they all read "go north, defeat the X, open the chest".
 4. **Route on similarity** (the elegant part):
    - **Top similarity ≥ `GUIDE_HIT`** → the book covers this. Feed the retrieved
      chunks as the PREFERRED GUIDE source, mark them, skip the tiered web search
@@ -176,22 +178,53 @@ create index on public.guide_chunks
   and replaces `match_guide_chunks` with a `text[]` filter (`guide_url = any($1)`).
   Client/API accept `preferredUrls` (max 5); legacy single `preferredUrl` still works.
 
+## Retrieval (hybrid: vector + exact name)
+
+`db/guide-chunks-hybrid.sql`, shipped 2026-08-06. Cosine is near-blind inside a single
+guide: on a real one the 20 nearest chunks spanned 0.650–0.752 (noise), and the chunk
+answering the question sat at rank 16, below the cut. A phrase match on the boss name
+isolated it outright and still scored zero on a similarly named boss elsewhere in the
+same guide.
+
+- `lib/guide-lexical.js` pulls proper-noun phrases out of the English rewrite using
+  capitalisation and sentence position only, so it holds no per-game vocabulary. It
+  takes the game name to drop phrases that are only the game's own title, which match
+  nearly every chunk of its guide.
+- `match_guide_chunks_hybrid` returns the vector top-K unioned with the lexical hits,
+  each row carrying its true cosine plus `lexical_rank` (0 = found by vector only).
+- `retrievalScore = cosine + LEXICAL_HIT_BONUS / sqrt(lexical_rank)`. That is what
+  `lib/guide-rescore.js` ranks on, so the retrieval signal survives the rules pass.
+- The migration adds a **stored** `guide_chunks.chunk_tsv` generated column with a GIN
+  index. Building the tsvector per query instead blew the statement timeout on a
+  1093-chunk guide, and the RPC then fell back to vector-only silently.
+
+Without the migration the RPC call fails over to plain `match_guide_chunks`, so an
+install that skips it keeps working on vector search alone.
+
+Calibration data and the shape of the decay: [`plan/rag-tuning-roadmap.md`](plan/rag-tuning-roadmap.md)
+(Phase D). Live guard: `node scripts/test-hybrid-retrieval.mjs`.
+
 ## Ingest
 
 `lib/guide-ingest.ts` (new): fetch → chunk → embed → insert. Idempotent per URL
 (check-then-insert; a unique index on `(guide_url, chunk_index)` guards double
 ingest under a race — good enough; a proper lease is the upgrade path).
 
-### GameFAQs multi-page bundles (implemented)
+### GameFAQs: one `?print=1` extract (replaced multi-page bundles, 2026-07-26)
 
-GameFAQs walkthroughs are one FAQ ID split across many URLs. When the user pastes
-any page under `/faqs/{id}/`, `GET /api/guide-bundle` fetches the intro HTML,
-parses the TOC, and returns `{ bundle, pageCount, pages[] }`. The UI shows a
-confirm card before add. Ingest expands the bundle (Tavily Extract in batches of
-10), stores chunks with `guide_bundle = gamefaqs:{id}`, and retrieval uses
-`match_guide_chunks(p_guide_bundles, …)`. Max 50 pages per bundle.
+GameFAQs walkthroughs are one FAQ ID split across many URLs, so ingest used to
+discover the TOC and extract up to 50 pages into `guide_bundle = gamefaqs:{id}`.
+All of that is gone: **`?print=1` on any section URL returns the full guide text**,
+so a pasted URL is normalized to its canonical FAQ root
+(`canonicalGamefaqsBundleUrl` in `lib/gamefaqs-bundle.js`) and ingested as one page.
+No TOC discovery, no bundle prefs, no confirm card. `guide_bundle` is always null and
+retrieval filters on `guide_url` alone.
 
-Single-page guides (non-GameFAQs or thin FAQs) still ingest as one URL.
+Quality gate: extracts under `MIN_GAMEFAQS_GUIDE_CHARS` (20k) or flagged nav/TOC-only
+by `gamefaqsExtractQuality` are rejected before embed; stale short rows are purged on
+retry. `db/reset-gamefaqs-guides.sql` wipes legacy bundle rows.
+
+Single-page guides (non-GameFAQs or thin FAQs) ingest as one URL, unchanged.
 
 ### Fetch
 

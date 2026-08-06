@@ -37,13 +37,12 @@ answers in whatever language you ask your question in.
   card, sidebar, or library.
 - **HowLongToBeat playtime** on the game card and sticky header (e.g. `27h main
   story`); any platform, optional Steam `appId` when the cover is a Steam CDN URL.
-- Optional **preferred guide**: paste a trusted walkthrough URL or use the
-  **Search web** tab to pick one. With a preferred URL the cascade is: (1) for a
-  deep chapter URL, extract the matching section from that page, else (2)
-  site-search the host for the right section page, else (3) site-search snippets,
-  else (4) for hub/root URLs extract the pasted URL, else (5) fall back to the
-  normal tiered search. When a preferred source works, the Sources list shows only
-  that site.
+- Optional **preferred guide**: paste a trusted walkthrough URL (up to 5), use the
+  **Search web** tab to pick one, or upload a PDF/TXT/MD. The first question indexes
+  the guide once, then every later question pulls just the passages that answer it,
+  by meaning and by the exact names you used. When the guide covers your question the
+  answer comes from it and the Sources list shows only that guide; when it does not,
+  you drop back to normal web search instead of getting a shrug.
 
 ### Saving & library (no login wall)
 
@@ -213,31 +212,40 @@ then ask your question and follow up.
 
 ### Troubleshooting
 
-See [`docs/troubleshooting.md`](docs/troubleshooting.md) for recurring issues
-(e.g. Connect Steam OpenID succeeding but the account not linking).
+See [`docs/troubleshooting.md`](docs/troubleshooting.md) for recurring issues:
+Connect Steam OpenID succeeding but the account not linking, and a preferred guide
+whose answer misses a section that clearly names what was asked.
 
 Agent / implementation docs:
 
 - [`docs/ui-theme.md`](docs/ui-theme.md) — design tokens, no rounded corners, layout rules.
 - [`docs/voice-input.md`](docs/voice-input.md) — Web Speech mic, buffer-until-stop,
   platform quirks, and what not to re-introduce.
+- [`docs/preferred-guide.md`](docs/preferred-guide.md) — how a pasted guide becomes
+  retrievable: ingest, chunking, hybrid retrieval, and the similarity routing.
+- [`docs/plan/rag-tuning-roadmap.md`](docs/plan/rag-tuning-roadmap.md) — retrieval
+  quality calibration, including what each tuning attempt actually measured.
 
 ## Flow
 
-1. The browser sends `{ game, platform, question, history, preferredUrl,
+1. The browser sends `{ game, platform, question, history, preferredUrls,
    spoilerPrefs, playerName }` to `POST /api/solve`.
 2. The route rewrites the question into a standalone English search query (via
    the LLM) so first messages are normalised/translated and follow-ups resolve
    context ("point 3").
-3. It checks the Supabase search cache; on a miss it runs the search (preferred
-   cascade or normal tiers), cleans snippets, filters by relevance score, keeps
-   the 3 strongest sources, and caches the result.
-4. `system_instruction` (persona + rules + JSON output contract) and `prompt`
-   (game/platform, history, web evidence) are sent separately to the Gemini model
-   on Replicate. The response is parsed into `{ answer, highlights, spoilers,
+3. **With a preferred guide:** it indexes the guide on first use, then retrieves
+   passages two ways at once, nearest by embedding and matching the proper nouns in
+   the question literally, and routes on how well the best passage scores. A good
+   hit skips web search entirely; a weak one falls through to step 4.
+4. **Otherwise:** it checks the Supabase search cache; on a miss it runs the tiered
+   search, cleans snippets, filters by relevance score, keeps the 3 strongest
+   sources, and caches the result.
+5. `system_instruction` (persona + rules + JSON output contract) and `prompt`
+   (game/platform, history, guide or web evidence) are sent separately to the Gemini
+   model on Replicate. The response is parsed into `{ answer, highlights, spoilers,
    spoilerRisk }`. When spoilers are OFF and `spoilerRisk` is set, a second
    censor pass may rewrite the answer.
-5. The browser renders the answer, optional highlights/spoiler blocks, and
+6. The browser renders the answer, optional highlights/spoiler blocks, and
    sources; it saves the whole chat to Supabase (signed-in) or `localStorage`
    (anon) unless temporary chat is on.
 

@@ -194,3 +194,9 @@ CREATE OR REPLACE FUNCTION public.match_guide_chunks(
 -- Update EMBEDDING_DIM di lib/embed.ts
 const EMBED_DIM = 768;
 ```
+
+**Jangan lupa RPC kedua.** `match_guide_chunks_hybrid` (`db/guide-chunks-hybrid.sql`)
+juga punya `p_embedding vector(1024)` di signature-nya dan harus di-`CREATE OR REPLACE`
+dengan dimensi baru. Kalau terlewat, `lib/guide-rag.ts` menangkap error-nya, diam-diam
+turun ke `match_guide_chunks`, dan pencarian nama-persis mati tanpa gejala selain satu
+baris warning di log server. Kolom `chunk_tsv` tidak terpengaruh perubahan dimensi.

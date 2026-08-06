@@ -144,6 +144,17 @@ T4 traces: no `acquisition_anchor`; rank-1 `neighbor_continuation_boost`; `posit
 **Verdict:** Both modes pass full T1–T4 after the fix stack. Cohere is **optional** (cost/latency
 tradeoff); keep `GUIDE_RULES_AFTER_COHERE=1` when Cohere is on.
 
+### Re-run variance — read before treating a ✅ here as a gate (2026-08-06)
+
+Two back-to-back runs of the same suite disagreed on T2 and T3: one mentioned the
+Nightmare's Key and missed the basement, the next did the reverse. Each turn feeds the
+previous answer back as history, and answers legitimately differ in how far ahead they
+step, so the "did the answer mention X" checks swing. Do **not** read a single run as a
+regression signal.
+
+What stayed stable across both runs, and is what these turns are actually guarding:
+no `forward_jump` on T1/T2, and no hallucinated Hinox on T3/T4.
+
 ---
 
 ## T4 detail (target turn)

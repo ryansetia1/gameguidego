@@ -12,6 +12,11 @@ import {
 import { canonicalGamefaqsBundleUrl } from "@/lib/gamefaqs-bundle.js";
 import { normalizeGuideUrlList } from "@/lib/guide-urls.js";
 import type { SearchResult } from "@/lib/tavily";
+import {
+  buildPhraseTsQuery,
+  extractEntityPhrases,
+  retrievalScore,
+} from "@/lib/guide-lexical.js";
 import { rescoreGuideChunks } from "@/lib/guide-rescore.js";
 import { cohereRerankChunks } from "@/lib/guide-rerank-cohere";
 import {
@@ -82,6 +87,10 @@ type MatchRow = {
   section_path: string[];
   section_confidence: number | null;
   similarity: number;
+  /** 1-based rank from the lexical phrase search; 0 when found by vector only. */
+  lexical_rank?: number;
+  /** Cosine fused with the lexical hit — what the rescorer ranks on. */
+  retrieval_score?: number;
   rescore_delta?: number;
   rescore_reasons?: string[];
   rescore_score?: number;
@@ -146,9 +155,51 @@ async function ensureTailNeighbor(
       section_path: data.section_path ?? [],
       section_confidence: data.section_confidence ?? null,
       similarity: (Number(parent.similarity) || 0) * 0.94,
+      retrieval_score: (Number(parent.retrieval_score ?? parent.similarity) || 0) * 0.94,
       neighbor_of_tail: true,
     },
   ];
+}
+
+let hybridRpcMissingLogged = false;
+
+/**
+ * Vector top-K unioned with lexical phrase hits. Falls back to vector-only when the
+ * install has not applied `db/guide-chunks-hybrid.sql`.
+ */
+async function fetchCandidates(
+  supabase: NonNullable<ReturnType<typeof getServerClient>>,
+  guideUrls: string[],
+  embedding: string,
+  lexicalQuery: string,
+): Promise<MatchRow[]> {
+  if (lexicalQuery) {
+    const { data, error } = await supabase.rpc("match_guide_chunks_hybrid", {
+      p_guide_urls: guideUrls,
+      p_guide_bundles: [],
+      p_embedding: embedding,
+      p_limit: RETRIEVE_FETCH,
+      p_lexical_query: lexicalQuery,
+    });
+    if (!error) return (data ?? []) as MatchRow[];
+    if (!hybridRpcMissingLogged) {
+      console.warn(
+        "match_guide_chunks_hybrid unavailable, using vector-only retrieval. " +
+          "Apply db/guide-chunks-hybrid.sql to enable exact-name search.",
+        error.message,
+      );
+      hybridRpcMissingLogged = true;
+    }
+  }
+
+  const { data, error } = await supabase.rpc("match_guide_chunks", {
+    p_guide_urls: guideUrls,
+    p_guide_bundles: [],
+    p_embedding: embedding,
+    p_limit: RETRIEVE_FETCH,
+  });
+  if (error) throw error;
+  return (data ?? []) as MatchRow[];
 }
 
 export type GuideRagResult = {
@@ -239,14 +290,20 @@ export async function retrieveFromPreferredGuides(input: {
   const history = input.history ?? [];
   try {
     const start = Date.now();
-    const { data, error } = await supabase.rpc("match_guide_chunks", {
-      p_guide_urls: guideUrls,
-      p_guide_bundles: [],
-      p_embedding: toVectorString(queryEmbedding),
-      p_limit: RETRIEVE_FETCH,
-    });
-    if (error) throw error;
-    const raw = dedupeByChunkText((data ?? []) as MatchRow[]);
+    // Names the player used ("Slime Eye", "Key Cavern") are what embeddings miss
+    // inside a single walkthrough, so search for them literally as well.
+    const phrases = extractEntityPhrases(input.query, input.game);
+    const lexicalQuery = buildPhraseTsQuery(phrases);
+    const rows = await fetchCandidates(
+      supabase,
+      guideUrls,
+      toVectorString(queryEmbedding),
+      lexicalQuery,
+    );
+    const raw = dedupeByChunkText(rows).map((row) => ({
+      ...row,
+      retrieval_score: retrievalScore(row),
+    }));
     const landmarks = extractPositionLandmarks(
       `${input.question ?? ""} ${input.query}`.trim(),
     );
@@ -258,7 +315,12 @@ export async function retrieveFromPreferredGuides(input: {
       input.query,
       history,
     ).slice(0, RETRIEVE_K);
-    void logTraceEvent("rag_db_check", "Checked DB for RAG chunks", Date.now() - start, { matchCount: matches.length });
+    void logTraceEvent("rag_db_check", "Checked DB for RAG chunks", Date.now() - start, {
+      matchCount: matches.length,
+      candidateCount: pool.length,
+      lexicalPhrases: phrases,
+      lexicalHits: pool.filter((row) => row.lexical_rank).length,
+    });
   } catch (error) {
     console.error("Guide chunk retrieval failed:", error);
     return {
@@ -329,6 +391,8 @@ export async function retrieveFromPreferredGuides(input: {
       title: labelFor(row.guide_url) + (matches.length > 1 ? ` (section ${index + 1})` : ""),
       url: row.guide_url,
       similarity: row.similarity,
+      lexical_rank: row.lexical_rank ?? 0,
+      retrieval_score: row.retrieval_score,
       rescore_score: row.rescore_score,
       rescore_delta: row.rescore_delta,
       rescore_reasons: row.rescore_reasons,

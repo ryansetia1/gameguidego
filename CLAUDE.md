@@ -279,8 +279,19 @@ do not sync to the cloud or use Storage uploads.
   `lib/embed.ts` + `lib/embed-cache.ts`: preferred-guide RAG. Tavily extract the
   pasted page (`extractGuidePage`), structure-aware chunking (`chunkGuide`),
   text-embedding-3-large on Sumopod (OpenAI-compatible) (`EMBED_MODEL`, default
-  `text-embedding-3-large`), shared `public.guide_chunks` + `match_guide_chunks`
-  RPC (pgvector, 1024-dim). Query embeddings cached in `public.embed_cache` (7-day
+  `text-embedding-3-large`), shared `public.guide_chunks` + `match_guide_chunks_hybrid`
+  RPC (pgvector, 1024-dim). **Hybrid retrieval:** `lib/guide-lexical.js` pulls
+  proper-noun phrases out of the English rewrite (capitalisation + sentence position
+  only, no per-game vocabulary), builds a sanitized `to_tsquery` adjacency clause, and
+  the RPC returns the vector top-K **unioned** with the lexical hits, each row carrying
+  its cosine plus `lexical_rank`. A lexical hit adds `LEXICAL_HIT_BONUS / sqrt(rank)`
+  (0.25 for the guide's best name match, decaying after) to `retrieval_score`, which is
+  what `lib/guide-rescore.js` ranks on. Extraction takes the game name so it can drop
+  phrases that are only the game's own title, which match nearly every chunk of its
+  guide. Apply
+  `db/guide-chunks-hybrid.sql` (adds the stored `chunk_tsv` column + GIN index and the
+  RPC); without it the RPC call fails over to the vector-only `match_guide_chunks`
+  and logs once. Query embeddings cached in `public.embed_cache` (7-day
   TTL). Fail-open to tiered web search when Supabase/pgvector/Sumopod API key is unset.
   Also supports **file uploads** (PDF/TXT/MD) via `POST /api/guide-upload` —
   files are parsed in memory (zero storage), chunked, and embedded into the same
@@ -507,8 +518,8 @@ is no multi-page discovery, bundle prefs, or per-section ingest.
    on empty/blocked extract, Wayback via `?print=1` for GameFAQs)
    → `chunkGuide` → embed → `guide_chunks` with `guide_bundle = null`.
 3. **Status** (`GET /api/guide-ingest/status`): per-URL `indexed: true/false`.
-4. **RAG** (`lib/guide-rag.ts`): `match_guide_chunks` filtered by `guide_url` only
-   (`p_guide_bundles: []`). Over-fetches then `dedupeByChunkText` before summarize.
+4. **RAG** (`lib/guide-rag.ts`): `match_guide_chunks_hybrid` filtered by `guide_url`
+   only (`p_guide_bundles: []`). Over-fetches then `dedupeByChunkText` before summarize.
 5. **UI** (`app/chat/active-game-card.tsx`, `use-guide-bundle.tsx`): one row per
    preferred URL; inline spinner while checking/ingesting; **Retry** on failed/blocked.
 
@@ -530,6 +541,8 @@ rows from `guide_chunks` and `guide_bundle_cache`.
 ### DB tables (apply SQL in `db/`)
 
 - `guide_chunks` (`db/guide-chunks.sql`; `guide_bundle` column unused, always null)
+- `match_guide_chunks_hybrid` + the stored `guide_chunks.chunk_tsv` column and its GIN
+  index (`db/guide-chunks-hybrid.sql`; additive, vector + lexical)
 - `embed_cache`, `search_cache`, `llm_calls` (incl. `embed_index`, `embed_query`)
 
 Debug retrieval with `RAG_DEBUG=1` → logs `[rag-calibrate] hit=… top=… scores=[…]
@@ -571,16 +584,32 @@ top_chunk=…` per query.
   + rate bucket like steamAntiFomo. HLTB's search path segment can rotate; update
   `SEARCH_SEG` in `lib/hltb-cache.js` when init/search starts 404ing.
 - Preferred-guide RAG (`GUIDE_HIT` in `lib/guide-rag.ts`) is a hand-tuned cosine
-  threshold, not a learned router. Chunking is recursive boundary-split in
+  threshold, not a learned router. Cosine barely separates paragraphs inside one
+  walkthrough (a real guide's 20 nearest chunks spanned 0.650–0.752), which is why
+  exact-name lexical search carries the ranking now. Chunking is recursive boundary-split in
   `lib/chunk-guide.js`, not semantic. Ingest has no single-flight lease (unique
   index guards dup rows; concurrent first-time ingests of the same URL can
   duplicate upstream embed work). Query-embed cache is best-effort (`embed_cache`).
   Given page only; hub/multi-page guides rely on the user pasting the real page
   (surfaced via optional `guideHint` toast; ingest failures toast from
   `POST /api/guide-ingest` before solve, with solve as fallback).
+- Lexical retrieval reads the stored `guide_chunks.chunk_tsv` generated column
+  (GIN-indexed). Building the tsvector per query instead was what a 1093-chunk guide
+  could not afford: it blew the statement timeout, and `fetchCandidates` then fell back
+  to vector-only **silently**, so the feature looked enabled while doing nothing. If
+  `lexicalHits` is 0 in a `rag_db_check` trace on a guide that clearly contains the
+  name, check the server log for the `match_guide_chunks_hybrid unavailable` warning
+  before suspecting the extraction. Proper-noun extraction relies on the rewrite being
+  English and correctly capitalised; a rewrite with no capitalised names simply yields
+  an empty tsquery and retrieval stays vector-only.
+- `scripts/test-hybrid-retrieval.mjs` is the end-to-end guard: four unrelated games,
+  each asking about a named entity, asserting the excerpt naming it reaches the top 3.
+  It fails if the hybrid path degrades, including the silent fallback above.
 - **Preferred-guide RAG cost ceiling (cannot blow up per turn):** retrieval uses
-  `match_guide_chunks` with `LIMIT` (`RETRIEVE_K = 5` in `lib/guide-rag.ts`) —
+  `match_guide_chunks_hybrid` with `LIMIT` (`RETRIEVE_K = 5` in `lib/guide-rag.ts`) —
   the full ingested guide never goes to Gemini, only up to five stored chunks.
+  The candidate pool is at most `RETRIEVE_FETCH` vector rows plus `RETRIEVE_FETCH`
+  lexical rows, and both are trimmed to `RETRIEVE_K` before summarize.
   Each chunk is sized at ingest (~500 tokens, `TARGET_CHARS` in
   `lib/chunk-guide.js`). On a high-similarity hit, Gemini `summarize` gets those
   five chunks plus rewrite/history/question (~3k–5k input tokens for research,
@@ -726,7 +755,8 @@ Public client vars (safe to expose; protected by RLS), optional — enable
 accounts, saved chats, and the search cache:
 
 - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (publishable key).
-  Project `GameGuideGuru` (ref `luoymycbpnvamdtlzjem`). Apply `db/guide-chunks.sql`
+  Project `GameGuideGuru` (ref `luoymycbpnvamdtlzjem`). Apply `db/guide-chunks.sql`,
+  `db/guide-chunks-hybrid.sql`,
   and `db/embed-cache.sql` (pgvector extension) for preferred-guide RAG. Google OAuth and email
   confirmation are configured in the Supabase dashboard.
 

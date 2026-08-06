@@ -47,7 +47,8 @@ All providers converge here after extract + clean:
 ```text
 provider extract → clean/noise filter → chunkGuide → embed → guide_chunks
                                                               ↓
-user question → resolveQuestion (forRag) → match_guide_chunks → summarize
+user question → resolveQuestion (forRag) → match_guide_chunks_hybrid → summarize
+                                           (vector ∪ exact-name phrases)
 ```
 
 Shared modules (do not fork per provider):
@@ -55,7 +56,9 @@ Shared modules (do not fork per provider):
 - `lib/chunk-guide.js`, `lib/embed.ts`, `lib/guide-rag.ts`, `lib/guide-rescore.js`
 - `lib/guide-ingest.ts` — **router** only; branches to provider modules
 - `lib/guide-urls.js` — paste validation, dedupe, legacy URL normalization
-- `public.guide_chunks`, `public.guide_bundle_cache`, `match_guide_chunks` RPC
+- `lib/guide-lexical.js` — proper-noun phrases for the lexical half of retrieval
+- `public.guide_chunks` (incl. the `chunk_tsv` generated column),
+  `public.guide_bundle_cache`, `match_guide_chunks_hybrid` RPC
 
 Provider modules own **everything upstream** of `chunkGuide`.
 

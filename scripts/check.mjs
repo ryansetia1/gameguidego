@@ -92,6 +92,12 @@ import { chunkGuide, chunkGuideWithMeta, formatEmbedPrefix } from "../lib/chunk-
 import { buildOutline, detectHeading, sectionAtLine } from "../lib/guide-outline.js";
 import { rescoreGuideChunks, extractQueryFocalItem } from "../lib/guide-rescore.js";
 import {
+  LEXICAL_HIT_BONUS,
+  buildPhraseTsQuery,
+  extractEntityPhrases,
+  retrievalScore,
+} from "../lib/guide-lexical.js";
+import {
   extractOwnedItemsFromHistory,
   hasContinuationOpening,
   isPositionProgressFollowUp,
@@ -671,6 +677,146 @@ assert.ok(
     "After obtaining the Nightmare's Key in Bottle Grotto, what are the next steps?",
   ),
   "vague item follow-up should not count as position progress",
+);
+// Trace 14a03ed6: "I beat the boss" is a milestone, not a position. Treating it as
+// one cut summarize to a single excerpt, and that excerpt was the wrong dungeon.
+assert.ok(
+  !isPositionProgressFollowUp(
+    "Aku udah berhasil melawan boss mata di key cavern, selanjutnya ngapain ya?",
+    "After defeating the Slime Eye boss in Key Cavern (Level 3), what are the next steps?",
+  ),
+  "beating a boss should not count as position progress",
+);
+
+// Hybrid retrieval: proper-noun extraction is structural, so it must work on any
+// game. These fixtures are deliberately from three unrelated titles.
+assert.deepEqual(
+  extractEntityPhrases(
+    "After defeating Margit the Fell Omen at Stormveil Castle, what should the player do next?",
+  ),
+  ["fell omen", "stormveil castle", "margit"],
+  "should read names from capitalisation, ignoring the sentence-initial word",
+);
+assert.deepEqual(
+  extractEntityPhrases("The player reached Luca and needs the step after Sinspawn Ammes."),
+  ["sinspawn ammes", "luca"],
+  "should work on a game with no shared vocabulary with the previous fixture",
+);
+assert.deepEqual(
+  extractEntityPhrases("The player is inside Key Cavern (Level 3) fighting the Slime Eye."),
+  ["key cavern", "level 3", "slime eye"],
+  "punctuation must end a name so two adjacent names do not merge into one",
+);
+// Trace 674e0a15: the colon used to end the sentence, so "Key" read as sentence-initial
+// grammar and the phrase collapsed to the useless "cavern".
+const colonLabelled =
+  "The player beat the Slime Eyes boss in Level 3: Key Cavern, so what should Link do next?";
+assert.deepEqual(
+  extractEntityPhrases(colonLabelled),
+  ["slime eyes", "level 3", "key cavern", "link"],
+  "a name labelled after a colon must survive whole",
+);
+assert.deepEqual(
+  extractEntityPhrases(colonLabelled, "The Legend of Zelda: Link's Awakening"),
+  ["slime eyes", "level 3", "key cavern"],
+  "the game's own name matches every chunk of its guide, so it ranks nothing",
+);
+assert.deepEqual(
+  extractEntityPhrases("Where is Link's House on the map?", "The Legend of Zelda: Link's Awakening"),
+  ["link's house"],
+  "a phrase that only contains a title word still points somewhere specific",
+);
+assert.equal(
+  buildPhraseTsQuery(["fell omen", "margit"]),
+  "(fell <-> omen) | (margit)",
+  "phrases become adjacency clauses joined by OR",
+);
+assert.equal(
+  buildPhraseTsQuery(["roc's feather"]),
+  "(roc <-> feather)",
+  "possessives are dropped to match how Postgres stems the guide text",
+);
+assert.equal(
+  buildPhraseTsQuery(["a&b | c(d)"]),
+  "(ab <-> cd)",
+  "tsquery operators from model output must not survive sanitisation",
+);
+assert.equal(buildPhraseTsQuery([]), "", "no names means no lexical search");
+
+assert.equal(retrievalScore({ similarity: 0.62 }), 0.62);
+assert.equal(retrievalScore({ similarity: 0.62, lexical_rank: 1 }), 0.62 + LEXICAL_HIT_BONUS);
+assert.ok(
+  retrievalScore({ similarity: 0.62, lexical_rank: 9 }) <
+    retrievalScore({ similarity: 0.62, lexical_rank: 2 }),
+  "a weaker name match must be worth less than a stronger one",
+);
+// A phrase the guide repeats everywhere matches deep into the list, where the lift
+// must have decayed to a fraction of what the best match earns.
+assert.ok(
+  retrievalScore({ similarity: 0.62, lexical_rank: 13 }) - 0.62 <
+    (retrievalScore({ similarity: 0.62, lexical_rank: 1 }) - 0.62) / 2,
+  "a hit that common must be worth far less than the guide's best match",
+);
+
+const hybridQuestion = "Where do I go next?";
+const hybridChunks = [
+  { chunk_text: "Head east and open the chest at the end.", similarity: 0.7, chunk_index: 1 },
+  { chunk_text: "Defeat the guardian, then leave the hall.", similarity: 0.6, chunk_index: 2 },
+];
+assert.equal(
+  rescoreGuideChunks({ query: hybridQuestion, chunks: hybridChunks.map((c) => ({ ...c })) })[0]
+    .chunk_index,
+  1,
+  "without a lexical hit the higher cosine chunk stays on top",
+);
+assert.equal(
+  rescoreGuideChunks({
+    query: hybridQuestion,
+    chunks: hybridChunks.map((chunk, index) => {
+      const row = index === 1 ? { ...chunk, lexical_rank: 1 } : { ...chunk };
+      return { ...row, retrieval_score: retrievalScore(row) };
+    }),
+  })[0].chunk_index,
+  2,
+  "an exact-name hit must outrank a higher cosine chunk",
+);
+
+// Pruned rules (trace 14a03ed6). Fixtures are generic so they hold for any game.
+const rescoreFiller = "Head north and defeat the two sentries guarding the hall.";
+const reasonsForChunk = (query, text) =>
+  rescoreGuideChunks({
+    query,
+    chunks: [
+      { chunk_text: text, similarity: 0.7, chunk_index: 1 },
+      { chunk_text: rescoreFiller, similarity: 0.6, chunk_index: 2 },
+    ],
+  }).find((row) => row.chunk_index === 1).rescore_reasons ?? [];
+
+const aftermathChunk = "Once it's over, take the reward and return to the surface.";
+assert.ok(
+  reasonsForChunk("I just opened the chest, what are the next steps?", aftermathChunk).includes(
+    "forward_jump_penalty",
+  ),
+  "a mid-area question should still avoid chunks about leaving the area",
+);
+assert.ok(
+  !reasonsForChunk(
+    "After defeating the final boss of Level 3, what are the next steps?",
+    aftermathChunk,
+  ).includes("forward_jump_penalty"),
+  "what follows a boss is forward-looking and must not be treated as mid-area",
+);
+
+const tieredChunk = "Cross the bridge, then take the Level 7 elevator to the roof.";
+assert.ok(
+  reasonsForChunk("How do I beat the guardian?", tieredChunk).includes("tier_mismatch_penalty"),
+  "a tiered chunk is still demoted when the question never asked for a tier",
+);
+assert.ok(
+  !reasonsForChunk("How do I beat the guardian on Level 3?", tieredChunk).some((reason) =>
+    reason.startsWith("tier_"),
+  ),
+  "matching tier markers without matching numbers is not evidence",
 );
 const laTurn4TraceSearch =
   "After descending the second elevator in the basement of Bottle Grotto and then going west up a staircase, what are the next steps? The player has already obtained the Nightmare's Key and navigated through the basement areas. Please provide the subsequent actions to progress through the dungeon.";
