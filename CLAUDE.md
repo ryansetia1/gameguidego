@@ -685,7 +685,12 @@ Server-only secrets (never expose via `NEXT_PUBLIC_`, never commit `.env.local`)
   dedupe guard. Gate: `visualAuto && !images.length && SERPER key && visualSubject`.
   The rewrite result (`{ searchTopic, visualSubject }`) is cached in the `rewrite::`
   search-cache row and round-tripped via `context_ready` so retry/exact-repeat keep the
-  image. One Serper Images call per qualifying turn, fail-open. Follow-ups with no
+  image. One Serper Images call per qualifying turn, fail-open. Candidates are ranked
+  by `rankSerperImages` and then load-probed in parallel (`pickLoadableIllustration` /
+  `probeImageUrl`, top 3): the first one that actually returns an image wins, so a
+  Cloudflare-challenged or dead host falls through instead of rendering as "no image"
+  (the browser hides a broken `<img>`). Rejected candidates land in the
+  `visual_search_complete` trace as `unloadableUrls`. Follow-ups with no
   explicit subject ("rupanya gimana?") resolve from history in the same rewrite.
   See [`docs/plan/visual-search-rewrite-fold.md`](docs/plan/visual-search-rewrite-fold.md).
 - `REPLICATE_MODEL` (optional, default `google/gemini-2.5-flash`).

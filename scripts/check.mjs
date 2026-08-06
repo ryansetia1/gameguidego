@@ -257,6 +257,8 @@ import {
   buildVisualSearchQuery,
   parseRewriteVisual,
   pickBestSerperImage,
+  pickLoadableIllustration,
+  rankSerperImages,
   sanitizeVisualSearchQuery,
 } from "../lib/visual-search.js";
 import { coerceVisualAuto } from "../lib/visual-search-prefs.js";
@@ -2658,6 +2660,42 @@ assert.equal(
   );
   assert.ok(picked);
   assert.match(picked.url, /wikia/);
+}
+{
+  // Trace c36cf856: top hit was a Cloudflare-challenged wiki host, so the browser
+  // hid the broken <img> and the answer looked image-less. Ranked order must stay,
+  // but an unloadable candidate has to fall through to the next one.
+  const hits = [
+    {
+      title: "Yarna Desert - Zelda Dungeon Wiki, a The Legend of Zelda wiki",
+      imageUrl: "https://www.zeldadungeon.net/wiki/images/thumb/1/1a/Yarna_Desert.png",
+      link: "https://www.zeldadungeon.net/wiki/Yarna_Desert",
+      domain: "zeldadungeon.net",
+    },
+    {
+      title: "Yarna Desert screenshot - Link's Awakening",
+      imageUrl: "https://oyster.ignimgs.com/mediawiki/links-awakening/yarna.jpg",
+      link: "https://www.ign.com/wikis/the-legend-of-zelda-links-awakening/Yarna_Desert",
+      domain: "ign.com",
+    },
+  ];
+  const context = {
+    game: "The Legend of Zelda: Link's Awakening",
+    platform: "Game Boy",
+    topic: "Yarna Desert",
+  };
+  const ranked = rankSerperImages(hits, context);
+  assert.equal(ranked.length, 2);
+  assert.match(ranked[0].url, /zeldadungeon/);
+  assert.equal(pickBestSerperImage(hits, context).url, ranked[0].url);
+
+  const dead = new Set([ranked[0].url]);
+  const picked = await pickLoadableIllustration(ranked, {
+    probe: async (url) => !dead.has(url),
+  });
+  assert.equal(picked.url, ranked[1].url);
+  assert.equal(await pickLoadableIllustration(ranked, { probe: async () => false }), null);
+  assert.equal(await pickLoadableIllustration([], { probe: async () => true }), null);
 }
 assert.equal(
   coerceIllustration({ url: "https://example.com/a.png", alt: "Magic powder" })?.alt,

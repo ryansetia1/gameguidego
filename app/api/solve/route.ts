@@ -44,7 +44,8 @@ import { runJournalUpdate } from "@/lib/player-journey-server";
 import { searchGuides, searchSerperImages, type SearchResult } from "@/lib/tavily";
 import {
   buildVisualSearchQuery,
-  pickBestSerperImage,
+  pickLoadableIllustration,
+  rankSerperImages,
 } from "@/lib/visual-search.js";
 import { coerceVisualAuto } from "@/lib/visual-search-prefs.js";
 import { logSolveJourneyToDb, sourcesForSolveLog, type SolveJourneyEntry } from "@/lib/solve-log";
@@ -331,12 +332,19 @@ export async function POST(request: Request) {
                 visualSubject,
               });
               const hits = await searchSerperImages(visualQuery, undefined, 5);
-              const picked = pickBestSerperImage(hits, { game, platform, topic: visualSubject });
+              const ranked = rankSerperImages(hits, { game, platform, topic: visualSubject });
+              const picked = await pickLoadableIllustration(ranked);
               void logTraceEvent("visual_search_complete", "Finished Serper image search", undefined, {
                 hitCount: hits.length,
+                candidateCount: ranked.length,
                 picked: Boolean(picked),
                 pickedUrl: picked?.url,
                 pickedSource: picked?.sourceUrl,
+                // Higher-ranked candidates that failed the load probe. Without this
+                // a hidden broken <img> leaves no trace of why nothing showed up.
+                unloadableUrls: ranked
+                  .slice(0, picked ? ranked.indexOf(picked) : 3)
+                  .map((candidate) => candidate.url),
               });
               return picked;
             })()

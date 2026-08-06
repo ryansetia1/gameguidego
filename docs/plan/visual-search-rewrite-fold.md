@@ -208,6 +208,32 @@ included them), plus the new dedupe guard (strictly safer).
 | `resolveQuestion` return-type change touches the hot path | Small, typed; `forRag` caller passes null; string→object is a compile-time-checked refactor |
 | No opt-out for data-savers | Global profile toggle (default on) |
 
+## Follow-up: load probe (2026-08-06, trace `c36cf856`)
+
+A Link's Awakening "Yarna Desert itu kaya gimana?" turn picked an image and shipped it,
+but nothing showed in the chat. The pick was a `zeldadungeon.net` wiki thumb, which sits
+behind Cloudflare's "Just a moment" challenge and answers 403 HTML to every fetch
+(no-referer, browser UA, and with a matching Referer). It is not in
+`ALLOWED_IMAGE_HOST_SUFFIXES` either, so the browser hotlinked it, got the 403, and the
+`onError` handler in `app/chat/message-list.tsx` hid the whole `<figure>`. Net effect: a
+successful `visual_search_complete` trace and an empty answer.
+
+Blocklisting that one host was not enough: the next-ranked candidate for the same query
+was a TikTok CDN URL, also 403.
+
+Fix: `pickBestSerperImage` was split into `rankSerperImages` (pure ranking, same scoring
+and score>=4 gate) plus `pickLoadableIllustration`, which load-probes the top 3 in
+parallel (`probeImageUrl`: GET, cancel the body once headers arrive, 6s timeout) and
+returns the first that answers with an `image/*` content type. Probing overlaps answer
+generation, so it costs one timeout at worst (measured ~300ms live). Higher-ranked
+candidates that failed are logged as `unloadableUrls` on `visual_search_complete`, since
+a hidden broken `<img>` otherwise leaves no trace at all.
+
+Known ceiling (ponytail): the probe runs from the server, so a host that serves our
+datacenter but blocks the browser (or the reverse) can still mis-rank. `referrerPolicy="no-referrer"`
+on the `<img>` keeps the two requests close. Upgrade path if that bites: route every
+illustration through `/api/visual-image` (needs an HMAC-signed URL to avoid an open proxy).
+
 ## Teardown
 
 Grep: `VISUAL:`, `visualSubject`, `parseRewriteOutput`, `buildVisualSearchQuery`,
