@@ -24,11 +24,12 @@ create index if not exists guide_reembed_runs_started_idx on public.guide_reembe
 
 -- Service-role only: RLS on with no policies denies anon/authenticated.
 alter table public.guide_reembed_runs enable row level security;
+revoke all on table public.guide_reembed_runs from anon, authenticated;
 
 -- Atomically decide whether a run may start and record it. Returns {ok, reason, run_id}.
 create or replace function public.claim_guide_reembed(
   p_guide_url text,
-  p_cooldown_minutes int default 5,
+  p_cooldown_minutes int default 6,
   p_max_per_day int default 30,
   p_max_concurrent int default 2
 )
@@ -47,6 +48,15 @@ begin
       and started_at > now() - make_interval(mins => p_cooldown_minutes)
   ) then
     return jsonb_build_object('ok', false, 'reason', 'cooldown');
+  end if;
+  -- Backoff: a run that failed, or was killed (still 'running' after the 6 min max lifetime),
+  -- counts as a failure; 3 in 24h refuses this guide so it cannot burn the global cap.
+  if (select count(*) from guide_reembed_runs
+      where guide_url = p_guide_url
+        and started_at > now() - interval '24 hours'
+        and (status = 'failed'
+             or (status = 'running' and started_at < now() - interval '6 minutes'))) >= 3 then
+    return jsonb_build_object('ok', false, 'reason', 'failing');
   end if;
   if (select count(*) from guide_reembed_runs
       where status = 'running' and started_at > now() - interval '6 minutes') >= p_max_concurrent then
@@ -82,7 +92,6 @@ create or replace function public.stage_guide_embeddings(
 returns int
 language plpgsql
 set search_path = public, extensions
-set statement_timeout = '60s'
 as $$
 declare
   n int;
@@ -93,12 +102,14 @@ begin
   where g.id = x.id
     and g.guide_url = p_guide_url
     and g.embed_model = p_from_model
-    and g.embedding_next is null;
+    and g.embedding_next is null
+    and x.v is not null;
   get diagnostics n = row_count;
   return n;
 end;
 $$;
 
+-- Runs under the caller's (PostgREST role) statement timeout; 1200 rows flip in ~40ms locally.
 -- Flip a fully staged guide in one transaction. Refuses (returns 0) unless EVERY row of the guide
 -- is on p_from_model and has a staged vector tagged p_to_model, so tags can never end up mixed.
 create or replace function public.flip_guide_embeddings(
@@ -109,7 +120,6 @@ create or replace function public.flip_guide_embeddings(
 returns int
 language plpgsql
 set search_path = public, extensions
-set statement_timeout = '120s'
 as $$
 declare
   total int;
@@ -132,8 +142,14 @@ begin
       embed_model = embed_model_next,
       embedding_next = null,
       embed_model_next = null
-  where guide_url = p_guide_url;
+  where guide_url = p_guide_url
+    and embed_model = p_from_model
+    and embedding_next is not null
+    and embed_model_next = p_to_model;
   get diagnostics n = row_count;
+  if n <> total then
+    raise exception 'flip_guide_embeddings: % of % rows', n, total;
+  end if;
   return n;
 end;
 $$;

@@ -12,7 +12,12 @@ import {
 import { getServiceClient } from "@/lib/supabase-server";
 import { getTraceId, logTraceEvent, runWithTrace } from "@/lib/trace";
 
-type Meta = { game?: string; platform?: string; userId?: string | null };
+type Meta = { game?: string; platform?: string; userId?: string | null; requestStartMs?: number };
+
+// A deploy before db/embed-reembed.sql: remember the miss so turns do not each issue a failing RPC.
+const SQL_MISSING_CODES = new Set(["PGRST202", "42883", "42P01"]);
+const SQL_MISSING_TTL_MS = 10 * 60_000;
+let sqlMissingUntil = 0;
 
 function skip(guideUrl: string, reason: string, extra?: Record<string, unknown>) {
   void logTraceEvent("reembed_skip", `Re-embed skipped (${reason}): ${guideUrl}`, undefined, {
@@ -29,14 +34,23 @@ function skip(guideUrl: string, reason: string, extra?: Record<string, unknown>)
  * leaves the guide as it was (lexical-only), never an error for the player.
  */
 async function reembedGuide(guideUrl: string, meta: Meta): Promise<void> {
+  if (Date.now() < sqlMissingUntil) return;
   const svc = getServiceClient();
   if (!svc) return skip(guideUrl, "no_service_key");
   const startMs = Date.now();
+  // Budget is anchored to the originating request (after() runs once the answer is done);
+  // checked before claiming so a no-time skip costs no cooldown or cap.
+  const requestStartMs = meta.requestStartMs ?? startMs;
+  if (reembedRemainingMs(startMs, startMs, requestStartMs) === null) return skip(guideUrl, "no_time");
 
   const { data: claim, error: claimError } = await svc.rpc("claim_guide_reembed", {
     p_guide_url: guideUrl,
   });
-  if (claimError) return skip(guideUrl, "sql_missing", { error: claimError.message.slice(0, 200) });
+  if (claimError) {
+    const missing = SQL_MISSING_CODES.has(claimError.code);
+    if (missing) sqlMissingUntil = Date.now() + SQL_MISSING_TTL_MS;
+    return skip(guideUrl, missing ? "sql_missing" : "claim_error", { error: claimError.message.slice(0, 200) });
+  }
   if (!claim?.ok) return skip(guideUrl, String(claim?.reason ?? "refused"));
   const runId = claim.run_id as number;
 
@@ -57,7 +71,7 @@ async function reembedGuide(guideUrl: string, meta: Meta): Promise<void> {
       if (error) throw error;
       if (!rows?.length) break;
 
-      const timeout = reembedRemainingMs(startMs);
+      const timeout = reembedRemainingMs(startMs, Date.now(), requestStartMs);
       if (timeout === null) {
         void logTraceEvent("reembed_progress", "Re-embed budget used, next query resumes", Date.now() - startMs, {
           guideUrl,

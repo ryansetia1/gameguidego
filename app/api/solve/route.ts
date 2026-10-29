@@ -388,6 +388,7 @@ export async function POST(request: Request) {
             game,
             platform,
             userId,
+            requestStartMs: startedAt,
           });
 
           if (rag?.embedFailed && rag.indexedCount === 0) {

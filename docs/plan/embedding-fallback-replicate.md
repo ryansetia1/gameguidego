@@ -107,10 +107,11 @@ ingest) with `QWEN_MODEL_TAG` into STAGING columns `embedding_next` / `embed_mod
 `embedding_next is null`, so kill/timeout/new query resumes). The live `embedding`/`embed_model` are
 untouched until `flip_guide_embeddings` swaps ALL rows of the guide in one transaction, and refuses
 (returns 0) unless every row is on the old model and fully staged: no mixed tags, never half converted,
-chunk 0 present throughout. Run budget 200s (stops under 30s left, next query resumes).
-Spend guards persist in `guide_reembed_runs` via `claim_guide_reembed`: 5 min per-guide cooldown (any
-run), 2 concurrent, 30 runs per 24h globally. All four functions are `service_role` execute only.
-Fails open (trace `reembed_skip`: `no_service_key`, `sql_missing`, `cooldown`, `busy`, `cap`).
+chunk 0 present throughout. Run budget min(200s, 300s - request elapsed - 45s), threaded from the request start (`requestStartMs`), checked before claiming and between 16-row batches (stops under 30s left, next query resumes).
+Spend guards persist in `guide_reembed_runs` via `claim_guide_reembed`: 6 min per-guide cooldown (any
+run, longer than the max run), 3 failed or killed runs per guide per 24h then `failing` refusal, 2 concurrent,
+30 runs per 24h globally. All four functions are `service_role` execute only.
+Fails open (trace `reembed_skip`: `no_service_key`, `sql_missing`, `claim_error`, `no_time`, `cooldown`, `failing`, `busy`, `cap`). A missing-SQL result is cached for 10 min.
 Journal chunks are excluded: the journal is deleted and fully re-embedded on every update
 (`lib/player-journey-server.ts`), so it self-heals on the next update.
 Rollback: aborting before the flip loses nothing; after it the Sumopod vectors are overwritten

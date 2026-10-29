@@ -206,7 +206,10 @@ async function fetchCandidates(
 
 let modelRpcMissingLogged = false;
 
-/** Which embedding model indexed each guide. A missing column reads as legacy Sumopod. */
+/**
+ * Which embedding model indexed each guide, as read ("" when unknown: read error or missing
+ * column). Callers treat "" as legacy Sumopod for retrieval but never convert on it.
+ */
 async function loadGuideModels(
   supabase: NonNullable<ReturnType<typeof getServerClient>>,
   guideUrls: string[],
@@ -221,9 +224,9 @@ async function loadGuideModels(
           .limit(1)
           .maybeSingle();
         const tag = !error && typeof data?.embed_model === "string" ? data.embed_model : "";
-        return [url, tag || SUMOPOD_MODEL_TAG];
+        return [url, tag];
       } catch {
-        return [url, SUMOPOD_MODEL_TAG];
+        return [url, ""];
       }
     }),
   );
@@ -292,6 +295,8 @@ export async function retrieveFromPreferredGuides(input: {
   game?: string;
   platform?: string;
   userId?: string | null;
+  /** When the originating request started, so a background re-embed stays inside its 300s kill. */
+  requestStartMs?: number;
 }): Promise<GuideRagResult | null> {
   const preferred = normalizeGuideUrlList(input.guideUrls);
   if (!preferred.length) return null;
@@ -361,9 +366,15 @@ export async function retrieveFromPreferredGuides(input: {
     const guideModels = await loadGuideModels(supabase, guideUrls);
     const byModel = new Map<string, string[]>();
     for (const url of guideUrls) {
-      const model = guideModels.get(url) ?? SUMOPOD_MODEL_TAG;
+      const rawModel = guideModels.get(url) ?? "";
+      const model = rawModel || SUMOPOD_MODEL_TAG;
       // Legacy Sumopod guide while Sumopod is down: this turn stays lexical, convert in background.
-      maybeStartReembed(url, model, { game: input.game, platform: input.platform, userId: input.userId });
+      maybeStartReembed(url, rawModel, {
+        game: input.game,
+        platform: input.platform,
+        userId: input.userId,
+        requestStartMs: input.requestStartMs ?? Date.now(),
+      });
       byModel.set(model, [...(byModel.get(model) ?? []), url]);
     }
     const groups = await Promise.all(

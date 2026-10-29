@@ -604,10 +604,10 @@ top_chunk=…` per query.
   converts them to Qwen in the background (`after()`): stored `chunk_text` re-embedded into staging
   columns `embedding_next`/`embed_model_next`, then `flip_guide_embeddings` swaps the whole guide in
   one transaction (refuses unless every row is staged, so tags never mix). Resumable (only rows with
-  `embedding_next is null`), single-flight, 200s budget, persisted guards in `guide_reembed_runs`
-  (5 min per-guide cooldown, 2 concurrent, 30 runs/24h), service-role only, fails open when
+  `embedding_next is null`), single-flight, 200s budget capped by the request's 300s kill (`requestStartMs`), persisted guards in `guide_reembed_runs`
+  (6 min per-guide cooldown, 3 failures/24h backoff, 2 concurrent, 30 runs/24h), service-role only, fails open when
   `db/embed-reembed.sql` is not applied. Journal chunks excluded (rewritten on every journal update).
-  After the flip the Sumopod vectors are gone (no `embedding_prev`). A Replicate outage re-extracts a new guide every turn (no negative cache; a 5-minute
+  After the flip the Sumopod vectors are gone (no `embedding_prev`). Abandoned conversions keep staged vectors in `embedding_next` (about 4 KB/row) until the guide flips or is re-ingested. A Replicate outage re-extracts a new guide every turn (no negative cache; a 5-minute
   one is the upgrade path, low value because Gemini shares Replicate). Guide inserts use 25-row
   batches (`GUIDE_CHUNK_INSERT_BATCH`) because larger ones hit the statement timeout.
 - Chat history is sent as plain text inside the prompt and trimmed by turn count,
