@@ -300,8 +300,9 @@ export function raceAbort<T>(work: Promise<T>, signal?: AbortSignal): Promise<T 
   if (!signal) return work;
   if (signal.aborted) return Promise.resolve(null);
   return new Promise((resolve, reject) => {
-    signal.addEventListener("abort", () => resolve(null), { once: true });
-    work.then(resolve, reject);
+    const onAbort = () => resolve(null);
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
   });
 }
 
@@ -587,8 +588,14 @@ async function runIngestGuidePage(
   }
 
   // A failed re-extract of a flagged guide must leave the old index serving.
-  const bail = (result: IngestResult): Promise<IngestResult> | IngestResult =>
-    replace ? indexedGuideCacheHit(supabase, guideUrl) : result;
+  // Only while chunk 0 still exists; if the purge already ran (or its recount failed) report paused.
+  const bail = async (result: IngestResult): Promise<IngestResult> => {
+    if (!replace) return result;
+    if (await guideIndexedIn(supabase, guideUrl)) return indexedGuideCacheHit(supabase, guideUrl);
+    return { ...result, embedFailed: true };
+  };
+  // No service key: the purge could never run, so extract + embed would be wasted every turn.
+  if (replace && !getServiceClient()) return indexedGuideCacheHit(supabase, guideUrl);
 
   if (!replace) {
     const leftovers = await clearGuideLeftovers(getServiceClient(), supabase, guideUrl);

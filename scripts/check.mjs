@@ -3200,6 +3200,11 @@ if (!canRunTsChecks) {
     const runSrc = gsrc.slice(gsrc.indexOf("async function runIngestGuidePage"), gsrc.indexOf("export async function ensureGuideIngested"));
     assert.ok(!runSrc.includes("purgeGuideVerified("), "runIngestGuidePage must not purge before the re-extract");
     assert.ok(/if \(!replace\) \{\s*const leftovers/.test(runSrc), "a replace run must skip leftover cleanup (chunk 0 exists)");
+    // M6: a flagged guide with no service key serves the old index BEFORE any extract/embed spend
+    const guard = runSrc.search(/if \(replace && !getServiceClient\(\)\) return indexedGuideCacheHit/);
+    assert.ok(guard > -1 && guard < runSrc.indexOf("extractGuidePage("), "no key + replace must return before extract");
+    // L23: bail serves the old index only while chunk 0 exists, else reports paused
+    assert.ok(/guideIndexedIn\(supabase, guideUrl\)\) return indexedGuideCacheHit[^]{0,80}embedFailed: true/.test(runSrc), "bail must check chunk 0 and report embedFailed otherwise");
     // L19: solve hint honours embedFailed
     const rsrc = (await import("node:fs")).readFileSync(new URL("../app/api/solve/route.ts", import.meta.url), "utf8");
     assert.ok(/rag\?\.embedFailed[^]{0,120}guideIngestHint\(\{ embedFailed: true \}\)/.test(rsrc), "solve route must show the paused hint");
@@ -3214,6 +3219,13 @@ if (!canRunTsChecks) {
     assert.equal(finished, false, "the shared work is not cancelled");
     assert.equal(await work, "done");
     assert.equal(await raceAbort(Promise.resolve(7), new AbortController().signal), 7);
+
+    // L24: raceAbort removes its abort listener once the work settles
+    let live = 0;
+    const fake = { aborted: false, addEventListener: () => { live++; }, removeEventListener: () => { live--; } };
+    assert.equal(await raceAbort(Promise.resolve(1), fake), 1);
+    await Promise.resolve();
+    assert.equal(live, 0, "abort listener must not leak");
 
     // M2: concurrent ingests of one URL share a single run
     let runs = 0;
