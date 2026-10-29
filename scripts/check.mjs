@@ -3258,6 +3258,14 @@ if (!canRunTsChecks) {
     assert.equal(isBodyTooLarge(String(MAX_UPLOAD_BYTES + UPLOAD_BODY_MARGIN + 1)), true, "body over cap plus margin is refused");
     assert.equal(isBodyTooLarge(null), false, "missing Content-Length falls through to the file.size check");
     assert.equal(isBodyTooLarge("abc"), false, "garbage Content-Length falls through");
+    assert.ok(UPLOAD_BODY_MARGIN >= 16 * 1024, "margin covers real multipart framing");
+    {
+      const fd = new FormData();
+      fd.append("file", new File([new Uint8Array(MAX_UPLOAD_BYTES)], "x".repeat(255) + ".pdf"));
+      fd.append("game", "G".repeat(120));
+      const n = (await new Request("http://x", { method: "POST", body: fd }).arrayBuffer()).byteLength;
+      assert.equal(isBodyTooLarge(String(n)), false, "a file at the cap with real multipart framing passes the gate");
+    }
     assert.equal(UPLOAD_TOO_LARGE_MSG, "File is too large. Max 4 MB.", "message is specific");
     assert.ok(!/[\u2014\u2013]/.test(UPLOAD_TOO_LARGE_MSG), "no dashes in copy");
     {
