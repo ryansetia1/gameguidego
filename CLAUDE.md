@@ -324,6 +324,8 @@ do not sync to the cloud or use Storage uploads.
   old upload (`lostOld`, user re-uploads); the reference check sees saved chats only (unsaved
   drafts and temporary chats are invisible) and is check-then-act, so two rooms uploading the
   same key at once can both pass; upgrade is per-room keys (`upload://<uid>/<roomKey>/<file>`).
+  The reference check needs `chats.preferred_guide_urls` (`db/preferred-guide-urls.sql`); without
+  it every upload/remove returns 500 (fail-safe).
   Full design: [`docs/preferred-guide.md`](docs/preferred-guide.md).
   Embedding model specs & migration checklist: [`docs/embedding-models.md`](docs/embedding-models.md).
 - `lib/tavily.ts`: `searchGuides(query)` orchestrates Tavily tiered search then a

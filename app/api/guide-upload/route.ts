@@ -22,9 +22,9 @@ export const maxDuration = 300;
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 /** Verified uid + the caller's own client from the Bearer token, or an error response. */
-async function authenticate(request: Request) {
+async function authenticate(request: Request, signInMsg = "Sign in to upload guide files.") {
   const supabase = createAuthedSupabase(bearerToken(request));
-  const noSignIn = NextResponse.json({ error: "Sign in to upload guide files." }, { status: 401 });
+  const noSignIn = NextResponse.json({ error: signInMsg }, { status: 401 });
   if (!supabase) return { res: noSignIn };
   const { data, error } = await supabase.auth.getUser();
   // An auth outage (network / 5xx) is not a sign-out: do not tell a signed-in user to sign in.
@@ -175,7 +175,7 @@ export async function DELETE(request: Request) {
   const service = getServiceClient();
   if (!service) return NO_SERVICE();
 
-  const authed = await authenticate(request);
+  const authed = await authenticate(request, "Sign in again to remove this file.");
   if ("res" in authed) return authed.res;
 
   let body: { guideUrl?: unknown; userId?: unknown; game?: unknown; platform?: unknown };

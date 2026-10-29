@@ -3260,6 +3260,16 @@ if (!canRunTsChecks) {
     assert.equal(ownsUploadKey("u1", "upload://u2/a.pdf"), false, "other user's key");
     assert.equal(ownsUploadKey("u1", "upload://u1/"), false, "bare prefix is not a key");
     assert.equal(ownsUploadKey("", "upload:///a"), false, "empty uid owns nothing");
+    // #8 L-1: a 403 (not this account's key) still drops the row; 401/500/503 keep it
+    {
+      const { dropRowAfterDelete } = await import("../lib/upload-auth.js");
+      assert.equal(dropRowAfterDelete(200), true);
+      assert.equal(dropRowAfterDelete(403), true, "403: nothing of theirs to purge, row must go");
+      for (const st of [401, 500, 503]) assert.equal(dropRowAfterDelete(st), false, `${st} keeps the row`);
+      const fs = await import("node:fs");
+      assert.ok(fs.readFileSync(new URL("../app/guide-link-field.tsx", import.meta.url), "utf8").includes("dropRowAfterDelete(res.status)"), "client uses the helper");
+      assert.ok(fs.readFileSync(new URL("../app/api/guide-upload/route.ts", import.meta.url), "utf8").includes("Sign in again to remove this file."), "DELETE 401 copy");
+    }
     // #8 M1: other rooms' references protect a shared upload key (pure helper + fake client)
     {
       const { countOtherRoomRefs, otherRoomReferences } = await import("../lib/upload-auth.js");

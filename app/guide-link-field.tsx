@@ -19,6 +19,7 @@ import { parseGamefaqsFaqUrl } from "@/lib/gamefaqs-bundle.js";
 import type { GuideIndexState } from "@/lib/guide-index-state";
 import { resolveGuideDisplayState } from "@/lib/guide-index-state";
 import { getSupabase } from "@/lib/supabase";
+import { dropRowAfterDelete } from "@/lib/upload-auth.js";
 import { IconX, IconClipboard } from "./icons";
 import { ClearButton } from "./clear-button";
 import { GuideStatusChip } from "./chat/guide-status-chip";
@@ -181,7 +182,7 @@ export function GuideLinkField({
             headers: { "Content-Type": "application/json", ...(await authHeader()) },
             body: JSON.stringify({ guideUrl: url, game: trimmedGame, platform: platform.trim() }),
           });
-          if (!res.ok) {
+          if (!dropRowAfterDelete(res.status)) {
             const body: { error?: string } = await res.json().catch(() => ({}));
             setAddError(body.error ?? "Couldn't remove that file. Try again.");
             return;
@@ -219,7 +220,9 @@ export function GuideLinkField({
 
       if (onRequestConfirm) {
         const ok = await onRequestConfirm({
-          message: `Remove "${label}"? Answers won't use it until you add it back.`,
+          message: uploaded
+            ? `Remove "${label}"? The uploaded copy is deleted, so you'd need to upload it again.`
+            : `Remove "${label}"? Answers won't use it until you add it back.`,
           confirmLabel: "Remove",
           danger: true,
         });
