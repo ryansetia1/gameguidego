@@ -1,6 +1,6 @@
 # Embedding fallback via Replicate
 
-**Status: Phase 1 SHIPPED (issue #5, PR #7). Phase 2 (lazy re-embed) still planned.**
+**Status: Phase 1 SHIPPED (issue #5, PR #7). Phase 2 (lazy re-embed) SHIPPED (issue #9).**
 Decision recorded 2026-10-28; model chosen and research findings added 2026-10-29.
 
 ## Problem
@@ -95,7 +95,27 @@ model tag and the same no-cross-model rule:
 
 Decision (user, 2026-10-29): Sumopod-indexed guides use lexical-only retrieval, then
 web search, while Sumopod is down. Lazy re-embed of stored chunk text to Qwen is a
-**Phase 2 follow-up**, out of scope now.
+**Phase 2 follow-up**, now shipped:
+
+**Phase 2 SHIPPED (issue #9): lazy re-embed.** `lib/guide-reembed.ts` (I/O) +
+`lib/guide-reembed-rules.js` (pure rules, `npm run check`) + `db/embed-reembed.sql`. When a queried
+guide is tagged `sumopod`, Sumopod is unavailable and Qwen is available, `retrieveFromPreferredGuides`
+answers lexical-only as before and starts a background conversion (`after()`, in-instance
+`singleFlight`). It re-embeds the stored `chunk_text` (same `section breadcrumb + text` input as
+ingest) with `QWEN_MODEL_TAG` into STAGING columns `embedding_next` / `embed_model_next`
+(`stage_guide_embeddings`, 25 rows per call, highest `chunk_index` first, only rows with
+`embedding_next is null`, so kill/timeout/new query resumes). The live `embedding`/`embed_model` are
+untouched until `flip_guide_embeddings` swaps ALL rows of the guide in one transaction, and refuses
+(returns 0) unless every row is on the old model and fully staged: no mixed tags, never half converted,
+chunk 0 present throughout. Run budget 200s (stops under 30s left, next query resumes).
+Spend guards persist in `guide_reembed_runs` via `claim_guide_reembed`: 5 min per-guide cooldown (any
+run), 2 concurrent, 30 runs per 24h globally. All four functions are `service_role` execute only.
+Fails open (trace `reembed_skip`: `no_service_key`, `sql_missing`, `cooldown`, `busy`, `cap`).
+Journal chunks are excluded: the journal is deleted and fully re-embedded on every update
+(`lib/player-journey-server.ts`), so it self-heals on the next update.
+Rollback: aborting before the flip loses nothing; after it the Sumopod vectors are overwritten
+(Sumopod has no credit to regenerate them, and no `embedding_prev` is kept). Code rollback = revert the
+PR, flipped guides stay valid because retrieval already supports the Qwen tag.
 
 ## Caveats
 
@@ -132,6 +152,6 @@ run. Concurrent ingests of one URL share a run per instance (`singleFlight`).
 
 - Model decided: Qwen3-Embedding-8B pinned above (BGE builds are English-only or
   cold, nomic is 768-dim). Remaining: run the eval gate on the wrapper.
-- Phase 2 (not now): lazy re-embed of Sumopod-indexed chunk text to Qwen.
+- Phase 2: shipped, see above.
 - Update `CLAUDE.md` (`lib/embed.ts` entry, Environment, Known limits) and
   `docs/embedding-models.md` when shipped.

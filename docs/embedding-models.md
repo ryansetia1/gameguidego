@@ -69,7 +69,10 @@ Tag di DB: `guide_chunks.embed_model` / `player_journal_chunks.embed_model`
 (`sumopod` = lama, `replicate:qwen3-embedding-8b@42d9684`). Vektor beda model tidak pernah
 dibandingkan: query di-embed dengan model yang meng-index guide itu; kalau modelnya sedang tidak
 tersedia, retrieval lexical-only lalu web search. Migrasi: `db/embed-model-tag.sql`
-(aditif + idempoten). Cold start Replicate 96 s/d 274 s: ingest menunggu sampai 280 s, query 20 s.
+(aditif + idempoten). Guide lama (`sumopod`) otomatis dikonversi ke Qwen di background saat
+Sumopod mati: vektor baru ditulis ke kolom staging (`embedding_next`), lalu satu fungsi SQL
+menukar semua baris guide sekaligus (`db/embed-reembed.sql`, `lib/guide-reembed.ts`); tidak pernah
+tag campur. Cold start Replicate 96 s/d 274 s: ingest menunggu sampai 280 s, query 20 s.
 
 ### Ingest crash-safe
 

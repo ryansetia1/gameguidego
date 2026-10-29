@@ -599,9 +599,15 @@ top_chunk=…` per query.
 - Embedding fallback ceilings: the circuit breaker is per serverless instance (resets on cold
   start). Replicate Qwen cold starts run 96 to 274s, so ingest waits up to 280s and the per-turn query
   path times out at 20s (guide then goes lexical-only). Replicate credit also pays for Gemini, so if
-  Replicate is the exhausted one the fallback adds no resilience. Legacy Sumopod-indexed guides stay
-  lexical-only (then web search) while Sumopod is down until the Phase 2 lazy re-embed, which is
-  not built. A Replicate outage re-extracts a new guide every turn (no negative cache; a 5-minute
+  Replicate is the exhausted one the fallback adds no resilience. Legacy Sumopod-indexed guides answer
+  lexical-only (then web search) on the first turn while Sumopod is down, and `lib/guide-reembed.ts`
+  converts them to Qwen in the background (`after()`): stored `chunk_text` re-embedded into staging
+  columns `embedding_next`/`embed_model_next`, then `flip_guide_embeddings` swaps the whole guide in
+  one transaction (refuses unless every row is staged, so tags never mix). Resumable (only rows with
+  `embedding_next is null`), single-flight, 200s budget, persisted guards in `guide_reembed_runs`
+  (5 min per-guide cooldown, 2 concurrent, 30 runs/24h), service-role only, fails open when
+  `db/embed-reembed.sql` is not applied. Journal chunks excluded (rewritten on every journal update).
+  After the flip the Sumopod vectors are gone (no `embedding_prev`). A Replicate outage re-extracts a new guide every turn (no negative cache; a 5-minute
   one is the upgrade path, low value because Gemini shares Replicate). Guide inserts use 25-row
   batches (`GUIDE_CHUNK_INSERT_BATCH`) because larger ones hit the statement timeout.
 - Chat history is sent as plain text inside the prompt and trimmed by turn count,

@@ -2,6 +2,7 @@ import { getServerClient } from "@/lib/supabase-server";
 
 import { embedQuery, isEmbedModelAvailable, SUMOPOD_MODEL_TAG } from "@/lib/embed";
 import { toVectorString } from "@/lib/embed-cache";
+import { maybeStartReembed } from "@/lib/guide-reembed";
 import {
   ensureGuideIngested,
   getGuideDisplayTitles,
@@ -361,6 +362,8 @@ export async function retrieveFromPreferredGuides(input: {
     const byModel = new Map<string, string[]>();
     for (const url of guideUrls) {
       const model = guideModels.get(url) ?? SUMOPOD_MODEL_TAG;
+      // Legacy Sumopod guide while Sumopod is down: this turn stays lexical, convert in background.
+      maybeStartReembed(url, model, { game: input.game, platform: input.platform, userId: input.userId });
       byModel.set(model, [...(byModel.get(model) ?? []), url]);
     }
     const groups = await Promise.all(

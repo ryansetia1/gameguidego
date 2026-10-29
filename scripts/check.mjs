@@ -3350,4 +3350,26 @@ if (!canRunTsChecks) {
   }
 }
 
+
+{
+  const r = await import("../lib/guide-reembed-rules.js");
+  assert.equal(r.shouldReembed({ model: "sumopod", sumopodUp: false, qwenUp: true }), true, "legacy guide converts when Sumopod is down");
+  assert.equal(r.shouldReembed({ model: "sumopod", sumopodUp: true, qwenUp: true }), false, "no conversion while Sumopod works");
+  assert.equal(r.shouldReembed({ model: "sumopod", sumopodUp: false, qwenUp: false }), false, "no conversion without Qwen");
+  assert.equal(r.shouldReembed({ model: "replicate:qwen3-embedding-8b@42d9684", sumopodUp: false, qwenUp: true }), false, "Qwen guides are not reconverted");
+  const rows = [{ id: 1, embedding_next: null }, { id: 2, embedding_next: "[1]" }, { id: 3, embedding_next: null }];
+  assert.deepEqual(r.pendingRows(rows).map((x) => x.id), [1, 3], "resume embeds only rows without a staged vector");
+  assert.equal(r.hasMixedTags([{ embed_model: "sumopod" }, { embed_model: "sumopod" }]), false);
+  assert.equal(r.hasMixedTags([{ embed_model: "sumopod" }, { embed_model: "q" }]), true, "mixed tags are detected");
+  assert.equal(r.reembedRemainingMs(1000, 1000 + r.REEMBED_BUDGET_MS - r.REEMBED_FLOOR_MS + 1), null, "run stops under the floor");
+  assert.ok(r.reembedRemainingMs(1000, 1500) > r.REEMBED_FLOOR_MS, "fresh run has budget");
+  const sql = (await import("node:fs")).readFileSync(new URL("../db/embed-reembed.sql", import.meta.url), "utf8");
+  assert.ok(!/\b(drop|delete|truncate)\b/i.test(sql.replace(/--.*$/gm, "")), "reembed SQL is additive");
+  assert.ok(/started_at > now\(\) - make_interval\(mins => p_cooldown_minutes\)[\s\S]*'cooldown'/.test(sql), "claim enforces the per-guide cooldown");
+  assert.ok(/>= p_max_per_day[\s\S]*'cap'/.test(sql) && />= p_max_concurrent[\s\S]*'busy'/.test(sql), "claim enforces the global caps");
+  assert.ok(/ready <> total[\s\S]*return 0/.test(sql), "flip refuses unless every row is staged on the old model (no mixed tags)");
+  assert.equal((sql.match(/to service_role;/g) ?? []).length, 4, "all four functions granted to service_role only");
+  assert.ok(/revoke all on function public\.flip_guide_embeddings[\s\S]*from public, anon, authenticated/.test(sql), "flip is not callable by anon/authenticated");
+}
+
 console.log("Self-check passed.");
