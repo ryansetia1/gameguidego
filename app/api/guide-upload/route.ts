@@ -14,7 +14,7 @@ import {
   normalizeGuideUrl,
   purgeGuideVerified,
 } from "@/lib/guide-ingest";
-import { isUploadTooLarge, UPLOAD_TOO_LARGE_MSG } from "@/lib/upload-limit";
+import { isBodyTooLarge, isUploadTooLarge, UPLOAD_TOO_LARGE_MSG } from "@/lib/upload-limit";
 import { runWithTrace, logTraceEvent } from "@/lib/trace";
 
 export const runtime = "nodejs";
@@ -51,6 +51,11 @@ export async function POST(request: Request) {
   const authed = await authenticate(request);
   if ("res" in authed) return authed.res;
   const userId = authed.uid;
+
+  // Refuse an oversize body before buffering it.
+  if (isBodyTooLarge(request.headers.get("content-length"))) {
+    return NextResponse.json({ error: UPLOAD_TOO_LARGE_MSG }, { status: 413 });
+  }
 
   let formData: FormData;
   try {

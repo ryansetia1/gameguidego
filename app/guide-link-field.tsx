@@ -368,7 +368,7 @@ export function GuideLinkField({
         guideUrl?: string;
         fileType?: string;
         error?: string;
-      } = await response.json();
+      } = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         setUploadError(payload.error ?? "Upload failed. Try again.");
@@ -601,7 +601,7 @@ export function GuideLinkField({
                   </span>
                 </p>
               )}
-              {searchError && canSearch && <p className="guide-search-error">{searchError}</p>}
+              {searchError && canSearch && <p className="guide-search-error" role="alert">{searchError}</p>}
               {results.length > 0 && searchAvailable && (
                 <ul className="guide-search-results" aria-label="Guide search results">
                   {results.map((hit) => {
@@ -702,7 +702,7 @@ export function GuideLinkField({
               </button>
             )}
           </div>
-          {uploadError && <p className="guide-search-error">{uploadError}</p>}
+          {uploadError && <p className="guide-search-error" role="alert">{uploadError}</p>}
           <p className="field-hint" style={{ marginTop: "8px" }}>
             Upload a PDF, TXT, or MD walkthrough file (max {MAX_UPLOAD_MB} MB).
           </p>
@@ -714,7 +714,7 @@ export function GuideLinkField({
           ? `${MAX_GUIDE_URLS} guides max. Remove one to add another.`
           : `Add up to ${MAX_GUIDE_URLS} guides.`}
       </p>
-      {addError && <p className="guide-search-error">{addError}</p>}
+      {addError && <p className="guide-search-error" role="alert">{addError}</p>}
 
       {showInfo && mounted && createPortal(
         <div
