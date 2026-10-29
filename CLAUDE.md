@@ -319,7 +319,9 @@ do not sync to the cloud or use Storage uploads.
   embeds exist. The key has no game in it, so when another of the user's game rooms still
   lists the key (`lib/upload-auth.js#otherRoomReferences`), POST returns 409 before any
   embed spend and DELETE keeps the rows (`{ kept: true }`). Both 503 without
-  `SUPABASE_SERVICE_ROLE_KEY`. A different file under a key still being indexed gets 409
+  `SUPABASE_SERVICE_ROLE_KEY`. **Size cap 4 MB** (`lib/upload-limit.js`, shared by the picker and the route;
+  Vercel rejects bodies over 4.5 MB before the route runs). The picker checks before sending; the route
+  answers 413 "File is too large. Max 4 MB."; the client also maps Vercel's own non-JSON 413 to that text. A different file under a key still being indexed gets 409
   (`busy`, per instance). Known ceilings: a failed insert after the replace purge loses the
   old upload (`lostOld`, user re-uploads); the reference check sees saved chats only (unsaved
   drafts and temporary chats are invisible) and is check-then-act, so two rooms uploading the

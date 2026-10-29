@@ -206,6 +206,9 @@ Calibration data and the shape of the decay: [`plan/rag-tuning-roadmap.md`](plan
 
 ## Ingest
 
+**Upload size cap: 4 MB** (`lib/upload-limit.js`). Vercel rejects request bodies over 4.5 MB before the
+route runs, so the picker checks first, the route answers 413, and a non-JSON platform 413 maps to the same text.
+
 `lib/guide-ingest.ts` (new): fetch → chunk → embed → insert. Idempotent per URL
 (check-then-insert; a unique index on `(guide_url, chunk_index)` guards double
 ingest under a race — good enough; a proper lease is the upgrade path).

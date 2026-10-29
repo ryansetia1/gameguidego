@@ -3248,6 +3248,40 @@ if (!canRunTsChecks) {
     assert.equal(isTransientSumopodError(Object.assign(new Error("x"), { status: 401 })), false, "401 is not transient");
     assert.equal(isTransientSumopodError(new Error("x")), false, "plain error is not transient");
 
+    // #12: one shared upload cap, below Vercel's 4.5 MB body limit
+    const { MAX_UPLOAD_BYTES, UPLOAD_BODY_MARGIN, isBodyTooLarge, isUploadTooLarge, UPLOAD_TOO_LARGE_MSG } = await import("../lib/upload-limit.js");
+    assert.equal(MAX_UPLOAD_BYTES, 4 * 1024 * 1024, "cap is 4 MB");
+    assert.ok(MAX_UPLOAD_BYTES + UPLOAD_BODY_MARGIN < 4_500_000, "cap plus multipart margin stays under Vercel's 4.5 MB (decimal) body limit");
+    assert.equal(isUploadTooLarge(MAX_UPLOAD_BYTES), false, "exactly the cap is allowed");
+    assert.equal(isUploadTooLarge(MAX_UPLOAD_BYTES + 1), true, "one byte over is rejected");
+    assert.equal(isBodyTooLarge(String(MAX_UPLOAD_BYTES + UPLOAD_BODY_MARGIN)), false, "body at cap plus margin passes");
+    assert.equal(isBodyTooLarge(String(MAX_UPLOAD_BYTES + UPLOAD_BODY_MARGIN + 1)), true, "body over cap plus margin is refused");
+    assert.equal(isBodyTooLarge(null), false, "missing Content-Length falls through to the file.size check");
+    assert.equal(isBodyTooLarge("abc"), false, "garbage Content-Length falls through");
+    assert.ok(UPLOAD_BODY_MARGIN >= 16 * 1024, "margin covers real multipart framing");
+    {
+      const fd = new FormData();
+      fd.append("file", new File([new Uint8Array(MAX_UPLOAD_BYTES)], "x".repeat(255) + ".pdf"));
+      fd.append("game", "G".repeat(120));
+      const n = (await new Request("http://x", { method: "POST", body: fd }).arrayBuffer()).byteLength;
+      assert.equal(isBodyTooLarge(String(n)), false, "a file at the cap with real multipart framing passes the gate");
+    }
+    assert.equal(UPLOAD_TOO_LARGE_MSG, "File is too large. Max 4 MB.", "message is specific");
+    assert.ok(!/[\u2014\u2013]/.test(UPLOAD_TOO_LARGE_MSG), "no dashes in copy");
+    {
+      const fs = await import("node:fs");
+      const route = fs.readFileSync(new URL("../app/api/guide-upload/route.ts", import.meta.url), "utf8");
+      const field = fs.readFileSync(new URL("../app/guide-link-field.tsx", import.meta.url), "utf8");
+      assert.ok(/isUploadTooLarge\(file\.size\)[\s\S]*?status: 413/.test(route), "server 413s oversize files");
+      assert.ok(/isUploadTooLarge\(file\.size\)/.test(field), "picker checks size before sending");
+      assert.ok(field.indexOf("isUploadTooLarge(file.size)") < field.indexOf('fetch("/api/guide-upload", {\n        method: "POST"'), "size check precedes the upload fetch");
+      assert.ok(/await response\.json\(\)\.catch\(\(\) => \(\{\}\)\)/.test(field), "non-JSON non-413 errors fall to the generic message");
+      assert.ok(!/<p className="guide-search-error">/.test(field), "error paragraphs announce via role=alert");
+      assert.ok(/if \(isBodyTooLarge\(request\.headers\.get\("content-length"\)\)\) \{\s*return NextResponse\.json\([^)]*status: 413/.test(route), "Content-Length gate returns 413 unconditionally");
+      assert.ok(route.indexOf("isBodyTooLarge(") > route.indexOf("await authenticate(request)") && route.indexOf("isBodyTooLarge(") < route.indexOf("await request.formData()"), "Content-Length 413 runs after auth, before formData");
+      assert.ok(/response\.status === 413/.test(field), "picker maps Vercel's non-JSON 413");
+    }
+
     // #8: upload identity comes from the verified token; a body uid is only compared
     const { checkUploadIdentity, ownsUploadKey } = await import("../lib/upload-auth.js");
     assert.equal(checkUploadIdentity("", "u1").status, 401, "no verified uid: 401");

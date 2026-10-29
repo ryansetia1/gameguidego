@@ -14,12 +14,11 @@ import {
   normalizeGuideUrl,
   purgeGuideVerified,
 } from "@/lib/guide-ingest";
+import { isBodyTooLarge, isUploadTooLarge, UPLOAD_TOO_LARGE_MSG } from "@/lib/upload-limit";
 import { runWithTrace, logTraceEvent } from "@/lib/trace";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
-
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 /** Verified uid + the caller's own client from the Bearer token, or an error response. */
 async function authenticate(request: Request, signInMsg = "Sign in to upload guide files.") {
@@ -53,6 +52,11 @@ export async function POST(request: Request) {
   if ("res" in authed) return authed.res;
   const userId = authed.uid;
 
+  // Refuse an oversize body before buffering it.
+  if (isBodyTooLarge(request.headers.get("content-length"))) {
+    return NextResponse.json({ error: UPLOAD_TOO_LARGE_MSG }, { status: 413 });
+  }
+
   let formData: FormData;
   try {
     formData = await request.formData();
@@ -71,9 +75,9 @@ export async function POST(request: Request) {
     );
   }
 
-  if (file.size > MAX_FILE_SIZE) {
+  if (isUploadTooLarge(file.size)) {
     return NextResponse.json(
-      { error: `File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Max is 10 MB.` },
+      { error: UPLOAD_TOO_LARGE_MSG },
       { status: 413 },
     );
   }
