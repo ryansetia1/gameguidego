@@ -3085,12 +3085,13 @@ if (!canRunTsChecks) {
 
   // Guide insert/cleanup/concurrency. In-memory fake of the guide_chunks table.
   {
-    const { insertGuideChunks, guideIndexedIn, clearGuideLeftovers, singleFlight } = await import("../lib/guide-ingest.ts");
+    const { insertGuideChunks, guideIndexedIn, clearGuideLeftovers, singleFlight, purgeGuideVerified, raceAbort } = await import("../lib/guide-ingest.ts");
     const URL_ = "http://x.test/g";
-    const makeDb = ({ hangAfter = Infinity, failAt = Infinity, failCode = "XX000", deleteWorks = true, readError = false, seed = [] } = {}) => {
+    const makeDb = ({ hangAfter = Infinity, failAt = Infinity, failCode = "XX000", deleteWorks = true, readError = false, errAfterDelete = false, seed = [] } = {}) => {
       const rows = [...seed];
       const log = [];
       let batches = 0;
+      let deleted = false;
       return {
         rows,
         log,
@@ -3117,11 +3118,12 @@ if (!canRunTsChecks) {
             gte: (c, v) => (filters.push(["gte", c, v]), (fromIdx = v), q),
             then: (res) => {
               if (mode === "delete") {
+                deleted = true;
                 log.push(fromIdx === undefined ? "delete:all" : `delete:>=${fromIdx}`);
                 if (deleteWorks) for (let i = rows.length - 1; i >= 0; i--) if (match(rows[i])) rows.splice(i, 1);
                 return res({ error: null });
               }
-              if (readError) return res({ count: null, error: { message: "read failed" } });
+              if (readError || (errAfterDelete && deleted)) return res({ count: null, error: { message: "read failed" } });
               return res({ count: rows.filter(match).length, error: null });
             },
           };
@@ -3184,6 +3186,34 @@ if (!canRunTsChecks) {
     // L15: 23505 with the guide not yet indexed carries embedFailed
     const dup2 = await run(makeDb({ failAt: 2, failCode: "23505" }));
     assert.equal(dup2.embedFailed, true, "23505 not-indexed return must carry embedFailed");
+
+    // L18: purge verdict is tri-state; a failed recount is "unknown" (not a cache hit on a maybe-empty guide)
+    assert.equal(await purgeGuideVerified(URL_, makeDb({ seed: left })), "gone");
+    assert.equal(await purgeGuideVerified(URL_, makeDb({ seed: left, deleteWorks: false })), "kept", "rows remain: serve the old index");
+    assert.equal(await purgeGuideVerified(URL_, makeDb({ seed: left, errAfterDelete: true })), "unknown", "recount error must not read as kept/cache hit");
+    assert.equal(await purgeGuideVerified(URL_, null), "kept", "no service key: never delete");
+    // L17: the flagged index is purged only inside storeGuideChunks, after embeds and before the insert
+    const gsrc = (await import("node:fs")).readFileSync(new URL("../lib/guide-ingest.ts", import.meta.url), "utf8");
+    const store = gsrc.slice(gsrc.indexOf("async function storeGuideChunks"), gsrc.indexOf("function ingestGuidePage"));
+    assert.ok(store.indexOf("embedTexts(") < store.indexOf("purgeGuideVerified(") && store.indexOf("purgeGuideVerified(") < store.indexOf("insertGuideChunks({"), "replace purge must sit between embed and insert");
+    assert.ok(/if \(input\.replace\) \{\s*const purged = await purgeGuideVerified/.test(store), "the pre-insert purge must run on replace");
+    const runSrc = gsrc.slice(gsrc.indexOf("async function runIngestGuidePage"), gsrc.indexOf("export async function ensureGuideIngested"));
+    assert.ok(!runSrc.includes("purgeGuideVerified("), "runIngestGuidePage must not purge before the re-extract");
+    assert.ok(/if \(!replace\) \{\s*const leftovers/.test(runSrc), "a replace run must skip leftover cleanup (chunk 0 exists)");
+    // L19: solve hint honours embedFailed
+    const rsrc = (await import("node:fs")).readFileSync(new URL("../app/api/solve/route.ts", import.meta.url), "utf8");
+    assert.ok(/rag\?\.embedFailed[^]{0,120}guideIngestHint\(\{ embedFailed: true \}\)/.test(rsrc), "solve route must show the paused hint");
+    assert.ok(/embedFailed\?: boolean/.test((await import("node:fs")).readFileSync(new URL("../lib/guide-rag.ts", import.meta.url), "utf8")), "GuideRagResult carries embedFailed");
+    // L20: Stop ends the wait without cancelling the shared work
+    const ac = new AbortController();
+    let finished = false;
+    const work = new Promise((r) => setTimeout(() => { finished = true; r("done"); }, 30));
+    const raced = raceAbort(work, ac.signal);
+    ac.abort();
+    assert.equal(await raced, null, "abort resolves null immediately");
+    assert.equal(finished, false, "the shared work is not cancelled");
+    assert.equal(await work, "done");
+    assert.equal(await raceAbort(Promise.resolve(7), new AbortController().signal), 7);
 
     // M2: concurrent ingests of one URL share a single run
     let runs = 0;

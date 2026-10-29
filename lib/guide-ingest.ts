@@ -275,18 +275,34 @@ async function countGuideRows(
   }
 }
 
+export type PurgeState = "gone" | "kept" | "unknown";
+
 /**
  * Delete a guide's rows with the service client and VERIFY by recount. Never deletes
- * without a service key. False = rows may remain, so the caller serves the old index.
+ * without a service key. gone = verified empty; kept = rows remain (or no key), serve the old
+ * index; unknown = the recount failed, so the guide may be empty: treat as not indexed.
  */
-async function purgeGuideVerified(guideUrl: string): Promise<boolean> {
-  const service = getServiceClient();
+export async function purgeGuideVerified(
+  guideUrl: string,
+  service: SupabaseClient | null = getServiceClient(),
+): Promise<PurgeState> {
   if (!service) {
     console.error("Guide purge skipped: SUPABASE_SERVICE_ROLE_KEY is not set", { guideUrl });
-    return false;
+    return "kept";
   }
   await deleteGuideChunks(service, guideUrl).catch(() => {});
-  return (await countGuideRows(service, guideUrl)) === 0;
+  const left = await countGuideRows(service, guideUrl);
+  return left === null ? "unknown" : left === 0 ? "gone" : "kept";
+}
+
+/** Resolve null when `signal` aborts, so a caller can stop waiting while the shared work keeps running. */
+export function raceAbort<T>(work: Promise<T>, signal?: AbortSignal): Promise<T | null> {
+  if (!signal) return work;
+  if (signal.aborted) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    signal.addEventListener("abort", () => resolve(null), { once: true });
+    work.then(resolve, reject);
+  });
 }
 
 export type LeftoverState = "clear" | "cached" | "blocked";
@@ -450,7 +466,9 @@ async function storeGuideChunks(input: {
   embedLog?: EmbedLogMeta;
   /** When this ingest started, to keep the embed inside the route's hard kill. */
   startMs: number;
-}): Promise<{ indexed: boolean; chunkCount: number; embedFailed?: boolean }> {
+  /** Replace a flagged (stale/insufficient) index: purge it only now, after the new embeds exist. */
+  replace?: boolean;
+}): Promise<{ indexed: boolean; chunkCount: number; embedFailed?: boolean; keptOld?: boolean }> {
   const chunks = chunkGuideWithMeta(input.text);
   if (!chunks.length) return { indexed: false, chunkCount: 0 };
 
@@ -493,6 +511,12 @@ async function storeGuideChunks(input: {
     return { indexed: false, chunkCount: 0, embedFailed: true };
   }
 
+  if (input.replace) {
+    const purged = await purgeGuideVerified(input.guideUrl);
+    if (purged === "kept") return { indexed: false, chunkCount: 0, keptOld: true };
+    if (purged === "unknown") return { indexed: false, chunkCount: 0, embedFailed: true };
+  }
+
   return insertGuideChunks({
     supabase: chunkWriter(input.supabase),
     guideUrl: input.guideUrl,
@@ -529,16 +553,18 @@ async function runIngestGuidePage(
     ? gamefaqsStorageUrl(rawUrl)
     : normalizeGuideUrl(rawUrl);
 
+  // Replace-on-success: a flagged index is kept until the new embeds are ready (storeGuideChunks).
+  let replace = false;
   if (await isGuideIndexed(guideUrl)) {
     const isGamefaqs = Boolean(parseGamefaqsFaqUrl(guideUrl));
     if (await guideNeedsOutlineReingest(supabase, guideUrl)) {
       void logTraceEvent(
         "ingest_stale_purge",
-        `Purging guide chunks missing outline metadata for re-ingest: ${guideUrl}`,
+        `Replacing guide chunks missing outline metadata: ${guideUrl}`,
         undefined,
         { guideUrl, reason: "outline_metadata" },
       );
-      if (!(await purgeGuideVerified(guideUrl))) return indexedGuideCacheHit(supabase, guideUrl);
+      replace = true;
     } else if (isGamefaqs) {
       // Purge only genuinely bad stored content (TOC-only / near-empty), not
       // merely-short guides — else a small real guide re-embeds every turn.
@@ -547,11 +573,11 @@ async function runIngestGuidePage(
       if (gamefaqsExtractQuality(storedText).insufficient) {
         void logTraceEvent(
           "ingest_stale_purge",
-          `Purging insufficient GameFAQs chunks (${storedText.length} chars) for re-ingest: ${guideUrl}`,
+          `Replacing insufficient GameFAQs chunks (${storedText.length} chars) for re-ingest: ${guideUrl}`,
           undefined,
           { guideUrl, totalChars: storedText.length },
         );
-        if (!(await purgeGuideVerified(guideUrl))) return indexedGuideCacheHit(supabase, guideUrl);
+        replace = true;
       } else {
         return indexedGuideCacheHit(supabase, guideUrl);
       }
@@ -560,10 +586,16 @@ async function runIngestGuidePage(
     }
   }
 
-  const leftovers = await clearGuideLeftovers(getServiceClient(), supabase, guideUrl);
-  if (leftovers === "cached") return indexedGuideCacheHit(supabase, guideUrl);
-  if (leftovers === "blocked") {
-    return { indexed: false, chunkCount: 0, hubWarning: false, embedFailed: true };
+  // A failed re-extract of a flagged guide must leave the old index serving.
+  const bail = (result: IngestResult): Promise<IngestResult> | IngestResult =>
+    replace ? indexedGuideCacheHit(supabase, guideUrl) : result;
+
+  if (!replace) {
+    const leftovers = await clearGuideLeftovers(getServiceClient(), supabase, guideUrl);
+    if (leftovers === "cached") return indexedGuideCacheHit(supabase, guideUrl);
+    if (leftovers === "blocked") {
+      return { indexed: false, chunkCount: 0, hubWarning: false, embedFailed: true };
+    }
   }
 
   void logTraceEvent("ingest_start", `Ingesting guide: ${guideUrl}`, undefined, { guideUrl });
@@ -577,7 +609,7 @@ async function runIngestGuidePage(
       { guideUrl, error: "Extraction failed" },
     );
     console.error("Guide ingest skipped: could not extract guide page", { guideUrl });
-    return { indexed: false, chunkCount: 0, hubWarning: looksLikeHub(guideUrl) };
+    return bail({ indexed: false, chunkCount: 0, hubWarning: looksLikeHub(guideUrl) });
   }
   if (isBlockedGuideContent(extracted.content)) {
     void logTraceEvent(
@@ -586,7 +618,7 @@ async function runIngestGuidePage(
       Date.now() - startMs,
       { guideUrl },
     );
-    return { indexed: false, chunkCount: 0, hubWarning: false, isBlocked: true };
+    return bail({ indexed: false, chunkCount: 0, hubWarning: false, isBlocked: true });
   }
 
   const text = cleanSnippet(extracted.content);
@@ -600,7 +632,7 @@ async function runIngestGuidePage(
         Date.now() - startMs,
         { guideUrl, reason: quality.reason, charCount: text.length },
       );
-      return { indexed: false, chunkCount: 0, hubWarning: true };
+      return bail({ indexed: false, chunkCount: 0, hubWarning: true });
     }
   }
 
@@ -612,7 +644,9 @@ async function runIngestGuidePage(
     signal,
     embedLog: embedLogFromContext(ctx),
     startMs,
+    replace,
   });
+  if (stored.keptOld) return indexedGuideCacheHit(supabase, guideUrl);
   if (!stored.indexed) {
     void logTraceEvent(
       "ingest_error",
@@ -620,7 +654,7 @@ async function runIngestGuidePage(
       Date.now() - startMs,
       { guideUrl, error: "Store failed" },
     );
-    return { indexed: false, chunkCount: 0, hubWarning: false, ...(stored.embedFailed ? { embedFailed: true } : {}) };
+    return bail({ indexed: false, chunkCount: 0, hubWarning: false, ...(stored.embedFailed ? { embedFailed: true } : {}) });
   }
 
   const title = await cacheGuideTitleFromExtract(supabase, guideUrl, extracted.content, signal);

@@ -8,6 +8,7 @@ import {
   guideStorageKey,
   isGuideRagAvailable,
   normalizeGuideUrl,
+  raceAbort,
 } from "@/lib/guide-ingest";
 import { canonicalGamefaqsBundleUrl } from "@/lib/gamefaqs-bundle.js";
 import { normalizeGuideUrlList } from "@/lib/guide-urls.js";
@@ -268,6 +269,8 @@ export type GuideRagResult = {
   hubWarning: boolean;
   indexedCount: number;
   totalGuides: number;
+  /** Indexing is paused (embed providers down or cleanup blocked), not just partial. */
+  embedFailed?: boolean;
   scores?: number[];
   chunkTexts?: string[];
 };
@@ -300,15 +303,21 @@ export async function retrieveFromPreferredGuides(input: {
     return null;
   }
 
-  const ingestResults = await Promise.all(
-    preferred.map((guideUrl) =>
-      ensureGuideIngested(guideUrl, input.signal, {
-        game: input.game,
-        platform: input.platform,
-        userId: input.userId,
-      }),
+  // The shared ingest runs without our signal (L14); Stop only ends this wait, the guide still indexes.
+  const ingestResults = await raceAbort(
+    Promise.all(
+      preferred.map((guideUrl) =>
+        ensureGuideIngested(guideUrl, input.signal, {
+          game: input.game,
+          platform: input.platform,
+          userId: input.userId,
+        }),
+      ),
     ),
+    input.signal,
   );
+  if (!ingestResults) return null;
+  const embedFailed = ingestResults.some((result) => result.embedFailed);
   const hubWarning = ingestResults.some((result) => result.hubWarning);
   const indexedCount = ingestResults.filter((result) => result.indexed).length;
   const totalGuides = preferred.length;
@@ -320,6 +329,7 @@ export async function retrieveFromPreferredGuides(input: {
       hubWarning,
       indexedCount: 0,
       totalGuides,
+      ...(embedFailed ? { embedFailed } : {}),
     };
   }
 
