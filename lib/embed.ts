@@ -78,13 +78,12 @@ function sumopodCircuitOpen(): boolean {
   return now < sumopodSkipUntil || now < sumopodTransientUntil;
 }
 
-function isTransientSumopodError(error: unknown): boolean {
+export function isTransientSumopodError(error: unknown): boolean {
+  // instanceof, not constructor.name: Next's production build can mangle class names.
+  // APIConnectionTimeoutError extends APIConnectionError.
+  if (error instanceof OpenAI.APIConnectionError) return true;
   const { status } = (error as { status?: number }) ?? {};
-  // The OpenAI SDK leaves `.name` as "Error", so classify by class name.
-  const name = (error as object)?.constructor?.name;
-  return status === undefined
-    ? name === "APIConnectionError" || name === "APIConnectionTimeoutError"
-    : status >= 500;
+  return typeof status === "number" && status >= 500;
 }
 
 export type EmbedResult = { vectors: number[][]; model: string };

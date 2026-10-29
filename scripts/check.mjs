@@ -3087,7 +3087,7 @@ if (!canRunTsChecks) {
   {
     const { insertGuideChunks, guideIndexedIn, clearGuideLeftovers, singleFlight } = await import("../lib/guide-ingest.ts");
     const URL_ = "http://x.test/g";
-    const makeDb = ({ hangAfter = Infinity, failAt = Infinity, failCode = "XX000", deleteWorks = true, seed = [] } = {}) => {
+    const makeDb = ({ hangAfter = Infinity, failAt = Infinity, failCode = "XX000", deleteWorks = true, readError = false, seed = [] } = {}) => {
       const rows = [...seed];
       const log = [];
       let batches = 0;
@@ -3121,6 +3121,7 @@ if (!canRunTsChecks) {
                 if (deleteWorks) for (let i = rows.length - 1; i >= 0; i--) if (match(rows[i])) rows.splice(i, 1);
                 return res({ error: null });
               }
+              if (readError) return res({ count: null, error: { message: "read failed" } });
               return res({ count: rows.filter(match).length, error: null });
             },
           };
@@ -3161,10 +3162,28 @@ if (!canRunTsChecks) {
 
     // H1: leftover cleanup is verified; a delete that removes 0 rows reports failure (caller skips the spend)
     const left = [{ guide_url: URL_, chunk_index: 5 }];
-    assert.equal(await clearGuideLeftovers(makeDb({ seed: left }), URL_), true, "working delete clears leftovers");
-    assert.equal(await clearGuideLeftovers(makeDb({ seed: left, deleteWorks: false }), URL_), false, "RLS-style 0-row delete must be reported, not trusted");
-    assert.equal(await clearGuideLeftovers(null, URL_), true, "no service key: fail open");
-    assert.equal(await clearGuideLeftovers(makeDb(), URL_), true, "nothing to clean");
+    const dels = (db) => db.log.filter((l) => l.startsWith("delete"));
+    const w = makeDb({ seed: left });
+    assert.equal(await clearGuideLeftovers(w, makeDb(), URL_), "clear", "working delete clears leftovers");
+    assert.equal(await clearGuideLeftovers(makeDb({ seed: left, deleteWorks: false }), makeDb(), URL_), "blocked", "RLS-style 0-row delete must be reported, not trusted");
+    assert.equal(await clearGuideLeftovers(makeDb(), makeDb(), URL_), "clear", "nothing to clean");
+    // M3: a read error or an indexed guide (chunk 0 present) must NEVER delete
+    const healthy = [{ guide_url: URL_, chunk_index: 0 }, { guide_url: URL_, chunk_index: 1 }];
+    const dbErr = makeDb({ seed: healthy, readError: true });
+    assert.equal(await clearGuideLeftovers(dbErr, makeDb(), URL_), "blocked", "read error: skip spend");
+    assert.deepEqual(dels(dbErr), [], "read error must not delete");
+    const dbOk = makeDb({ seed: healthy });
+    assert.equal(await clearGuideLeftovers(dbOk, makeDb(), URL_), "cached", "chunk 0 present = indexed");
+    assert.deepEqual(dels(dbOk), [], "chunk 0 present must not delete");
+    // M4: no service key + leftover rows => skip the spend, delete nothing
+    const anon = makeDb({ seed: left });
+    assert.equal(await clearGuideLeftovers(null, anon, URL_), "blocked", "no service key + leftovers: skip spend");
+    assert.deepEqual(dels(anon), [], "no service key must not delete");
+    assert.equal(await clearGuideLeftovers(null, makeDb(), URL_), "clear", "no service key, no rows: ingest");
+    assert.equal(await clearGuideLeftovers(null, makeDb({ readError: true }), URL_), "blocked", "no key + read error: skip spend");
+    // L15: 23505 with the guide not yet indexed carries embedFailed
+    const dup2 = await run(makeDb({ failAt: 2, failCode: "23505" }));
+    assert.equal(dup2.embedFailed, true, "23505 not-indexed return must carry embedFailed");
 
     // M2: concurrent ingests of one URL share a single run
     let runs = 0;
@@ -3174,6 +3193,18 @@ if (!canRunTsChecks) {
     assert.equal(r1, r2);
     await singleFlight("k", slow);
     assert.equal(runs, 2, "a finished run must not be cached");
+    // L14: the shared flight must not be tied to the first caller's signal
+    const src = (await import("node:fs")).readFileSync(new URL("../lib/guide-ingest.ts", import.meta.url), "utf8");
+    assert.ok(/singleFlight\(key, \(\) => runIngestGuidePage\(rawUrl, undefined, ctx\)\)/.test(src), "singleFlight must not pass the caller signal");
+    // M5: transient classification is instanceof/status based, so it survives minified class names
+    const { isTransientSumopodError } = await import("../lib/embed.ts");
+    const OpenAI = (await import("openai")).default;
+    const conn = new OpenAI.APIConnectionTimeoutError({});
+    Object.defineProperty(conn.constructor, "name", { value: "a" }); // simulate mangling
+    assert.equal(isTransientSumopodError(conn), true, "connection/timeout errors are transient even with a mangled name");
+    assert.equal(isTransientSumopodError(Object.assign(new Error("x"), { status: 503 })), true, "5xx is transient");
+    assert.equal(isTransientSumopodError(Object.assign(new Error("x"), { status: 401 })), false, "401 is not transient");
+    assert.equal(isTransientSumopodError(new Error("x")), false, "plain error is not transient");
   }
 }
 
