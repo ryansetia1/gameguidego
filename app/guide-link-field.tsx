@@ -18,11 +18,20 @@ import {
 import { parseGamefaqsFaqUrl } from "@/lib/gamefaqs-bundle.js";
 import type { GuideIndexState } from "@/lib/guide-index-state";
 import { resolveGuideDisplayState } from "@/lib/guide-index-state";
+import { getSupabase } from "@/lib/supabase";
+import { dropRowAfterDelete } from "@/lib/upload-auth.js";
 import { IconX, IconClipboard } from "./icons";
 import { ClearButton } from "./clear-button";
 import { GuideStatusChip } from "./chat/guide-status-chip";
 
 type GuideHit = { title: string; url: string; snippet: string };
+
+/** Bearer header for /api/guide-upload; the server derives the uid from the token. */
+async function authHeader(): Promise<Record<string, string>> {
+  const { data } = (await getSupabase()?.auth.getSession()) ?? { data: null };
+  const token = data?.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export type GuideMeta = {
   title?: string;
@@ -160,8 +169,32 @@ export function GuideLinkField({
     [commitAddUrl, value],
   );
 
+  const [removingUrl, setRemovingUrl] = useState("");
+
   const removeUrl = useCallback(
-    (url: string) => {
+    async (url: string) => {
+      // Uploaded files: the server must confirm the delete first, else the row would vanish while the chunks stay.
+      if (url.startsWith("upload://") && userId) {
+        setRemovingUrl(url);
+        try {
+          const res = await fetch("/api/guide-upload", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json", ...(await authHeader()) },
+            body: JSON.stringify({ guideUrl: url, game: trimmedGame, platform: platform.trim() }),
+          });
+          if (!dropRowAfterDelete(res.status)) {
+            const body: { error?: string } = await res.json().catch(() => ({}));
+            setAddError(body.error ?? "Couldn't remove that file. Try again.");
+            return;
+          }
+        } catch {
+          setAddError("Couldn't remove that file. Check your connection and try again.");
+          return;
+        } finally {
+          setRemovingUrl("");
+        }
+      }
+
       onChange(value.filter((entry) => entry !== url));
       if (onGuideMetaChange && guideMeta[url]) {
         const next = { ...guideMeta };
@@ -169,17 +202,9 @@ export function GuideLinkField({
         onGuideMetaChange(next);
       }
 
-      if (url.startsWith("upload://") && userId) {
-        fetch("/api/guide-upload", {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ guideUrl: url, userId }),
-        }).catch(console.error);
-      }
-
       setAddError("");
     },
-    [guideMeta, onGuideMetaChange, onChange, value, userId],
+    [guideMeta, onGuideMetaChange, onChange, value, userId, trimmedGame, platform],
   );
 
   const confirmRemoveUrl = useCallback(
@@ -195,14 +220,16 @@ export function GuideLinkField({
 
       if (onRequestConfirm) {
         const ok = await onRequestConfirm({
-          message: `Remove "${label}"? Answers won't use it until you add it back.`,
+          message: uploaded
+            ? `Remove "${label}"? The uploaded copy is deleted, so you'd need to upload it again.`
+            : `Remove "${label}"? Answers won't use it until you add it back.`,
           confirmLabel: "Remove",
           danger: true,
         });
         if (!ok) return;
       }
 
-      removeUrl(url);
+      await removeUrl(url);
     },
     [guideMeta, onRequestConfirm, removeUrl],
   );
@@ -316,11 +343,14 @@ export function GuideLinkField({
     try {
       const form = new FormData();
       form.append("file", file);
-      form.append("userId", userId);
       if (trimmedGame) form.append("game", trimmedGame);
       if (platform.trim()) form.append("platform", platform.trim());
 
-      const response = await fetch("/api/guide-upload", { method: "POST", body: form });
+      const response = await fetch("/api/guide-upload", {
+        method: "POST",
+        headers: await authHeader(),
+        body: form,
+      });
       const payload: {
         indexed?: boolean;
         chunkCount?: number;
@@ -425,7 +455,8 @@ export function GuideLinkField({
                 <button
                   type="button"
                   className="guide-url-remove"
-                  disabled={disabled}
+                  disabled={disabled || removingUrl === url}
+                  aria-busy={removingUrl === url}
                   aria-label={`Remove ${uploaded ? uploadedGuideFilename(url) : displayLabel}`}
                   onClick={() => void confirmRemoveUrl(url)}
                 >

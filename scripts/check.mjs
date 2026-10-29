@@ -3247,6 +3247,106 @@ if (!canRunTsChecks) {
     assert.equal(isTransientSumopodError(Object.assign(new Error("x"), { status: 503 })), true, "5xx is transient");
     assert.equal(isTransientSumopodError(Object.assign(new Error("x"), { status: 401 })), false, "401 is not transient");
     assert.equal(isTransientSumopodError(new Error("x")), false, "plain error is not transient");
+
+    // #8: upload identity comes from the verified token; a body uid is only compared
+    const { checkUploadIdentity, ownsUploadKey } = await import("../lib/upload-auth.js");
+    assert.equal(checkUploadIdentity("", "u1").status, 401, "no verified uid: 401");
+    assert.equal(checkUploadIdentity(undefined, undefined).status, 401, "bad/missing token: 401");
+    assert.equal(checkUploadIdentity("u1", "u2").status, 403, "body uid differing from the token: 403");
+    assert.equal(checkUploadIdentity("u1", "u1").ok, true, "matching body uid is fine");
+    assert.equal(checkUploadIdentity("u1", undefined).ok, true, "body uid is optional");
+    assert.equal(ownsUploadKey("u1", "upload://u1/a.pdf"), true);
+    assert.equal(ownsUploadKey("u1", "upload://u10/a.pdf"), false, "uid prefix must end at the slash");
+    assert.equal(ownsUploadKey("u1", "upload://u2/a.pdf"), false, "other user's key");
+    assert.equal(ownsUploadKey("u1", "upload://u1/"), false, "bare prefix is not a key");
+    assert.equal(ownsUploadKey("", "upload:///a"), false, "empty uid owns nothing");
+    // #8 L-1: a 403 (not this account's key) still drops the row; 401/500/503 keep it
+    {
+      const { dropRowAfterDelete } = await import("../lib/upload-auth.js");
+      assert.equal(dropRowAfterDelete(200), true);
+      assert.equal(dropRowAfterDelete(403), true, "403: nothing of theirs to purge, row must go");
+      for (const st of [401, 500, 503]) assert.equal(dropRowAfterDelete(st), false, `${st} keeps the row`);
+      const fs = await import("node:fs");
+      assert.ok(fs.readFileSync(new URL("../app/guide-link-field.tsx", import.meta.url), "utf8").includes("dropRowAfterDelete(res.status)"), "client uses the helper");
+      assert.ok(fs.readFileSync(new URL("../app/api/guide-upload/route.ts", import.meta.url), "utf8").includes("Sign in again to remove this file."), "DELETE 401 copy");
+    }
+    // #8 M1: other rooms' references protect a shared upload key (pure helper + fake client)
+    {
+      const { countOtherRoomRefs, otherRoomReferences } = await import("../lib/upload-auth.js");
+      const rows = [{ game: "Zelda", platform: "Switch" }, { game: "Metroid", platform: "Switch" }];
+      assert.equal(countOtherRoomRefs(rows, "Zelda", "Switch"), 1, "only the other room counts");
+      assert.equal(countOtherRoomRefs([rows[0]], "zelda", " switch "), 0, "same room (normalized) is not a conflict");
+      // the production encoding: quoted array element, so , { } " \\ in a key cannot split it
+      const { pgArrayElem } = await import("../lib/upload-auth.js");
+      assert.equal(pgArrayElem("upload://u/Zelda,%20BotW.pdf"), '"upload://u/Zelda,%20BotW.pdf"');
+      assert.equal(pgArrayElem('upload://u/a\\b"c{d}.pdf'), '"upload://u/a\\\\b\\"c{d}.pdf"');
+      let sent = [];
+      const rec = { from: () => { const q = { select: () => q, filter: (c, op, v) => (sent.push([c, op, v]), Promise.resolve({ data: [{ game: "Other", platform: "PC" }], error: null })), eq: () => Promise.resolve({ data: [], error: null }) }; return q; } };
+      assert.equal(await otherRoomReferences(rec, "upload://u/Zelda,%20BotW.pdf", "Zelda", "Switch"), 1);
+      assert.deepEqual(sent, [["preferred_guide_urls", "cs", '{"upload://u/Zelda,%20BotW.pdf"}']], "comma key must reach PostgREST quoted");
+      // same through the real postgrest-js client: the wire value must keep the key as ONE quoted element
+      {
+        const { createClient } = await import("@supabase/supabase-js");
+        const urls = [];
+        const real = createClient("http://x.test", "k", { global: { fetch: async (u) => (urls.push(String(u)), new Response("[]", { headers: { "content-type": "application/json" } })) } });
+        await otherRoomReferences(real, 'upload://u/Zelda,%20B"o\\tW.pdf', "G", "P");
+        const cs = new URL(urls.find((u) => u.includes("preferred_guide_urls"))).searchParams.get("preferred_guide_urls");
+        assert.equal(cs, 'cs.{"upload://u/Zelda,%20B\\"o\\\\tW.pdf"}', "wire filter quotes and escapes the key");
+      }
+      // M-B: a different file under a running upload key is refused without any work
+      {
+        const { ingestGuideFromText } = await import("../lib/guide-ingest.ts");
+        const first = ingestGuideFromText({ guideUrl: "upload://u/busy.pdf", text: "file A" });
+        const second = await ingestGuideFromText({ guideUrl: "upload://u/busy.pdf", text: "file B" });
+        assert.equal(second.busy, true, "different content under a running key is busy");
+        await first;
+        assert.notEqual((await ingestGuideFromText({ guideUrl: "upload://u/busy.pdf", text: "file B" })).busy, true, "key is free after the flight ends");
+      }
+      const fake = (data, err) => ({ from: () => { const q = { select: () => q, filter: () => Promise.resolve({ data, error: err }), eq: () => Promise.resolve({ data: [], error: null }) }; return q; } });
+      assert.equal(await otherRoomReferences(fake(rows, null), "upload://u/a", "Zelda", "Switch"), 1);
+      assert.equal(await otherRoomReferences(fake([rows[0]], null), "upload://u/a", "Zelda", "Switch"), 0);
+      assert.equal(await otherRoomReferences(fake(null, { message: "x" }), "upload://u/a", "Zelda", "Switch"), null, "read error = unknown, never purge");
+    }
+    // #8: the scoped delete removes the exact key only, other users' upload:// rows survive
+    {
+      const mine = "upload://u1/a.pdf";
+      const seed = [
+        { guide_url: mine, chunk_index: 0 }, { guide_url: mine, chunk_index: 1 },
+        { guide_url: "upload://u2/a.pdf", chunk_index: 0 }, { guide_url: "upload://u1/a.pdf.bak", chunk_index: 0 },
+      ];
+      const db = makeDb({ seed });
+      assert.equal(await purgeGuideVerified(mine, db), "gone");
+      assert.deepEqual(db.rows.map((r) => r.guide_url).sort(), ["upload://u1/a.pdf.bak", "upload://u2/a.pdf"], "only the exact key is deleted");
+      assert.equal(await purgeGuideVerified(mine, makeDb({ seed, deleteWorks: false })), "kept", "anon-style 0-row delete is not success");
+      assert.equal(await purgeGuideVerified(mine, null), "kept", "no service key: never delete");
+      const route = (await import("node:fs")).readFileSync(new URL("../app/api/guide-upload/route.ts", import.meta.url), "utf8");
+      assert.ok(!/getServerClient/.test(route), "upload route must not delete via the anon client");
+      assert.ok(/replace: true/.test(route), "re-upload must replace");
+      // uid comes only from the verified user; the body uid appears once, as the identity-check argument
+      assert.ok(/const uid = data\?\.user \? data\.user\.id : ""/.test(route), "uid only from getUser");
+      assert.ok(/const userId = authed\.uid;/.test(route), "POST uses the verified uid");
+      assert.equal((route.match(/formData\.get\("userId"\)/g) ?? []).length, 1, "body userId only feeds checkUploadIdentity");
+      assert.ok(/checkUploadIdentity\(userId, formData\.get\("userId"\)\)/.test(route), "POST compares the body uid");
+      // auth before the body is buffered
+      assert.ok(route.indexOf("await authenticate(request)") < route.indexOf("await request.formData()"), "POST authenticates before formData");
+      const del = route.slice(route.indexOf("export async function DELETE"));
+      assert.ok(del.indexOf("await authenticate(request)") < del.indexOf("await request.json()"), "DELETE authenticates before json");
+      assert.ok(del.indexOf("ownsUploadKey(authed.uid") < del.indexOf("purgeGuideVerified("), "DELETE checks ownership before the purge");
+      assert.ok(del.indexOf("otherRoomReferences(") < del.indexOf("purgeGuideVerified("), "DELETE checks other-room refs before the purge");
+      assert.ok(route.indexOf("otherRoomReferences(") < route.indexOf("ingestGuideFromText("), "POST checks other-room refs before any embed");
+      assert.ok(/!error\.status \|\| error\.status >= 500/.test(route), "auth outage is 503, not 401");
+      assert.ok(/if \(refs > 0\) return NextResponse\.json\(\{ success: true, kept: true/.test(del), "DELETE keeps a file another game uses");
+      assert.ok(/if \(refs > 0\) \{\s*return NextResponse\.json\([\s\S]*?status: 409/.test(route), "POST 409s on another game's file");
+      assert.ok(route.includes("the old copy is gone"), "lostOld copy says the old copy is gone");
+      assert.ok(/result\.lostOld/.test(route), "route tells the user to re-upload after a lost replace");
+      const ing = (await import("node:fs")).readFileSync(new URL("../lib/guide-ingest.ts", import.meta.url), "utf8");
+      const runUp = ing.slice(ing.indexOf("async function runIngestGuideFromText"));
+      assert.ok(runUp.indexOf("getServiceClient()") < runUp.indexOf("storeGuideChunks("), "upload replace is gated on the service key before any spend");
+      assert.ok(/singleFlight\(input\.guideUrl, \(\) => runIngestGuideFromText/.test(ing), "upload flight is keyed on guideUrl only");
+      assert.ok(/running !== undefined && running !== hash\) \{\s*return Promise\.resolve\(\{[^}]*busy: true/.test(ing), "a different file under a running key is refused");
+      assert.ok(/result\.busy[\s\S]*?status: 409/.test(route), "route maps busy to 409");
+      assert.ok(/input\.replace && !stored\.indexed \? \{ \.\.\.stored, lostOld: true \}/.test(ing), "failed replace insert reports lostOld");
+    }
   }
 }
 
