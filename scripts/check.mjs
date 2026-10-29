@@ -3260,6 +3260,17 @@ if (!canRunTsChecks) {
     assert.equal(ownsUploadKey("u1", "upload://u2/a.pdf"), false, "other user's key");
     assert.equal(ownsUploadKey("u1", "upload://u1/"), false, "bare prefix is not a key");
     assert.equal(ownsUploadKey("", "upload:///a"), false, "empty uid owns nothing");
+    // #8 M1: other rooms' references protect a shared upload key (pure helper + fake client)
+    {
+      const { countOtherRoomRefs, otherRoomReferences } = await import("../lib/upload-auth.js");
+      const rows = [{ game: "Zelda", platform: "Switch" }, { game: "Metroid", platform: "Switch" }];
+      assert.equal(countOtherRoomRefs(rows, "Zelda", "Switch"), 1, "only the other room counts");
+      assert.equal(countOtherRoomRefs([rows[0]], "zelda", " switch "), 0, "same room (normalized) is not a conflict");
+      const fake = (data, err) => ({ from: () => { const q = { select: () => q, contains: () => Promise.resolve({ data, error: err }), eq: () => Promise.resolve({ data: [], error: null }) }; return q; } });
+      assert.equal(await otherRoomReferences(fake(rows, null), "upload://u/a", "Zelda", "Switch"), 1);
+      assert.equal(await otherRoomReferences(fake([rows[0]], null), "upload://u/a", "Zelda", "Switch"), 0);
+      assert.equal(await otherRoomReferences(fake(null, { message: "x" }), "upload://u/a", "Zelda", "Switch"), null, "read error = unknown, never purge");
+    }
     // #8: the scoped delete removes the exact key only, other users' upload:// rows survive
     {
       const mine = "upload://u1/a.pdf";
@@ -3274,8 +3285,28 @@ if (!canRunTsChecks) {
       assert.equal(await purgeGuideVerified(mine, null), "kept", "no service key: never delete");
       const route = (await import("node:fs")).readFileSync(new URL("../app/api/guide-upload/route.ts", import.meta.url), "utf8");
       assert.ok(!/getServerClient/.test(route), "upload route must not delete via the anon client");
-      assert.ok(!/formData\.get\("userId"\)\s*;?\s*\n\s*if \(typeof userId/.test(route) && /authenticate\(request, formData\.get\("userId"\)\)/.test(route), "POST derives uid from the token");
       assert.ok(/replace: true/.test(route), "re-upload must replace");
+      // uid comes only from the verified user; the body uid appears once, as the identity-check argument
+      assert.ok(/const uid = data\?\.user \? data\.user\.id : ""/.test(route), "uid only from getUser");
+      assert.ok(/const userId = authed\.uid;/.test(route), "POST uses the verified uid");
+      assert.equal((route.match(/formData\.get\("userId"\)/g) ?? []).length, 1, "body userId only feeds checkUploadIdentity");
+      assert.ok(/checkUploadIdentity\(userId, formData\.get\("userId"\)\)/.test(route), "POST compares the body uid");
+      // auth before the body is buffered
+      assert.ok(route.indexOf("await authenticate(request)") < route.indexOf("await request.formData()"), "POST authenticates before formData");
+      const del = route.slice(route.indexOf("export async function DELETE"));
+      assert.ok(del.indexOf("await authenticate(request)") < del.indexOf("await request.json()"), "DELETE authenticates before json");
+      assert.ok(del.indexOf("ownsUploadKey(authed.uid") < del.indexOf("purgeGuideVerified("), "DELETE checks ownership before the purge");
+      assert.ok(del.indexOf("otherRoomReferences(") < del.indexOf("purgeGuideVerified("), "DELETE checks other-room refs before the purge");
+      assert.ok(route.indexOf("otherRoomReferences(") < route.indexOf("ingestGuideFromText("), "POST checks other-room refs before any embed");
+      assert.ok(/!error\.status \|\| error\.status >= 500/.test(route), "auth outage is 503, not 401");
+      assert.ok(/if \(refs > 0\) return NextResponse\.json\(\{ success: true, kept: true/.test(del), "DELETE keeps a file another game uses");
+      assert.ok(/if \(refs > 0\) \{\s*return NextResponse\.json\([\s\S]*?status: 409/.test(route), "POST 409s on another game's file");
+      assert.ok(/result\.lostOld/.test(route), "route tells the user to re-upload after a lost replace");
+      const ing = (await import("node:fs")).readFileSync(new URL("../lib/guide-ingest.ts", import.meta.url), "utf8");
+      const runUp = ing.slice(ing.indexOf("async function runIngestGuideFromText"));
+      assert.ok(runUp.indexOf("getServiceClient()") < runUp.indexOf("storeGuideChunks("), "upload replace is gated on the service key before any spend");
+      assert.ok(/createHash\("sha1"\)\.update\(input\.text\)/.test(ing), "upload single-flight is keyed by content");
+      assert.ok(/input\.replace && !stored\.indexed \? \{ \.\.\.stored, lostOld: true \}/.test(ing), "failed replace insert reports lostOld");
     }
   }
 }

@@ -125,7 +125,7 @@ run. Concurrent ingests of one URL share a run per instance (`singleFlight`).
   negative cache is the upgrade path; low value because Gemini shares Replicate.
 - L21 (pre-existing, separate follow-up issue): `app/api/guide-upload/route.ts` user DELETE uses
   the anon client (removes 0 rows under RLS) and takes `userId` from the body unauthenticated.
-  Fix: verify the bearer token, then delete with the service client.
+  Fix: verify the bearer token, then delete with the service client. Fixed in #8 (PR #10).
 - Cross-instance concurrent ingest can still duplicate work (lease table is the upgrade path).
 
 ## Open items

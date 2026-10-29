@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { chunkGuideWithMeta, formatEmbedPrefix } from "@/lib/chunk-guide.js";
@@ -60,6 +61,8 @@ export type IngestResult = {
   /** Every embedding provider failed; the guide is fine, retry later. */
   embedFailed?: boolean;
   title?: string;
+  /** Upload replace: the old index was purged but the new insert failed, so no index remains. */
+  lostOld?: boolean;
 };
 
 type IngestContext = {
@@ -469,7 +472,7 @@ async function storeGuideChunks(input: {
   startMs: number;
   /** Replace a flagged (stale/insufficient) index: purge it only now, after the new embeds exist. */
   replace?: boolean;
-}): Promise<{ indexed: boolean; chunkCount: number; embedFailed?: boolean; keptOld?: boolean }> {
+}): Promise<{ indexed: boolean; chunkCount: number; embedFailed?: boolean; keptOld?: boolean; lostOld?: boolean }> {
   const chunks = chunkGuideWithMeta(input.text);
   if (!chunks.length) return { indexed: false, chunkCount: 0 };
 
@@ -518,13 +521,17 @@ async function storeGuideChunks(input: {
     if (purged === "unknown") return { indexed: false, chunkCount: 0, embedFailed: true };
   }
 
-  return insertGuideChunks({
+  const stored = await insertGuideChunks({
     supabase: chunkWriter(input.supabase),
     guideUrl: input.guideUrl,
     chunks,
     embeddings,
     model,
   });
+  // ponytail: purge->insert window. A failed or killed insert after the purge loses the old
+  // index (uploads cannot be re-extracted); the user must re-upload. Upgrade: insert under a
+  // temp key, then swap.
+  return input.replace && !stored.indexed ? { ...stored, lostOld: true } : stored;
 }
 
 function ingestGuidePage(
@@ -712,7 +719,9 @@ export function ingestGuideFromText(input: {
   /** Re-upload: swap an existing index only after the new embeds are ready. */
   replace?: boolean;
 }): Promise<IngestResult> {
-  return singleFlight(input.guideUrl, () => runIngestGuideFromText({ ...input, signal: undefined }));
+  // Keyed by content too: a second, different file under the same name must not get the first one's result.
+  const flightKey = `${input.guideUrl}:${createHash("sha1").update(input.text).digest("hex")}`;
+  return singleFlight(flightKey, () => runIngestGuideFromText({ ...input, signal: undefined }));
 }
 
 async function runIngestGuideFromText(input: {
@@ -766,7 +775,7 @@ async function runIngestGuideFromText(input: {
       Date.now() - startMs,
       { guideUrl: input.guideUrl },
     );
-    return { indexed: false, chunkCount: 0, hubWarning: false, ...(stored.embedFailed ? { embedFailed: true } : {}) };
+    return { indexed: false, chunkCount: 0, hubWarning: false, ...(stored.embedFailed ? { embedFailed: true } : {}), ...(stored.lostOld ? { lostOld: true } : {}) };
   }
 
   const title = await cacheGuideTitleFromExtract(supabase, input.guideUrl, input.text);

@@ -312,6 +312,15 @@ do not sync to the cloud or use Storage uploads.
   files are parsed in memory (zero storage), chunked, and embedded into the same
   `guide_chunks` table with a synthetic `upload://<uid>/<filename>` key.
   `lib/parse-guide-file.ts` handles PDF extraction (pdf-parse) and plain text.
+  POST/DELETE require `Authorization: Bearer <access_token>`; the uid is derived from the
+  token (401 bad/missing, 403 body `userId` mismatch, 503 auth outage). DELETE purges only
+  the exact `upload://<uid>/<filename>` key via the service client with recount (500 unless
+  verified gone). Re-upload of the same filename replaces the index only after the new
+  embeds exist. The key has no game in it, so when another of the user's game rooms still
+  lists the key (`lib/upload-auth.js#otherRoomReferences`), POST returns 409 before any
+  embed spend and DELETE keeps the rows (`{ kept: true }`). Both 503 without
+  `SUPABASE_SERVICE_ROLE_KEY`. Known ceiling: a failed insert after the replace purge
+  loses the old upload (`lostOld`); the user re-uploads.
   Full design: [`docs/preferred-guide.md`](docs/preferred-guide.md).
   Embedding model specs & migration checklist: [`docs/embedding-models.md`](docs/embedding-models.md).
 - `lib/tavily.ts`: `searchGuides(query)` orchestrates Tavily tiered search then a
@@ -781,7 +790,8 @@ Server-only secrets (never expose via `NEXT_PUBLIC_`, never commit `.env.local`)
   (`getServiceClient`, `lib/supabase-server.js`) to delete `guide_chunks` rows, which have no
   anon DELETE policy: leftover cleanup of killed ingests and stale/insufficient index replace.
   Without it that cleanup is skipped: partial guides stay blocked (no spend) and flagged guides
-  keep their old index. Safe to deploy without it.
+  keep their old index. Guide file upload/remove (`/api/guide-upload`) returns 503 without it.
+  Safe to deploy without it (uploads disabled).
 
 Public client vars (safe to expose; protected by RLS), optional — enable
 accounts, saved chats, and the search cache:

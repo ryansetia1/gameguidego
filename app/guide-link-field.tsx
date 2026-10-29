@@ -169,7 +169,26 @@ export function GuideLinkField({
   );
 
   const removeUrl = useCallback(
-    (url: string) => {
+    async (url: string) => {
+      // Uploaded files: the server must confirm the delete first, else the row would vanish while the chunks stay.
+      if (url.startsWith("upload://") && userId) {
+        try {
+          const res = await fetch("/api/guide-upload", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json", ...(await authHeader()) },
+            body: JSON.stringify({ guideUrl: url, game: trimmedGame, platform: platform.trim() }),
+          });
+          if (!res.ok) {
+            const body: { error?: string } = await res.json().catch(() => ({}));
+            setAddError(body.error ?? "Couldn't remove that file. Try again.");
+            return;
+          }
+        } catch {
+          setAddError("Couldn't remove that file. Check your connection and try again.");
+          return;
+        }
+      }
+
       onChange(value.filter((entry) => entry !== url));
       if (onGuideMetaChange && guideMeta[url]) {
         const next = { ...guideMeta };
@@ -177,21 +196,9 @@ export function GuideLinkField({
         onGuideMetaChange(next);
       }
 
-      if (url.startsWith("upload://") && userId) {
-        void authHeader()
-          .then((auth) =>
-            fetch("/api/guide-upload", {
-              method: "DELETE",
-              headers: { "Content-Type": "application/json", ...auth },
-              body: JSON.stringify({ guideUrl: url }),
-            }),
-          )
-          .catch(console.error);
-      }
-
       setAddError("");
     },
-    [guideMeta, onGuideMetaChange, onChange, value, userId],
+    [guideMeta, onGuideMetaChange, onChange, value, userId, trimmedGame, platform],
   );
 
   const confirmRemoveUrl = useCallback(
@@ -214,7 +221,7 @@ export function GuideLinkField({
         if (!ok) return;
       }
 
-      removeUrl(url);
+      await removeUrl(url);
     },
     [guideMeta, onRequestConfirm, removeUrl],
   );

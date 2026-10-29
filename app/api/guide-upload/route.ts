@@ -5,7 +5,7 @@ import {
   createAuthedSupabase,
   getAuthedUser,
 } from "@/lib/player-memory-server";
-import { checkUploadIdentity, ownsUploadKey } from "@/lib/upload-auth.js";
+import { checkUploadIdentity, otherRoomReferences, ownsUploadKey } from "@/lib/upload-auth.js";
 
 import { parseGuideFile } from "@/lib/parse-guide-file";
 import {
@@ -21,14 +21,18 @@ export const maxDuration = 300;
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
-/** Verified uid from the Bearer token, or an error response (401 bad/missing token, 403 uid mismatch). */
-async function authenticate(request: Request, clientUid: unknown) {
+/** Verified uid + the caller's own client from the Bearer token, or an error response. */
+async function authenticate(request: Request) {
   const supabase = createAuthedSupabase(bearerToken(request));
-  const auth = supabase ? await getAuthedUser(supabase) : null;
-  const uid = auth && "user" in auth ? auth.user.id : "";
-  const id = checkUploadIdentity(uid, clientUid);
-  if (!id.ok) return { res: NextResponse.json({ error: id.error }, { status: id.status }) };
-  return { uid };
+  const noSignIn = NextResponse.json({ error: "Sign in to upload guide files." }, { status: 401 });
+  if (!supabase) return { res: noSignIn };
+  const { data, error } = await supabase.auth.getUser();
+  // An auth outage (network / 5xx) is not a sign-out: do not tell a signed-in user to sign in.
+  if (error && (!error.status || error.status >= 500)) {
+    return { res: NextResponse.json({ error: "Couldn't check your sign-in. Try again in a moment." }, { status: 503 }) };
+  }
+  const uid = data?.user ? data.user.id : "";
+  return uid ? { uid, supabase } : { res: noSignIn };
 }
 
 const NO_SERVICE = () =>
@@ -43,6 +47,11 @@ export async function POST(request: Request) {
   }
 
   if (!getServiceClient()) return NO_SERVICE();
+
+  // Auth before buffering the body, so an unauthenticated caller costs nothing.
+  const authed = await authenticate(request);
+  if ("res" in authed) return authed.res;
+  const userId = authed.uid;
 
   let formData: FormData;
   try {
@@ -69,12 +78,24 @@ export async function POST(request: Request) {
     );
   }
 
-  const authed = await authenticate(request, formData.get("userId"));
-  if ("res" in authed) return authed.res;
-  const userId = authed.uid;
+  const id = checkUploadIdentity(userId, formData.get("userId"));
+  if (!id.ok) return NextResponse.json({ error: id.error }, { status: id.status });
 
   const game = typeof formData.get("game") === "string" ? (formData.get("game") as string).slice(0, 120) : undefined;
   const platform = typeof formData.get("platform") === "string" ? (formData.get("platform") as string).slice(0, 80) : undefined;
+
+  // The key has no game in it: refuse to overwrite a file another of this user's games uses.
+  const guideUrl = normalizeGuideUrl(`upload://${userId}/${file.name}`);
+  const refs = await otherRoomReferences(authed.supabase, guideUrl, game ?? "", platform ?? "");
+  if (refs === null) {
+    return NextResponse.json({ error: "Couldn't check your other games. Try again in a moment." }, { status: 500 });
+  }
+  if (refs > 0) {
+    return NextResponse.json(
+      { error: `You already uploaded a file named "${file.name}" for another game. Rename it and upload again.` },
+      { status: 409 },
+    );
+  }
 
   const traceId = request.headers.get("X-Trace-Id") || crypto.randomUUID();
 
@@ -95,8 +116,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: msg }, { status: 422 });
     }
 
-    const guideUrl = normalizeGuideUrl(`upload://${userId}/${file.name}`);
-
     await logTraceEvent("guide_upload_received", `Uploaded ${parsed.fileType.toUpperCase()} guide: ${file.name} (${(file.size / 1024).toFixed(0)} KB, ${parsed.text.length} chars)`, undefined, {
       filename: file.name,
       fileType: parsed.fileType,
@@ -113,7 +132,9 @@ export async function POST(request: Request) {
     });
 
     if (!result.indexed) {
-      const msg = "Could not index that guide. Try again in a moment.";
+      const msg = result.lostOld
+        ? "Couldn't index the new file and the old copy was replaced. Upload it again."
+        : "Could not index that guide. Try again in a moment.";
       await logTraceEvent("upload_error", `Guide ingest failed: ${guideUrl}`, undefined, {
         guideUrl,
         textLength: parsed.text.length,
@@ -147,15 +168,17 @@ export async function DELETE(request: Request) {
   const service = getServiceClient();
   if (!service) return NO_SERVICE();
 
-  let body: { guideUrl?: unknown; userId?: unknown };
+  const authed = await authenticate(request);
+  if ("res" in authed) return authed.res;
+
+  let body: { guideUrl?: unknown; userId?: unknown; game?: unknown; platform?: unknown };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
-
-  const authed = await authenticate(request, body?.userId);
-  if ("res" in authed) return authed.res;
+  const id = checkUploadIdentity(authed.uid, body?.userId);
+  if (!id.ok) return NextResponse.json({ error: id.error }, { status: id.status });
 
   let guideUrl = "";
   try {
@@ -164,6 +187,14 @@ export async function DELETE(request: Request) {
   if (!ownsUploadKey(authed.uid, guideUrl)) {
     return NextResponse.json({ error: "Unauthorized or invalid guideUrl" }, { status: 403 });
   }
+
+  // Another game of this user still uses the file: uploads cannot be re-extracted, so keep it.
+  const str = (v: unknown, n: number) => (typeof v === "string" ? v.slice(0, n) : "");
+  const refs = await otherRoomReferences(authed.supabase, guideUrl, str(body.game, 120), str(body.platform, 80));
+  if (refs === null) {
+    return NextResponse.json({ error: "Couldn't check your other games. Try again in a moment." }, { status: 500 });
+  }
+  if (refs > 0) return NextResponse.json({ success: true, kept: true, guideUrl });
 
   const traceId = request.headers.get("X-Trace-Id") || crypto.randomUUID();
   return runWithTrace(traceId, async () => {
