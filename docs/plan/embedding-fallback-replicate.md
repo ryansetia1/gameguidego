@@ -1,6 +1,7 @@
 # Embedding fallback via Replicate
 
-**Status: Planned (not started).** Decision recorded 2026-10-28; implement later.
+**Status: Planned (not started).** Decision recorded 2026-10-28; model chosen and
+research findings added 2026-10-29. Implement later.
 
 ## Problem
 
@@ -18,6 +19,26 @@ fails (credit exhausted, 401/402/429, network), fall back to a Replicate-hosted
 embedding model. Rejected: option 1 (replace Sumopod entirely, re-embed every
 guide), which is simpler but leaves no primary/backup split.
 
+## Chosen model (researched 2026-10-29)
+
+`text-embedding-3-large` is **not** on Replicate (`replicate.com/openai/text-embedding-3-large`
+returns 404; only `openai/clip` exists), so the fallback is a different model.
+
+- **Primary fallback:** `lucataco/qwen3-embedding-8b`, pinned to version
+  `42d968487820032a1535d81ea20df16f442ea308ec5abae6b5d6cf4675eb3e2f` (short
+  `42d9684`; hash read from the Replicate API `latest_version.id`).
+  - Input `text` is a REAL `string[]` (not a JSON-encoded string), `embedding_dim: 1024`,
+    `normalize: true`, `batch_size` about 16. Vectors come back at `output.embeddings`.
+  - Queries pass `instruction` formatted `Instruct: <task>\nQuery:`; documents get none.
+- **Backup:** `saattrupdan/multilingual-e5-large-instruct` (native 1024-dim, 512-token cap).
+- **Wrapper caveat:** the Replicate wrapper mean-pools tokens while the official
+  model uses the last token, so published MTEB numbers may not transfer. It must
+  pass `scripts/test-hybrid-retrieval.mjs` and `docs/plan/rag-eval-set.jsonl` before
+  it is trusted.
+- **Cold starts:** community embedders on Replicate have been seen at 96 to 274s.
+  A Deployment with keep-warm costs about $2.5k/month and is rejected. Ingest path:
+  long timeout. Query path: fail fast to lexical-only.
+
 ## Core constraint
 
 Vectors from different models are **not comparable**. A query embedded with model
@@ -29,11 +50,14 @@ must be embedded with the same model as the chunks it searches.
 
 1. **Schema** (`db/` migration): add `guide_chunks.embed_model text not null
    default 'sumopod'`. Existing rows backfill to `sumopod` via the default, so
-   **no re-embed of existing guides**. Keep 1024 dims: pick a Replicate model
-   that supports a 1024 output, or add a second vector column if it cannot.
-   Do NOT add an ANN index (see CLAUDE.md rule on `guide_chunks.embedding`).
+   **no re-embed of existing guides**. Keep 1024 dims with one `vector(1024)`
+   column (Qwen is called with `embedding_dim: 1024`); no second vector column.
+   The value names model and version, e.g. `replicate:qwen3-embedding-8b@42d9684`
+   (Sumopod rows keep `sumopod`). Do NOT add an ANN index (see CLAUDE.md rule on `guide_chunks.embedding`).
 2. **Provider layer** (`lib/embed.ts`): `embedTexts` / `embedQuery` try Sumopod,
    catch provider errors, retry on Replicate, and return `{ vectors, model }`.
+   Add query vs document instruction handling (`Instruct: <task>\nQuery:` for
+   queries, none for documents); Sumopod ignores it.
    Trace events: extend `embed_texts_*` / `embed_query_*` with `model` and a
    `embed_fallback` event.
 3. **Ingest** (`lib/guide-ingest.ts`): store `embed_model` on each chunk row. A
@@ -44,34 +68,50 @@ must be embedded with the same model as the chunks it searches.
    If that model is currently unavailable (e.g. old Sumopod guide while Sumopod is
    down): **lexical-only retrieval** via `chunk_tsv` (already in the hybrid RPC),
    else fall through to tiered web search. Never compare cross-model vectors.
-5. **Cache** (`lib/embed-cache.ts`, `public.embed_cache`): include the model in
-   the cache key.
+5. **Cache** (`lib/embed-cache.ts`, `public.embed_cache`): include the model tag in
+   the cache key. It is already prefixed with the `EMBED_MODEL` env value but not
+   the provider, so the provider/version tag is still needed.
 6. **UI**: if both providers fail, toast "Indexing paused, try again later" and
    keep the retry affordance on the guide row (`use-guide-bundle.tsx`). Ingest is
    lazy, so this is recoverable.
+
+## Other 1024-dim consumers (gap)
+
+Two more tables are `vector(1024)` and fed by `lib/embed.ts`, so they need the same
+model tag and the same no-cross-model rule:
+
+- `public.player_journal_chunks` (`db/player-journal-chunks.sql`), embedded in
+  `lib/player-journey-server.ts`, queried in `lib/player-journey-rag.ts`.
+- `public.embed_cache` (`db/embed-cache.sql`).
 
 ## Behaviour while Sumopod is down
 
 | Guide | Query path |
 |-------|-----------|
-| Indexed with Sumopod (old) | lexical-only, then web search. Weaker until credit is topped up |
-| New guide indexed during outage | Replicate vectors, full hybrid retrieval |
-| Guide indexed with Replicate, Sumopod back | still Replicate (query embedded with Replicate); no auto-migration |
+| Indexed with Sumopod (old) | lexical-only, then web search. Normal retrieval resumes the moment credit returns |
+| New guide indexed during outage | Qwen vectors, full hybrid retrieval |
+| Guide indexed with Replicate, Sumopod back | stays on Replicate forever (query embedded with Qwen); no auto-migration |
+| New guide indexed after recovery | Sumopod again |
+
+Decision (user, 2026-10-29): Sumopod-indexed guides use lexical-only retrieval, then
+web search, while Sumopod is down. Lazy re-embed of stored chunk text to Qwen is a
+**Phase 2 follow-up**, out of scope now.
 
 ## Caveats
 
-- Replicate cold starts have produced very slow embeds before (a 96s gap seen in
-  traces). Acceptable for a fallback, poor as the primary path.
+- Replicate community embedders have cold-started at 96 to 274s (see Chosen model).
+  Acceptable for a fallback, poor as the primary path. (The 96s gap seen in traces
+  came from the Sumopod path, not Replicate.)
 - Replicate credit also pays for Gemini (`resolveQuestion`, `summarize`). If
   Replicate credit is the one exhausted, this fallback adds no resilience.
-- Quality of the Replicate model is unproven here. Gate the model choice on
+- Quality of the Qwen wrapper is unproven here. Gate it on
   `scripts/test-hybrid-retrieval.mjs` and the RAG eval set
   (`docs/plan/rag-eval-set.jsonl`) before shipping.
 
 ## Open items before implementing
 
-- Pick the Replicate embedding model (BGE / nomic / other) and confirm 1024-dim.
-- Decide whether to add an optional background "re-embed to primary" job once
-  Sumopod returns (default: no, YAGNI).
+- Model decided: Qwen3-Embedding-8B pinned above (BGE builds are English-only or
+  cold, nomic is 768-dim). Remaining: run the eval gate on the wrapper.
+- Phase 2 (not now): lazy re-embed of Sumopod-indexed chunk text to Qwen.
 - Update `CLAUDE.md` (`lib/embed.ts` entry, Environment, Known limits) and
   `docs/embedding-models.md` when shipped.
