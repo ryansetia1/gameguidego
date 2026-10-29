@@ -1030,6 +1030,11 @@ assert.match(
   /different link or source/i,
 );
 assert.equal(guideIngestHint({ available: false, indexed: false }), null);
+assert.match(guideIngestHint({ embedFailed: true }) ?? "", /Indexing paused, try again later/);
+assert.match(
+  guideIngestHintFromResponse({ available: true, results: [{ indexed: false, embedFailed: true }] }) ?? "",
+  /Indexing paused/,
+);
 assert.equal(guideIngestHint({ available: true, indexed: true }), null);
 assert.match(
   guideIngestHint({ available: true, indexedCount: 1, total: 3 }) ?? "",
@@ -2997,5 +3002,252 @@ assert.equal(
   journalUpdateSkipMessage("empty_delta", { hadPriorSync: true }),
   "No new chat messages since the last update.",
 );
+
+// Checks below import .ts modules that use the "@/" alias. That needs Node's native TS
+// stripping plus module.registerHooks (Node 22.10+/23+); skip cleanly on older Node.
+const nodeModule = await import("node:module");
+const canRunTsChecks = typeof nodeModule.registerHooks === "function" && Boolean(process.features.typescript);
+if (!canRunTsChecks) {
+  console.log(`Skipping TS module checks (embed breaker, guide insert): Node ${process.version} lacks native TS or registerHooks.`);
+} else {
+  const root = new URL("../", import.meta.url);
+  nodeModule.registerHooks({
+    resolve(spec, ctx, next) {
+      if (!spec.startsWith("@/")) return next(spec, ctx);
+      const base = new URL(spec.slice(2), root).href;
+      for (const ext of [".ts", ".tsx", ".js"]) {
+        try {
+          return next(base + ext, ctx);
+        } catch {}
+      }
+      return next(base, ctx);
+    },
+  });
+
+  // Sumopod breaker: a 401 on the forced-model query path trips the long (credit) breaker and
+  // later calls make no network call; network/5xx errors trip only a SHORT breaker that expires.
+  {
+    const saved = { fetch: globalThis.fetch, now: Date.now, key: process.env.SUMOPOD_API_KEY, rep: process.env.REPLICATE_API_TOKEN };
+    process.env.SUMOPOD_API_KEY = "test-key";
+    delete process.env.REPLICATE_API_TOKEN;
+    let calls = 0;
+    let mode = "401";
+    globalThis.fetch = async () => {
+      calls++;
+      if (mode === "net") throw new TypeError("fetch failed");
+      const status = mode === "503" ? 503 : 401;
+      return new Response(JSON.stringify({ error: { message: mode === "503" ? "upstream down" : "unauthorized" } }), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    let skew = 0;
+    Date.now = () => saved.now() + skew;
+    const q = (embed, n) => embed.embedQuery(`breaker check query ${n}`, undefined, undefined, "sumopod");
+    try {
+      const embed = await import("../lib/embed.ts");
+      assert.equal(embed.isEmbedModelAvailable("sumopod"), true);
+
+      // credit/auth: long breaker
+      assert.equal(await q(embed, 1), null);
+      assert.ok(calls >= 1, "first forced query should hit Sumopod");
+      assert.equal(embed.isEmbedModelAvailable("sumopod"), false, "401 on forced path must trip the breaker");
+      const before = calls;
+      assert.equal(await q(embed, 2), null);
+      assert.equal(calls, before, "open breaker must skip Sumopod without a network call");
+      skew = 61_000;
+      assert.equal(embed.isEmbedModelAvailable("sumopod"), false, "credit cooldown must outlast the short transient TTL");
+      skew = 5 * 60_000 + 1000;
+      assert.equal(embed.isEmbedModelAvailable("sumopod"), true, "credit breaker must expire");
+
+      // network error + 5xx: short breaker that expires
+      for (const m of ["net", "503"]) {
+        mode = m;
+        const c0 = calls;
+        assert.equal(await q(embed, `${m}-a`), null);
+        assert.ok(calls > c0, "closed breaker must try Sumopod");
+        assert.equal(embed.isEmbedModelAvailable("sumopod"), false, `${m} must trip the short breaker`);
+        const c1 = calls;
+        assert.equal(await q(embed, `${m}-b`), null);
+        assert.equal(calls, c1, "short breaker must skip Sumopod without a network call");
+        skew += 61_000;
+        assert.equal(embed.isEmbedModelAvailable("sumopod"), true, `${m} short breaker must expire after ~60s`);
+      }
+    } finally {
+      globalThis.fetch = saved.fetch;
+      Date.now = saved.now;
+      for (const [k, v] of [["SUMOPOD_API_KEY", saved.key], ["REPLICATE_API_TOKEN", saved.rep]]) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  }
+
+  // Guide insert/cleanup/concurrency. In-memory fake of the guide_chunks table.
+  {
+    const { insertGuideChunks, guideIndexedIn, clearGuideLeftovers, singleFlight, purgeGuideVerified, raceAbort } = await import("../lib/guide-ingest.ts");
+    const URL_ = "http://x.test/g";
+    const makeDb = ({ hangAfter = Infinity, failAt = Infinity, failCode = "XX000", deleteWorks = true, readError = false, errAfterDelete = false, seed = [] } = {}) => {
+      const rows = [...seed];
+      const log = [];
+      let batches = 0;
+      let deleted = false;
+      return {
+        rows,
+        log,
+        from: () => {
+          const filters = [];
+          let mode = "select";
+          let fromIdx;
+          const match = (r) => filters.every(([op, c, v]) => (op === "eq" ? r[c] === v : r[c] >= v));
+          const q = {
+            insert: async (batch) => {
+              if (batches === failAt) return { error: { code: failCode, message: "insert failed" } };
+              if (batches >= hangAfter) return new Promise(() => {}); // hard kill: never resolves, no cleanup runs
+              batches++;
+              log.push(`insert:${batch[0].chunk_index}-${batch[batch.length - 1].chunk_index}`);
+              rows.push(...batch);
+              return { error: null };
+            },
+            delete: () => {
+              mode = "delete";
+              return q;
+            },
+            select: () => q,
+            eq: (c, v) => (filters.push(["eq", c, v]), q),
+            gte: (c, v) => (filters.push(["gte", c, v]), (fromIdx = v), q),
+            then: (res) => {
+              if (mode === "delete") {
+                deleted = true;
+                log.push(fromIdx === undefined ? "delete:all" : `delete:>=${fromIdx}`);
+                if (deleteWorks) for (let i = rows.length - 1; i >= 0; i--) if (match(rows[i])) rows.splice(i, 1);
+                return res({ error: null });
+              }
+              if (readError || (errAfterDelete && deleted)) return res({ count: null, error: { message: "read failed" } });
+              return res({ count: rows.filter(match).length, error: null });
+            },
+          };
+          return q;
+        },
+      };
+    };
+    const n = 120; // 25-row batches: offsets 100, 75, 50, 25, 0
+    const chunks = Array.from({ length: n }, (_, i) => ({ text: "t" + i, section_path: [], section_confidence: 1, chunk_index: i }));
+    const embeddings = chunks.map(() => [0.1]);
+    const run = (db) => insertGuideChunks({ supabase: db, guideUrl: URL_, chunks, embeddings, model: "m" });
+
+    // reverse order, chunk 0 last, no deletes on the happy path
+    const ok = makeDb();
+    await run(ok);
+    assert.deepEqual(ok.log, ["insert:100-119", "insert:75-99", "insert:50-74", "insert:25-49", "insert:0-24"], "batches must go in reverse so chunk 0 is last");
+    assert.equal(await guideIndexedIn(ok, URL_), true, "complete guide is indexed");
+
+    // hard kill after k batches: partial rows stay, and the guide must NOT look indexed
+    for (const k of [1, 4]) {
+      const db = makeDb({ hangAfter: k });
+      await Promise.race([run(db), new Promise((r) => setTimeout(r, 20))]);
+      assert.ok(db.rows.some((r) => r.guide_url === URL_), "partial rows must remain after the kill");
+      assert.equal(await guideIndexedIn(db, URL_), false, `killed after ${k} batch(es) must not count as indexed`);
+    }
+
+    // M2: unique violation = another run owns the write, so NEVER delete
+    const dup = makeDb({ failAt: 2, failCode: "23505" });
+    await run(dup);
+    assert.ok(!dup.log.some((l) => l.startsWith("delete")), "23505 must not delete anything");
+
+    // M2: other errors delete only THIS run's own range, never the whole guide
+    const other = makeDb({ failAt: 2, seed: [{ guide_url: URL_, chunk_index: 3 }] });
+    const res = await run(other);
+    assert.equal(res.indexed, false);
+    assert.deepEqual(other.log.filter((l) => l.startsWith("delete")), ["delete:>=75"], "must delete only the range this run wrote");
+    assert.ok(other.rows.some((r) => r.chunk_index === 3), "another run's rows must survive");
+
+    // H1: leftover cleanup is verified; a delete that removes 0 rows reports failure (caller skips the spend)
+    const left = [{ guide_url: URL_, chunk_index: 5 }];
+    const dels = (db) => db.log.filter((l) => l.startsWith("delete"));
+    const w = makeDb({ seed: left });
+    assert.equal(await clearGuideLeftovers(w, makeDb(), URL_), "clear", "working delete clears leftovers");
+    assert.equal(await clearGuideLeftovers(makeDb({ seed: left, deleteWorks: false }), makeDb(), URL_), "blocked", "RLS-style 0-row delete must be reported, not trusted");
+    assert.equal(await clearGuideLeftovers(makeDb(), makeDb(), URL_), "clear", "nothing to clean");
+    // M3: a read error or an indexed guide (chunk 0 present) must NEVER delete
+    const healthy = [{ guide_url: URL_, chunk_index: 0 }, { guide_url: URL_, chunk_index: 1 }];
+    const dbErr = makeDb({ seed: healthy, readError: true });
+    assert.equal(await clearGuideLeftovers(dbErr, makeDb(), URL_), "blocked", "read error: skip spend");
+    assert.deepEqual(dels(dbErr), [], "read error must not delete");
+    const dbOk = makeDb({ seed: healthy });
+    assert.equal(await clearGuideLeftovers(dbOk, makeDb(), URL_), "cached", "chunk 0 present = indexed");
+    assert.deepEqual(dels(dbOk), [], "chunk 0 present must not delete");
+    // M4: no service key + leftover rows => skip the spend, delete nothing
+    const anon = makeDb({ seed: left });
+    assert.equal(await clearGuideLeftovers(null, anon, URL_), "blocked", "no service key + leftovers: skip spend");
+    assert.deepEqual(dels(anon), [], "no service key must not delete");
+    assert.equal(await clearGuideLeftovers(null, makeDb(), URL_), "clear", "no service key, no rows: ingest");
+    assert.equal(await clearGuideLeftovers(null, makeDb({ readError: true }), URL_), "blocked", "no key + read error: skip spend");
+    // L15: 23505 with the guide not yet indexed carries embedFailed
+    const dup2 = await run(makeDb({ failAt: 2, failCode: "23505" }));
+    assert.equal(dup2.embedFailed, true, "23505 not-indexed return must carry embedFailed");
+
+    // L18: purge verdict is tri-state; a failed recount is "unknown" (not a cache hit on a maybe-empty guide)
+    assert.equal(await purgeGuideVerified(URL_, makeDb({ seed: left })), "gone");
+    assert.equal(await purgeGuideVerified(URL_, makeDb({ seed: left, deleteWorks: false })), "kept", "rows remain: serve the old index");
+    assert.equal(await purgeGuideVerified(URL_, makeDb({ seed: left, errAfterDelete: true })), "unknown", "recount error must not read as kept/cache hit");
+    assert.equal(await purgeGuideVerified(URL_, null), "kept", "no service key: never delete");
+    // L17: the flagged index is purged only inside storeGuideChunks, after embeds and before the insert
+    const gsrc = (await import("node:fs")).readFileSync(new URL("../lib/guide-ingest.ts", import.meta.url), "utf8");
+    const store = gsrc.slice(gsrc.indexOf("async function storeGuideChunks"), gsrc.indexOf("function ingestGuidePage"));
+    assert.ok(store.indexOf("embedTexts(") < store.indexOf("purgeGuideVerified(") && store.indexOf("purgeGuideVerified(") < store.indexOf("insertGuideChunks({"), "replace purge must sit between embed and insert");
+    assert.ok(/if \(input\.replace\) \{\s*const purged = await purgeGuideVerified/.test(store), "the pre-insert purge must run on replace");
+    const runSrc = gsrc.slice(gsrc.indexOf("async function runIngestGuidePage"), gsrc.indexOf("export async function ensureGuideIngested"));
+    assert.ok(!runSrc.includes("purgeGuideVerified("), "runIngestGuidePage must not purge before the re-extract");
+    assert.ok(/if \(!replace\) \{\s*const leftovers/.test(runSrc), "a replace run must skip leftover cleanup (chunk 0 exists)");
+    // M6: a flagged guide with no service key serves the old index BEFORE any extract/embed spend
+    const guard = runSrc.search(/if \(replace && !getServiceClient\(\)\) return indexedGuideCacheHit/);
+    assert.ok(guard > -1 && guard < runSrc.indexOf("extractGuidePage("), "no key + replace must return before extract");
+    // L23: bail serves the old index only while chunk 0 exists, else reports paused
+    assert.ok(/guideIndexedIn\(supabase, guideUrl\)\) return indexedGuideCacheHit[^]{0,80}embedFailed: true/.test(runSrc), "bail must check chunk 0 and report embedFailed otherwise");
+    // L19: solve hint honours embedFailed
+    const rsrc = (await import("node:fs")).readFileSync(new URL("../app/api/solve/route.ts", import.meta.url), "utf8");
+    assert.ok(/rag\?\.embedFailed[^]{0,120}guideIngestHint\(\{ embedFailed: true \}\)/.test(rsrc), "solve route must show the paused hint");
+    assert.ok(/embedFailed\?: boolean/.test((await import("node:fs")).readFileSync(new URL("../lib/guide-rag.ts", import.meta.url), "utf8")), "GuideRagResult carries embedFailed");
+    // L20: Stop ends the wait without cancelling the shared work
+    const ac = new AbortController();
+    let finished = false;
+    const work = new Promise((r) => setTimeout(() => { finished = true; r("done"); }, 30));
+    const raced = raceAbort(work, ac.signal);
+    ac.abort();
+    assert.equal(await raced, null, "abort resolves null immediately");
+    assert.equal(finished, false, "the shared work is not cancelled");
+    assert.equal(await work, "done");
+    assert.equal(await raceAbort(Promise.resolve(7), new AbortController().signal), 7);
+
+    // L24: raceAbort removes its abort listener once the work settles
+    let live = 0;
+    const fake = { aborted: false, addEventListener: () => { live++; }, removeEventListener: () => { live--; } };
+    assert.equal(await raceAbort(Promise.resolve(1), fake), 1);
+    await Promise.resolve();
+    assert.equal(live, 0, "abort listener must not leak");
+
+    // M2: concurrent ingests of one URL share a single run
+    let runs = 0;
+    const slow = () => new Promise((r) => setTimeout(() => r(++runs), 10));
+    const [r1, r2] = await Promise.all([singleFlight("k", slow), singleFlight("k", slow)]);
+    assert.equal(runs, 1, "single-flight must share one run per URL");
+    assert.equal(r1, r2);
+    await singleFlight("k", slow);
+    assert.equal(runs, 2, "a finished run must not be cached");
+    // L14: the shared flight must not be tied to the first caller's signal
+    const src = (await import("node:fs")).readFileSync(new URL("../lib/guide-ingest.ts", import.meta.url), "utf8");
+    assert.ok(/singleFlight\(key, \(\) => runIngestGuidePage\(rawUrl, undefined, ctx\)\)/.test(src), "singleFlight must not pass the caller signal");
+    // M5: transient classification is instanceof/status based, so it survives minified class names
+    const { isTransientSumopodError } = await import("../lib/embed.ts");
+    const OpenAI = (await import("openai")).default;
+    const conn = new OpenAI.APIConnectionTimeoutError({});
+    Object.defineProperty(conn.constructor, "name", { value: "a" }); // simulate mangling
+    assert.equal(isTransientSumopodError(conn), true, "connection/timeout errors are transient even with a mangled name");
+    assert.equal(isTransientSumopodError(Object.assign(new Error("x"), { status: 503 })), true, "5xx is transient");
+    assert.equal(isTransientSumopodError(Object.assign(new Error("x"), { status: 401 })), false, "401 is not transient");
+    assert.equal(isTransientSumopodError(new Error("x")), false, "plain error is not transient");
+  }
+}
 
 console.log("Self-check passed.");

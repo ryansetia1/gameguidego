@@ -390,7 +390,9 @@ export async function POST(request: Request) {
             userId,
           });
 
-          if (rag?.hubWarning && rag.indexedCount === 0) {
+          if (rag?.embedFailed && rag.indexedCount === 0) {
+            guideHint = guideIngestHint({ embedFailed: true }) ?? undefined;
+          } else if (rag?.hubWarning && rag.indexedCount === 0) {
             guideHint = guideIngestHint({ hubWarning: true }) ?? undefined;
           } else if (rag && rag.indexedCount < rag.totalGuides) {
             guideHint =

@@ -1,6 +1,6 @@
 import { getServerClient } from "@/lib/supabase-server";
 
-import { embedQuery } from "@/lib/embed";
+import { embedQuery, isEmbedModelAvailable, SUMOPOD_MODEL_TAG } from "@/lib/embed";
 import { toVectorString } from "@/lib/embed-cache";
 import {
   ensureGuideIngested,
@@ -8,6 +8,7 @@ import {
   guideStorageKey,
   isGuideRagAvailable,
   normalizeGuideUrl,
+  raceAbort,
 } from "@/lib/guide-ingest";
 import { canonicalGamefaqsBundleUrl } from "@/lib/gamefaqs-bundle.js";
 import { normalizeGuideUrlList } from "@/lib/guide-urls.js";
@@ -202,12 +203,74 @@ async function fetchCandidates(
   return (data ?? []) as MatchRow[];
 }
 
+let modelRpcMissingLogged = false;
+
+/** Which embedding model indexed each guide. A missing column reads as legacy Sumopod. */
+async function loadGuideModels(
+  supabase: NonNullable<ReturnType<typeof getServerClient>>,
+  guideUrls: string[],
+): Promise<Map<string, string>> {
+  const entries = await Promise.all(
+    guideUrls.map(async (url): Promise<[string, string]> => {
+      try {
+        const { data, error } = await supabase
+          .from("guide_chunks")
+          .select("embed_model")
+          .eq("guide_url", url)
+          .limit(1)
+          .maybeSingle();
+        const tag = !error && typeof data?.embed_model === "string" ? data.embed_model : "";
+        return [url, tag || SUMOPOD_MODEL_TAG];
+      } catch {
+        return [url, SUMOPOD_MODEL_TAG];
+      }
+    }),
+  );
+  return new Map(entries);
+}
+
+/**
+ * Candidates for guides that share one embedding model. `embedding` null means
+ * that model is unavailable right now: lexical-only via chunk_tsv. Never compares
+ * vectors across models (the RPC filters on embed_model).
+ */
+async function fetchModelCandidates(
+  supabase: NonNullable<ReturnType<typeof getServerClient>>,
+  guideUrls: string[],
+  model: string,
+  embedding: number[] | null,
+  lexicalQuery: string,
+): Promise<MatchRow[]> {
+  if (!embedding && !lexicalQuery) return [];
+  const { data, error } = await supabase.rpc("match_guide_chunks_model", {
+    p_guide_urls: guideUrls,
+    p_embedding: embedding ? toVectorString(embedding) : null,
+    p_limit: RETRIEVE_FETCH,
+    p_lexical_query: lexicalQuery,
+    p_embed_model: model,
+  });
+  if (!error) return (data ?? []) as MatchRow[];
+  if (!modelRpcMissingLogged) {
+    console.warn(
+      "match_guide_chunks_model unavailable, using legacy retrieval. " +
+        "Apply db/embed-model-tag.sql.",
+      error.message,
+    );
+    modelRpcMissingLogged = true;
+  }
+  // Pre-migration install: every guide is Sumopod, so the legacy RPCs are correct.
+  if (model !== SUMOPOD_MODEL_TAG || !embedding) return [];
+  return fetchCandidates(supabase, guideUrls, toVectorString(embedding), lexicalQuery);
+}
+
 export type GuideRagResult = {
   sources: SearchResult[];
   skipWebSearch: boolean;
   hubWarning: boolean;
   indexedCount: number;
   totalGuides: number;
+  /** Indexing is paused (embed providers down or cleanup blocked), not just partial. */
+  embedFailed?: boolean;
   scores?: number[];
   chunkTexts?: string[];
 };
@@ -240,15 +303,21 @@ export async function retrieveFromPreferredGuides(input: {
     return null;
   }
 
-  const ingestResults = await Promise.all(
-    preferred.map((guideUrl) =>
-      ensureGuideIngested(guideUrl, input.signal, {
-        game: input.game,
-        platform: input.platform,
-        userId: input.userId,
-      }),
+  // The shared ingest runs without our signal (L14); Stop only ends this wait, the guide still indexes.
+  const ingestResults = await raceAbort(
+    Promise.all(
+      preferred.map((guideUrl) =>
+        ensureGuideIngested(guideUrl, input.signal, {
+          game: input.game,
+          platform: input.platform,
+          userId: input.userId,
+        }),
+      ),
     ),
+    input.signal,
   );
+  if (!ingestResults) return null;
+  const embedFailed = ingestResults.some((result) => result.embedFailed);
   const hubWarning = ingestResults.some((result) => result.hubWarning);
   const indexedCount = ingestResults.filter((result) => result.indexed).length;
   const totalGuides = preferred.length;
@@ -260,46 +329,67 @@ export async function retrieveFromPreferredGuides(input: {
       hubWarning,
       indexedCount: 0,
       totalGuides,
+      ...(embedFailed ? { embedFailed } : {}),
     };
   }
 
   const indexedPreferred = preferred.filter((_, index) => ingestResults[index]?.indexed);
   const guideUrls = resolveRagTargets(indexedPreferred);
 
-  const queryEmbedding = await embedQuery(input.query, input.signal, {
-    purpose: "rag_query",
-    game: input.game,
-    platform: input.platform,
-    userId: input.userId,
-    guideUrl: indexedPreferred[0],
-  });
-  if (!queryEmbedding?.length) {
-    return {
-      sources: [],
-      skipWebSearch: false,
-      hubWarning,
-      indexedCount,
-      totalGuides,
-    };
-  }
-
   const supabase = getServerClient();
   if (!supabase) return null;
 
   let matches: MatchRow[] = [];
   const history = input.history ?? [];
+  const noMatchResult = {
+    sources: [],
+    skipWebSearch: false,
+    hubWarning,
+    indexedCount,
+    totalGuides,
+  };
   try {
     const start = Date.now();
     // Names the player used ("Slime Eye", "Key Cavern") are what embeddings miss
     // inside a single walkthrough, so search for them literally as well.
     const phrases = extractEntityPhrases(input.query, input.game);
     const lexicalQuery = buildPhraseTsQuery(phrases);
-    const rows = await fetchCandidates(
-      supabase,
-      guideUrls,
-      toVectorString(queryEmbedding),
-      lexicalQuery,
+
+    // Each guide is searched with the model that indexed it, once per distinct model.
+    // A model that is down (e.g. Sumopod unfunded) leaves its guides lexical-only.
+    const guideModels = await loadGuideModels(supabase, guideUrls);
+    const byModel = new Map<string, string[]>();
+    for (const url of guideUrls) {
+      const model = guideModels.get(url) ?? SUMOPOD_MODEL_TAG;
+      byModel.set(model, [...(byModel.get(model) ?? []), url]);
+    }
+    const groups = await Promise.all(
+      [...byModel].map(async ([model, urls]) => {
+        const embedded = isEmbedModelAvailable(model)
+          ? await embedQuery(
+              input.query,
+              input.signal,
+              {
+                purpose: "rag_query",
+                game: input.game,
+                platform: input.platform,
+                userId: input.userId,
+                guideUrl: urls[0],
+              },
+              model,
+            )
+          : null;
+        const rows = await fetchModelCandidates(
+          supabase,
+          urls,
+          model,
+          embedded?.vector ?? null,
+          lexicalQuery,
+        );
+        return { model, rows, vector: Boolean(embedded) };
+      }),
     );
+    const rows = groups.flatMap((group) => group.rows);
     const raw = dedupeByChunkText(rows).map((row) => ({
       ...row,
       retrieval_score: retrievalScore(row),
@@ -320,16 +410,12 @@ export async function retrieveFromPreferredGuides(input: {
       candidateCount: pool.length,
       lexicalPhrases: phrases,
       lexicalHits: pool.filter((row) => row.lexical_rank).length,
+      models: groups.map((group) => ({ model: group.model, vector: group.vector })),
+      lexicalOnly: groups.every((group) => !group.vector),
     });
   } catch (error) {
     console.error("Guide chunk retrieval failed:", error);
-    return {
-      sources: [],
-      skipWebSearch: false,
-      hubWarning,
-      indexedCount,
-      totalGuides,
-    };
+    return noMatchResult;
   }
 
   if (!matches.length) {
@@ -375,7 +461,10 @@ export async function retrieveFromPreferredGuides(input: {
   const topSimilarity = matches[0]?.similarity ?? 0;
   const topRescoreScore = matches[0]?.rescore_score ?? topSimilarity;
   // Rerank verdict wins when it ran (semantic relevance); else cosine threshold.
-  const hit = rerankRelevant != null ? rerankRelevant : topSimilarity >= GUIDE_HIT;
+  // Lexical-only rows (model unavailable) carry cosine 0: an exact name match in the
+  // guide is the only signal, so it counts as a hit when no reranker ruled.
+  const lexicalOnlyHit = topSimilarity === 0 && (matches[0]?.lexical_rank ?? 0) > 0;
+  const hit = rerankRelevant != null ? rerankRelevant : topSimilarity >= GUIDE_HIT || lexicalOnlyHit;
   const titleByUrl = await getGuideDisplayTitles(matches.map((row) => row.guide_url));
   const labelFor = (guideUrl: string) =>
     titleByUrl.get(guideStorageKey(guideUrl)) ?? hostLabel(guideUrl);

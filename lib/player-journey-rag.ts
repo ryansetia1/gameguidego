@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { embedQuery } from "@/lib/embed";
+import { embedQuery, isEmbedModelAvailable, SUMOPOD_MODEL_TAG } from "@/lib/embed";
 import { toVectorString } from "@/lib/embed-cache";
 import { JOURNAL_RETRIEVE_K, JOURNAL_SOURCE_URL } from "@/lib/player-journey.js";
 import {
@@ -56,13 +56,32 @@ export async function retrieveFromPlayerJournal(input: {
 
   const start = Date.now();
   try {
-    const embedding = await embedQuery(input.query, input.signal, {
-      game: input.game,
-      platform: input.platform,
-      userId: input.userId,
-      purpose: "rag_query",
-    });
-    if (!embedding) return [];
+    // Query with the model the journal was indexed with (all rows share one).
+    const { data: modelRow, error: modelError } = await input.supabase
+      .from("player_journal_chunks")
+      .select("embed_model")
+      .eq("user_id", input.userId)
+      .eq("game_key", gameKey)
+      .eq("platform", input.platform || "")
+      .limit(1)
+      .maybeSingle();
+    const journalModel =
+      (!modelError && typeof modelRow?.embed_model === "string" && modelRow.embed_model) ||
+      SUMOPOD_MODEL_TAG;
+    if (!isEmbedModelAvailable(journalModel)) return [];
+    const embedded = await embedQuery(
+      input.query,
+      input.signal,
+      {
+        game: input.game,
+        platform: input.platform,
+        userId: input.userId,
+        purpose: "rag_query",
+      },
+      journalModel,
+    );
+    if (!embedded) return [];
+    const embedding = embedded.vector;
     const { data, error } = await input.supabase.rpc("match_player_journal_chunks", {
       p_user_id: input.userId,
       p_game_key: gameKey,
