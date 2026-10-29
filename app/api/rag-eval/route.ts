@@ -16,6 +16,7 @@ export const maxDuration = 300;
  * POST { guideUrls: string[], query: string, game?, platform? }
  */
 export async function POST(request: Request) {
+  const startedAt = Date.now();
   if (process.env.NODE_ENV === "production" && !process.env.RAG_DEBUG) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -48,6 +49,7 @@ export async function POST(request: Request) {
     query,
     game: body.game,
     platform: body.platform,
+    requestStartMs: startedAt,
   });
 
   if (!rag) {

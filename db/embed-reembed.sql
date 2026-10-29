@@ -126,6 +126,9 @@ declare
   ready int;
   n int;
 begin
+  -- Briefly blocks concurrent chunk writes (insert/delete/update) so no row can appear between
+  -- the readiness count and the UPDATE; the flip takes tens of ms. Readers are not blocked.
+  lock table public.guide_chunks in share row exclusive mode;
   perform 1 from guide_chunks where guide_url = p_guide_url for update;
   select count(*),
          count(*) filter (

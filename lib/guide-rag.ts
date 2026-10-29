@@ -298,6 +298,7 @@ export async function retrieveFromPreferredGuides(input: {
   /** When the originating request started, so a background re-embed stays inside its 300s kill. */
   requestStartMs?: number;
 }): Promise<GuideRagResult | null> {
+  const requestStartMs = input.requestStartMs ?? Date.now();
   const preferred = normalizeGuideUrlList(input.guideUrls);
   if (!preferred.length) return null;
 
@@ -373,7 +374,7 @@ export async function retrieveFromPreferredGuides(input: {
         game: input.game,
         platform: input.platform,
         userId: input.userId,
-        requestStartMs: input.requestStartMs ?? Date.now(),
+        requestStartMs,
       });
       byModel.set(model, [...(byModel.get(model) ?? []), url]);
     }
