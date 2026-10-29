@@ -24,6 +24,7 @@ they describe where the codebase is going, not necessarily what is shipped yet.
 | [guide-providers.md](./guide-providers.md) | **Architecture** | Top-tier guide providers (GameFAQs + Neoseeker + IGN): dedicated ingest systems, shared RAG pipeline, router shape — read before any provider work |
 | [neoseeker-bundle.md](./neoseeker-bundle.md) | **Research** | Neoseeker multi-page bundle discovery (flat vs nested URLs), no-Playwright cascade, calibration on Hades / Uncharted 4 / TLOU — read before implementing |
 | [ign-wiki-bundle.md](./ign-wiki-bundle.md) | **Research** | IGN `/wikis/` guides: dedicated `lib/ign-wiki.js`, `__NEXT_DATA__` htmlEntities extract (not Tavily), next/prev discovery, calibration on Pokémon D/P/Pt + Elden Ring |
+| [embedding-fallback-replicate.md](./embedding-fallback-replicate.md) | **Planned** | Sumopod embedding primary, Replicate fallback; per-chunk `embed_model`, same-model query/retrieval, lexical-only for old guides during outage |
 | [topic-title-in-summarize.md](./topic-title-in-summarize.md) | **Shipped** | Fold first-turn `topicTitle` into `summarize` JSON — drop the third Gemini call (includes revert steps) |
 
 When a plan phase ships, update its status here and cross-link from `CLAUDE.md`.
