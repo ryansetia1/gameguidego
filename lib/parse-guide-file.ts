@@ -1,8 +1,8 @@
 import "pdf-parse/worker";
 import { CanvasFactory } from "pdf-parse/worker";
 import { PDFParse } from "pdf-parse";
+import { isUploadTooLarge, UPLOAD_TOO_LARGE_MSG } from "./upload-limit.js";
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const ALLOWED_EXTENSIONS = new Set(["pdf", "txt", "md"]);
 
 export type GuideFileType = "pdf" | "txt" | "md";
@@ -25,8 +25,8 @@ export async function parseGuideFile(
   buffer: Buffer,
   filename: string,
 ): Promise<ParsedGuideFile> {
-  if (buffer.byteLength > MAX_FILE_SIZE) {
-    throw new Error(`File too large (${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB). Max is 10 MB.`);
+  if (isUploadTooLarge(buffer.byteLength)) {
+    throw new Error(UPLOAD_TOO_LARGE_MSG);
   }
 
   const ext = getExtension(filename);
@@ -58,4 +58,4 @@ export async function parseGuideFile(
   return { text, fileType };
 }
 
-export { MAX_FILE_SIZE, ALLOWED_EXTENSIONS };
+export { ALLOWED_EXTENSIONS };

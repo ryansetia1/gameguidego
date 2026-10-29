@@ -20,6 +20,7 @@ import type { GuideIndexState } from "@/lib/guide-index-state";
 import { resolveGuideDisplayState } from "@/lib/guide-index-state";
 import { getSupabase } from "@/lib/supabase";
 import { dropRowAfterDelete } from "@/lib/upload-auth.js";
+import { isUploadTooLarge, MAX_UPLOAD_MB, UPLOAD_TOO_LARGE_MSG } from "@/lib/upload-limit.js";
 import { IconX, IconClipboard } from "./icons";
 import { ClearButton } from "./clear-button";
 import { GuideStatusChip } from "./chat/guide-status-chip";
@@ -318,7 +319,7 @@ export function GuideLinkField({
   // Auto-upload on pick: no "staged but not committed" state, so a file can't be
   // silently lost by sending, editing, retrying, tab-switching, or closing. The
   // file only lives in state while it's actively uploading (drives the spinner).
-  // ponytail: no in-flight cancel; uploads are capped at 10MB, remove the guide
+  // ponytail: no in-flight cancel; uploads are capped at 4 MB (Vercel body limit), remove the guide
   // from the list afterward if it was the wrong file. Add AbortController if
   // large-guide uploads make the wait painful.
   const handleFileUpload = useCallback(async (file: File) => {
@@ -337,6 +338,11 @@ export function GuideLinkField({
       return;
     }
 
+    if (isUploadTooLarge(file.size)) {
+      setUploadError(UPLOAD_TOO_LARGE_MSG);
+      return;
+    }
+
     setUploadFile(file);
     setUploading(true);
     setUploadError("");
@@ -351,6 +357,11 @@ export function GuideLinkField({
         headers: await authHeader(),
         body: form,
       });
+      // Vercel's own 413 (body over its cap) is not JSON.
+      if (response.status === 413) {
+        setUploadError(UPLOAD_TOO_LARGE_MSG);
+        return;
+      }
       const payload: {
         indexed?: boolean;
         chunkCount?: number;
@@ -693,7 +704,7 @@ export function GuideLinkField({
           </div>
           {uploadError && <p className="guide-search-error">{uploadError}</p>}
           <p className="field-hint" style={{ marginTop: "8px" }}>
-            Upload a PDF, TXT, or MD walkthrough file (max 10 MB).
+            Upload a PDF, TXT, or MD walkthrough file (max {MAX_UPLOAD_MB} MB).
           </p>
         </div>
       )}

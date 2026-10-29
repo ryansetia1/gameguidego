@@ -3248,6 +3248,24 @@ if (!canRunTsChecks) {
     assert.equal(isTransientSumopodError(Object.assign(new Error("x"), { status: 401 })), false, "401 is not transient");
     assert.equal(isTransientSumopodError(new Error("x")), false, "plain error is not transient");
 
+    // #12: one shared upload cap, below Vercel's 4.5 MB body limit
+    const { MAX_UPLOAD_BYTES, isUploadTooLarge, UPLOAD_TOO_LARGE_MSG } = await import("../lib/upload-limit.js");
+    assert.equal(MAX_UPLOAD_BYTES, 4 * 1024 * 1024, "cap is 4 MB");
+    assert.ok(MAX_UPLOAD_BYTES < 4.5 * 1024 * 1024, "cap stays under Vercel's body limit");
+    assert.equal(isUploadTooLarge(MAX_UPLOAD_BYTES), false, "exactly the cap is allowed");
+    assert.equal(isUploadTooLarge(MAX_UPLOAD_BYTES + 1), true, "one byte over is rejected");
+    assert.equal(UPLOAD_TOO_LARGE_MSG, "File is too large. Max 4 MB.", "message is specific");
+    assert.ok(!/[\u2014\u2013]/.test(UPLOAD_TOO_LARGE_MSG), "no dashes in copy");
+    {
+      const fs = await import("node:fs");
+      const route = fs.readFileSync(new URL("../app/api/guide-upload/route.ts", import.meta.url), "utf8");
+      const field = fs.readFileSync(new URL("../app/guide-link-field.tsx", import.meta.url), "utf8");
+      assert.ok(/isUploadTooLarge\(file\.size\)[\s\S]*?status: 413/.test(route), "server 413s oversize files");
+      assert.ok(/isUploadTooLarge\(file\.size\)/.test(field), "picker checks size before sending");
+      assert.ok(field.indexOf("isUploadTooLarge(file.size)") < field.indexOf('fetch("/api/guide-upload", {\n        method: "POST"'), "size check precedes the upload fetch");
+      assert.ok(/response\.status === 413/.test(field), "picker maps Vercel's non-JSON 413");
+    }
+
     // #8: upload identity comes from the verified token; a body uid is only compared
     const { checkUploadIdentity, ownsUploadKey } = await import("../lib/upload-auth.js");
     assert.equal(checkUploadIdentity("", "u1").status, 401, "no verified uid: 401");
