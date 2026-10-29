@@ -3247,6 +3247,36 @@ if (!canRunTsChecks) {
     assert.equal(isTransientSumopodError(Object.assign(new Error("x"), { status: 503 })), true, "5xx is transient");
     assert.equal(isTransientSumopodError(Object.assign(new Error("x"), { status: 401 })), false, "401 is not transient");
     assert.equal(isTransientSumopodError(new Error("x")), false, "plain error is not transient");
+
+    // #8: upload identity comes from the verified token; a body uid is only compared
+    const { checkUploadIdentity, ownsUploadKey } = await import("../lib/upload-auth.js");
+    assert.equal(checkUploadIdentity("", "u1").status, 401, "no verified uid: 401");
+    assert.equal(checkUploadIdentity(undefined, undefined).status, 401, "bad/missing token: 401");
+    assert.equal(checkUploadIdentity("u1", "u2").status, 403, "body uid differing from the token: 403");
+    assert.equal(checkUploadIdentity("u1", "u1").ok, true, "matching body uid is fine");
+    assert.equal(checkUploadIdentity("u1", undefined).ok, true, "body uid is optional");
+    assert.equal(ownsUploadKey("u1", "upload://u1/a.pdf"), true);
+    assert.equal(ownsUploadKey("u1", "upload://u10/a.pdf"), false, "uid prefix must end at the slash");
+    assert.equal(ownsUploadKey("u1", "upload://u2/a.pdf"), false, "other user's key");
+    assert.equal(ownsUploadKey("u1", "upload://u1/"), false, "bare prefix is not a key");
+    assert.equal(ownsUploadKey("", "upload:///a"), false, "empty uid owns nothing");
+    // #8: the scoped delete removes the exact key only, other users' upload:// rows survive
+    {
+      const mine = "upload://u1/a.pdf";
+      const seed = [
+        { guide_url: mine, chunk_index: 0 }, { guide_url: mine, chunk_index: 1 },
+        { guide_url: "upload://u2/a.pdf", chunk_index: 0 }, { guide_url: "upload://u1/a.pdf.bak", chunk_index: 0 },
+      ];
+      const db = makeDb({ seed });
+      assert.equal(await purgeGuideVerified(mine, db), "gone");
+      assert.deepEqual(db.rows.map((r) => r.guide_url).sort(), ["upload://u1/a.pdf.bak", "upload://u2/a.pdf"], "only the exact key is deleted");
+      assert.equal(await purgeGuideVerified(mine, makeDb({ seed, deleteWorks: false })), "kept", "anon-style 0-row delete is not success");
+      assert.equal(await purgeGuideVerified(mine, null), "kept", "no service key: never delete");
+      const route = (await import("node:fs")).readFileSync(new URL("../app/api/guide-upload/route.ts", import.meta.url), "utf8");
+      assert.ok(!/getServerClient/.test(route), "upload route must not delete via the anon client");
+      assert.ok(!/formData\.get\("userId"\)\s*;?\s*\n\s*if \(typeof userId/.test(route) && /authenticate\(request, formData\.get\("userId"\)\)/.test(route), "POST derives uid from the token");
+      assert.ok(/replace: true/.test(route), "re-upload must replace");
+    }
   }
 }
 

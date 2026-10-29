@@ -709,6 +709,8 @@ export function ingestGuideFromText(input: {
   text: string;
   signal?: AbortSignal;
   ctx?: IngestContext;
+  /** Re-upload: swap an existing index only after the new embeds are ready. */
+  replace?: boolean;
 }): Promise<IngestResult> {
   return singleFlight(input.guideUrl, () => runIngestGuideFromText({ ...input, signal: undefined }));
 }
@@ -718,20 +720,25 @@ async function runIngestGuideFromText(input: {
   text: string;
   signal?: AbortSignal;
   ctx?: IngestContext;
+  replace?: boolean;
 }): Promise<IngestResult> {
   const supabase = getServerClient();
   if (!supabase || !isEmbedConfigured()) {
     return { indexed: false, chunkCount: 0, hubWarning: false };
   }
 
+  // Replace-on-success: the old index keeps serving until the new embeds exist (storeGuideChunks).
+  let replace = false;
   if (await isGuideIndexed(input.guideUrl)) {
-    return indexedGuideCacheHit(supabase, input.guideUrl);
-  }
-
-  const leftovers = await clearGuideLeftovers(getServiceClient(), supabase, input.guideUrl);
-  if (leftovers === "cached") return indexedGuideCacheHit(supabase, input.guideUrl);
-  if (leftovers === "blocked") {
-    return { indexed: false, chunkCount: 0, hubWarning: false, embedFailed: true };
+    // No service key: the purge could never run, so embedding would be wasted spend.
+    if (!input.replace || !getServiceClient()) return indexedGuideCacheHit(supabase, input.guideUrl);
+    replace = true;
+  } else {
+    const leftovers = await clearGuideLeftovers(getServiceClient(), supabase, input.guideUrl);
+    if (leftovers === "cached") return indexedGuideCacheHit(supabase, input.guideUrl);
+    if (leftovers === "blocked") {
+      return { indexed: false, chunkCount: 0, hubWarning: false, embedFailed: true };
+    }
   }
 
   void logTraceEvent(
@@ -749,6 +756,7 @@ async function runIngestGuideFromText(input: {
     signal: input.signal,
     embedLog: embedLogFromContext(input.ctx),
     startMs,
+    replace,
   });
 
   if (!stored.indexed) {

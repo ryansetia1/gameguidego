@@ -18,11 +18,19 @@ import {
 import { parseGamefaqsFaqUrl } from "@/lib/gamefaqs-bundle.js";
 import type { GuideIndexState } from "@/lib/guide-index-state";
 import { resolveGuideDisplayState } from "@/lib/guide-index-state";
+import { getSupabase } from "@/lib/supabase";
 import { IconX, IconClipboard } from "./icons";
 import { ClearButton } from "./clear-button";
 import { GuideStatusChip } from "./chat/guide-status-chip";
 
 type GuideHit = { title: string; url: string; snippet: string };
+
+/** Bearer header for /api/guide-upload; the server derives the uid from the token. */
+async function authHeader(): Promise<Record<string, string>> {
+  const { data } = (await getSupabase()?.auth.getSession()) ?? { data: null };
+  const token = data?.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export type GuideMeta = {
   title?: string;
@@ -170,11 +178,15 @@ export function GuideLinkField({
       }
 
       if (url.startsWith("upload://") && userId) {
-        fetch("/api/guide-upload", {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ guideUrl: url, userId }),
-        }).catch(console.error);
+        void authHeader()
+          .then((auth) =>
+            fetch("/api/guide-upload", {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json", ...auth },
+              body: JSON.stringify({ guideUrl: url }),
+            }),
+          )
+          .catch(console.error);
       }
 
       setAddError("");
@@ -316,11 +328,14 @@ export function GuideLinkField({
     try {
       const form = new FormData();
       form.append("file", file);
-      form.append("userId", userId);
       if (trimmedGame) form.append("game", trimmedGame);
       if (platform.trim()) form.append("platform", platform.trim());
 
-      const response = await fetch("/api/guide-upload", { method: "POST", body: form });
+      const response = await fetch("/api/guide-upload", {
+        method: "POST",
+        headers: await authHeader(),
+        body: form,
+      });
       const payload: {
         indexed?: boolean;
         chunkCount?: number;
