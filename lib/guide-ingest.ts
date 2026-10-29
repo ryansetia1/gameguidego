@@ -18,12 +18,25 @@ import {
 import { fetchGamefaqsWaybackRootTitle } from "@/lib/wayback.js";
 import { parseGuideTitleFromExtract } from "@/lib/guide-title.js";
 import { uploadedGuideFilename } from "@/lib/guide-urls.js";
-import { getServerClient } from "@/lib/supabase-server";
+import { getServerClient, getServiceClient } from "@/lib/supabase-server";
 import { logTraceEvent } from "@/lib/trace";
 
 const MIN_GUIDE_CHARS = 400;
-// ponytail: single bulk insert of 1k+ vector rows hits Supabase statement timeout (~8s).
-const GUIDE_CHUNK_INSERT_BATCH = 50;
+// ponytail: single bulk insert of 1k+ vector rows hits Supabase statement timeout (~8s);
+// 50-row batches still timed out on a 1093-chunk guide, so keep batches small.
+const GUIDE_CHUNK_INSERT_BATCH = 25;
+
+// One ingest per guide_url per server instance; concurrent callers share the promise.
+// ponytail: cross-instance race (two serverless instances), add a guide_ingest_lease table
+// (claim via insert ... on conflict where expires_at < now()) if it shows up.
+const inflightIngests = new Map<string, Promise<unknown>>();
+export function singleFlight<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const existing = inflightIngests.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+  const p = run().finally(() => inflightIngests.delete(key));
+  inflightIngests.set(key, p);
+  return p;
+}
 
 /** Normalize a guide URL for storage and retrieval keys. */
 export function normalizeGuideUrl(raw: string): string {
@@ -225,11 +238,52 @@ async function guideChunkText(
   return data.map((row) => String(row.chunk_text ?? "")).join("\n");
 }
 
+/**
+ * Delete a guide's rows (from `fromIndex` up when given). guide_chunks has no anon DELETE
+ * policy (and must not get one), so callers pass the service-role client; with the anon
+ * client this silently removes 0 rows.
+ */
 async function deleteGuideChunks(
   supabase: SupabaseClient,
   guideUrl: string,
+  fromIndex?: number,
 ): Promise<void> {
-  await supabase.from("guide_chunks").delete().eq("guide_url", guideUrl);
+  let q = supabase.from("guide_chunks").delete().eq("guide_url", guideUrl);
+  if (fromIndex !== undefined) q = q.gte("chunk_index", fromIndex);
+  await q;
+}
+
+/** Client for chunk deletes: service role. Null when SUPABASE_SERVICE_ROLE_KEY is unset. */
+function chunkWriter(fallback: SupabaseClient): SupabaseClient {
+  return getServiceClient() ?? fallback;
+}
+
+/**
+ * Before any extract/embed spend: clear rows of an unindexed guide (a killed earlier run left
+ * them without chunk 0) and VERIFY they are gone. False = rows remain, so the caller must
+ * skip the spend (the unique index would block the insert anyway). No service key = previous
+ * behaviour: nothing to clean with, proceed.
+ */
+export async function clearGuideLeftovers(
+  service: SupabaseClient | null,
+  guideUrl: string,
+): Promise<boolean> {
+  if (!service) return true;
+  const remaining = async () => {
+    const { count, error } = await service
+      .from("guide_chunks")
+      .select("*", { count: "exact", head: true })
+      .eq("guide_url", guideUrl);
+    return error ? null : (count ?? 0);
+  };
+  const before = await remaining();
+  if (before === 0) return true;
+  await deleteGuideChunks(service, guideUrl);
+  const after = await remaining();
+  if (after === 0) return true;
+  console.error("Guide leftover cleanup failed, skipping ingest spend", { guideUrl, before, after });
+  void logTraceEvent("ingest_cleanup_failed", `Leftover chunks remain for ${guideUrl}`, undefined, { guideUrl, before, after });
+  return false;
 }
 
 type GuideChunkMeta = {
@@ -266,12 +320,11 @@ export async function insertGuideChunks(input: {
   }));
 
   const insertStart = Date.now();
+  let inserted = 0;
+  let insertedFrom = rows.length; // lowest chunk_index this run has written
   try {
-    // All embeds succeeded: clear leftovers of a killed earlier run (the unique index
-    // would otherwise block this insert), then write batches in REVERSE order so
-    // chunk 0 lands last and a partial write never counts as indexed (guideIndexedIn).
-    await deleteGuideChunks(input.supabase, guideUrl);
-    let inserted = 0;
+    // Write batches in REVERSE order so chunk 0 lands last and a partial write never
+    // counts as indexed (guideIndexedIn). Leftovers were cleared before the embed spend.
     const lastOffset = Math.floor((rows.length - 1) / GUIDE_CHUNK_INSERT_BATCH) * GUIDE_CHUNK_INSERT_BATCH;
     for (let offset = lastOffset; offset >= 0; offset -= GUIDE_CHUNK_INSERT_BATCH) {
       const batch = rows.slice(offset, offset + GUIDE_CHUNK_INSERT_BATCH);
@@ -284,22 +337,20 @@ export async function insertGuideChunks(input: {
           .insert(batch.map(({ embed_model: _tag, ...row }) => row)));
       }
       if (error) {
-        const { count } = await input.supabase
-          .from("guide_chunks")
-          .select("*", { count: "exact", head: true })
-          .eq("guide_url", guideUrl)
-          .is("guide_bundle", null);
-        if ((count ?? 0) >= input.chunks.length) {
+        // Unique violation: another run owns this write. Never delete its rows.
+        if (error.code === "23505") {
+          const indexed = await guideIndexedIn(input.supabase, guideUrl);
           void logTraceEvent(
             "ingest_db_insert",
-            `Chunks already exist for ${guideUrl} (${count} rows)`,
+            `Concurrent ingest owns ${guideUrl}, indexed=${indexed}`,
             Date.now() - insertStart,
-            { guideUrl, chunkCount: count, duplicate: true },
+            { guideUrl, duplicate: true, indexed },
           );
-          return { indexed: true, chunkCount: count ?? input.chunks.length };
+          return { indexed, chunkCount: indexed ? input.chunks.length : 0 };
         }
+        // Other error: drop only the rows THIS run wrote.
         if (inserted > 0) {
-          await deleteGuideChunks(input.supabase, guideUrl);
+          await deleteGuideChunks(input.supabase, guideUrl, insertedFrom);
         }
         void logTraceEvent(
           "ingest_db_insert",
@@ -317,9 +368,11 @@ export async function insertGuideChunks(input: {
         return { indexed: false, chunkCount: 0 };
       }
       inserted += batch.length;
+      insertedFrom = offset;
     }
   } catch (error) {
-    await deleteGuideChunks(input.supabase, guideUrl);
+    // Only this run's own range; a kill (no catch) is handled by isGuideIndexed + leftover cleanup.
+    if (inserted > 0) await deleteGuideChunks(input.supabase, guideUrl, insertedFrom).catch(() => {});
     void logTraceEvent(
       "ingest_db_insert",
       `Insert error for ${guideUrl}: ${error instanceof Error ? error.message : String(error)}`,
@@ -343,9 +396,10 @@ const INGEST_HARD_KILL_MS = 300_000; // route maxDuration
 const INGEST_EMBED_MARGIN_MS = 45_000; // room left for the DB inserts
 const INGEST_EMBED_FLOOR_MS = 30_000;
 
-/** min(280s, 300s - elapsed - 45s), never below a sane floor. */
-function ingestEmbedTimeoutMs(startMs: number): number {
-  return Math.max(INGEST_EMBED_FLOOR_MS, INGEST_HARD_KILL_MS - (Date.now() - startMs) - INGEST_EMBED_MARGIN_MS);
+/** min(280s, 300s - elapsed - 45s) via embed.ts; null when under the floor (skip the spend). */
+function ingestEmbedTimeoutMs(startMs: number): number | null {
+  const budget = INGEST_HARD_KILL_MS - (Date.now() - startMs) - INGEST_EMBED_MARGIN_MS;
+  return budget < INGEST_EMBED_FLOOR_MS ? null : budget;
 }
 
 async function storeGuideChunks(input: {
@@ -367,6 +421,16 @@ async function storeGuideChunks(input: {
     { guideUrl: input.guideUrl, chunkCount: chunks.length },
   );
 
+  const embedTimeoutMs = ingestEmbedTimeoutMs(input.startMs);
+  if (embedTimeoutMs === null) {
+    void logTraceEvent("ingest_embed_error", `Not enough ingest time left to embed ${input.guideUrl}`, undefined, {
+      guideUrl: input.guideUrl,
+      error: true,
+      reason: "budget",
+    });
+    return { indexed: false, chunkCount: 0, embedFailed: true };
+  }
+
   const embedInputs = chunks.map((chunk) => `${formatEmbedPrefix(chunk)}${chunk.text}`);
 
   // One call = one model for the whole guide (Sumopod, else Qwen), never mixed.
@@ -377,7 +441,7 @@ async function storeGuideChunks(input: {
       purpose: "ingest",
       guideUrl: input.guideUrl,
       ...input.embedLog,
-    }, { ingestTimeoutMs: ingestEmbedTimeoutMs(input.startMs) }));
+    }, { ingestTimeoutMs: embedTimeoutMs }));
   } catch (error) {
     void logTraceEvent(
       "ingest_embed_error",
@@ -390,7 +454,7 @@ async function storeGuideChunks(input: {
   }
 
   return insertGuideChunks({
-    supabase: input.supabase,
+    supabase: chunkWriter(input.supabase),
     guideUrl: input.guideUrl,
     chunks,
     embeddings,
@@ -398,7 +462,19 @@ async function storeGuideChunks(input: {
   });
 }
 
-async function ingestGuidePage(
+function ingestGuidePage(
+  rawUrl: string,
+  signal?: AbortSignal,
+  ctx?: IngestContext,
+): Promise<IngestResult> {
+  let key = rawUrl;
+  try {
+    key = parseGamefaqsFaqUrl(rawUrl) ? gamefaqsStorageUrl(rawUrl) : normalizeGuideUrl(rawUrl);
+  } catch {}
+  return singleFlight(key, () => runIngestGuidePage(rawUrl, signal, ctx));
+}
+
+async function runIngestGuidePage(
   rawUrl: string,
   signal?: AbortSignal,
   ctx?: IngestContext,
@@ -421,7 +497,7 @@ async function ingestGuidePage(
         undefined,
         { guideUrl, reason: "outline_metadata" },
       );
-      await deleteGuideChunks(supabase, guideUrl);
+      await deleteGuideChunks(chunkWriter(supabase), guideUrl);
     } else if (isGamefaqs) {
       // Purge only genuinely bad stored content (TOC-only / near-empty), not
       // merely-short guides — else a small real guide re-embeds every turn.
@@ -433,13 +509,17 @@ async function ingestGuidePage(
           undefined,
           { guideUrl, totalChars: storedText.length },
         );
-        await deleteGuideChunks(supabase, guideUrl);
+        await deleteGuideChunks(chunkWriter(supabase), guideUrl);
       } else {
         return indexedGuideCacheHit(supabase, guideUrl);
       }
     } else {
       return indexedGuideCacheHit(supabase, guideUrl);
     }
+  }
+
+  if (!(await clearGuideLeftovers(getServiceClient(), guideUrl))) {
+    return { indexed: false, chunkCount: 0, hubWarning: false, embedFailed: true };
   }
 
   void logTraceEvent("ingest_start", `Ingesting guide: ${guideUrl}`, undefined, { guideUrl });
@@ -539,7 +619,16 @@ export async function ensureGuideIngested(
  * Ingest a guide from pre-extracted text (e.g. uploaded PDF/TXT/MD).
  * Skips Tavily extract — text is already available. Idempotent per guideUrl.
  */
-export async function ingestGuideFromText(input: {
+export function ingestGuideFromText(input: {
+  guideUrl: string;
+  text: string;
+  signal?: AbortSignal;
+  ctx?: IngestContext;
+}): Promise<IngestResult> {
+  return singleFlight(input.guideUrl, () => runIngestGuideFromText(input));
+}
+
+async function runIngestGuideFromText(input: {
   guideUrl: string;
   text: string;
   signal?: AbortSignal;
@@ -552,6 +641,10 @@ export async function ingestGuideFromText(input: {
 
   if (await isGuideIndexed(input.guideUrl)) {
     return indexedGuideCacheHit(supabase, input.guideUrl);
+  }
+
+  if (!(await clearGuideLeftovers(getServiceClient(), input.guideUrl))) {
+    return { indexed: false, chunkCount: 0, hubWarning: false, embedFailed: true };
   }
 
   void logTraceEvent(

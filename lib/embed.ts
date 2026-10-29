@@ -79,8 +79,12 @@ function sumopodCircuitOpen(): boolean {
 }
 
 function isTransientSumopodError(error: unknown): boolean {
-  const status = (error as { status?: number })?.status;
-  return status === undefined || status >= 500;
+  const { status } = (error as { status?: number }) ?? {};
+  // The OpenAI SDK leaves `.name` as "Error", so classify by class name.
+  const name = (error as object)?.constructor?.name;
+  return status === undefined
+    ? name === "APIConnectionError" || name === "APIConnectionTimeoutError"
+    : status >= 500;
 }
 
 export type EmbedResult = { vectors: number[][]; model: string };

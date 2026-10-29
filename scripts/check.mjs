@@ -3083,57 +3083,97 @@ if (!canRunTsChecks) {
     }
   }
 
-  // Guide insert: reverse batch order + chunk 0 last, delete-before-insert, and a run
-  // "killed" after k batches must NOT look indexed (so it re-ingests instead of staying half-indexed).
+  // Guide insert/cleanup/concurrency. In-memory fake of the guide_chunks table.
   {
-  const { insertGuideChunks, guideIndexedIn } = await import("../lib/guide-ingest.ts");
-  const makeDb = (killAfterBatches = Infinity) => {
-    const rows = [{ guide_url: "x", chunk_index: 99 }]; // leftover of an earlier killed run
-    const log = [];
-    let batches = 0;
-    return {
-      rows,
-      log,
-      from: () => {
-        const filters = [];
-        const q = {
-          insert: async (batch) => {
-            if (batches >= killAfterBatches) return new Promise(() => {}); // hard kill: never resolves, no cleanup runs
-            batches++;
-            log.push(`insert:${batch[0].chunk_index}-${batch[batch.length - 1].chunk_index}`);
-            rows.push(...batch);
-            return { error: null };
-          },
-          delete: () => {
-            log.push("delete");
-            return { eq: async (_c, v) => { for (let i = rows.length - 1; i >= 0; i--) if (rows[i].guide_url === v) rows.splice(i, 1); return {}; } };
-          },
-          select: () => q,
-          eq: (c, v) => { filters.push([c, v]); return q; },
-          then: (res) => res({ count: rows.filter((r) => filters.every(([c, v]) => r[c] === v)).length, error: null }),
-        };
-        return q;
-      },
+    const { insertGuideChunks, guideIndexedIn, clearGuideLeftovers, singleFlight } = await import("../lib/guide-ingest.ts");
+    const URL_ = "http://x.test/g";
+    const makeDb = ({ hangAfter = Infinity, failAt = Infinity, failCode = "XX000", deleteWorks = true, seed = [] } = {}) => {
+      const rows = [...seed];
+      const log = [];
+      let batches = 0;
+      return {
+        rows,
+        log,
+        from: () => {
+          const filters = [];
+          let mode = "select";
+          let fromIdx;
+          const match = (r) => filters.every(([op, c, v]) => (op === "eq" ? r[c] === v : r[c] >= v));
+          const q = {
+            insert: async (batch) => {
+              if (batches === failAt) return { error: { code: failCode, message: "insert failed" } };
+              if (batches >= hangAfter) return new Promise(() => {}); // hard kill: never resolves, no cleanup runs
+              batches++;
+              log.push(`insert:${batch[0].chunk_index}-${batch[batch.length - 1].chunk_index}`);
+              rows.push(...batch);
+              return { error: null };
+            },
+            delete: () => {
+              mode = "delete";
+              return q;
+            },
+            select: () => q,
+            eq: (c, v) => (filters.push(["eq", c, v]), q),
+            gte: (c, v) => (filters.push(["gte", c, v]), (fromIdx = v), q),
+            then: (res) => {
+              if (mode === "delete") {
+                log.push(fromIdx === undefined ? "delete:all" : `delete:>=${fromIdx}`);
+                if (deleteWorks) for (let i = rows.length - 1; i >= 0; i--) if (match(rows[i])) rows.splice(i, 1);
+                return res({ error: null });
+              }
+              return res({ count: rows.filter(match).length, error: null });
+            },
+          };
+          return q;
+        },
+      };
     };
-  };
-  const n = 120; // 3 batches of 50/50/20
-  const chunks = Array.from({ length: n }, (_, i) => ({ text: "t" + i, section_path: [], section_confidence: 1, chunk_index: i }));
-  const embeddings = chunks.map(() => [0.1]);
-  const run = (db) => insertGuideChunks({ supabase: db, guideUrl: "http://x.test/g", chunks, embeddings, model: "m" });
+    const n = 120; // 25-row batches: offsets 100, 75, 50, 25, 0
+    const chunks = Array.from({ length: n }, (_, i) => ({ text: "t" + i, section_path: [], section_confidence: 1, chunk_index: i }));
+    const embeddings = chunks.map(() => [0.1]);
+    const run = (db) => insertGuideChunks({ supabase: db, guideUrl: URL_, chunks, embeddings, model: "m" });
 
-  const ok = makeDb();
-  await run(ok);
-  assert.equal(ok.log[0], "delete", "must clear leftovers before the first insert");
-  assert.deepEqual(ok.log.slice(1), ["insert:100-119", "insert:50-99", "insert:0-49"], "batches must go in reverse so chunk 0 is last");
+    // reverse order, chunk 0 last, no deletes on the happy path
+    const ok = makeDb();
+    await run(ok);
+    assert.deepEqual(ok.log, ["insert:100-119", "insert:75-99", "insert:50-74", "insert:25-49", "insert:0-24"], "batches must go in reverse so chunk 0 is last");
+    assert.equal(await guideIndexedIn(ok, URL_), true, "complete guide is indexed");
 
-  for (const k of [1, 2]) {
-    const db = makeDb(k);
-    await Promise.race([run(db), new Promise((r) => setTimeout(r, 20))]);
-    const url = "http://x.test/g";
-    assert.ok(db.rows.some((r) => r.guide_url === url), "partial rows must still be present after the kill");
-    assert.equal(await guideIndexedIn(db, url), false, `killed after ${k} batch(es) must not count as indexed`);
-  }
-  assert.equal(await guideIndexedIn(ok, "http://x.test/g"), true, "complete guide is indexed");
+    // hard kill after k batches: partial rows stay, and the guide must NOT look indexed
+    for (const k of [1, 4]) {
+      const db = makeDb({ hangAfter: k });
+      await Promise.race([run(db), new Promise((r) => setTimeout(r, 20))]);
+      assert.ok(db.rows.some((r) => r.guide_url === URL_), "partial rows must remain after the kill");
+      assert.equal(await guideIndexedIn(db, URL_), false, `killed after ${k} batch(es) must not count as indexed`);
+    }
+
+    // M2: unique violation = another run owns the write, so NEVER delete
+    const dup = makeDb({ failAt: 2, failCode: "23505" });
+    await run(dup);
+    assert.ok(!dup.log.some((l) => l.startsWith("delete")), "23505 must not delete anything");
+
+    // M2: other errors delete only THIS run's own range, never the whole guide
+    const other = makeDb({ failAt: 2, seed: [{ guide_url: URL_, chunk_index: 3 }] });
+    const res = await run(other);
+    assert.equal(res.indexed, false);
+    assert.deepEqual(other.log.filter((l) => l.startsWith("delete")), ["delete:>=75"], "must delete only the range this run wrote");
+    assert.ok(other.rows.some((r) => r.chunk_index === 3), "another run's rows must survive");
+
+    // H1: leftover cleanup is verified; a delete that removes 0 rows reports failure (caller skips the spend)
+    const left = [{ guide_url: URL_, chunk_index: 5 }];
+    assert.equal(await clearGuideLeftovers(makeDb({ seed: left }), URL_), true, "working delete clears leftovers");
+    assert.equal(await clearGuideLeftovers(makeDb({ seed: left, deleteWorks: false }), URL_), false, "RLS-style 0-row delete must be reported, not trusted");
+    assert.equal(await clearGuideLeftovers(null, URL_), true, "no service key: fail open");
+    assert.equal(await clearGuideLeftovers(makeDb(), URL_), true, "nothing to clean");
+
+    // M2: concurrent ingests of one URL share a single run
+    let runs = 0;
+    const slow = () => new Promise((r) => setTimeout(() => r(++runs), 10));
+    const [r1, r2] = await Promise.all([singleFlight("k", slow), singleFlight("k", slow)]);
+    assert.equal(runs, 1, "single-flight must share one run per URL");
+    assert.equal(r1, r2);
+    await singleFlight("k", slow);
+    assert.equal(runs, 2, "a finished run must not be cached");
   }
 }
 
