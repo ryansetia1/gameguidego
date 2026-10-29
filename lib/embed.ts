@@ -158,7 +158,24 @@ async function runEmbedBatch(
   };
 }
 
+/** Sumopod embed; trips the circuit breaker on credit/auth failure so every path (forced or not) skips it afterwards. */
 async function embedViaSumopod(
+  cleaned: string[],
+  opts: EmbedOptions,
+  signal?: AbortSignal,
+): Promise<{ vectors: number[][]; inputTokens: number | null }> {
+  if (Date.now() < sumopodSkipUntil) throw new Error("Sumopod circuit open");
+  try {
+    return await embedViaSumopodBatches(cleaned, opts, signal);
+  } catch (error) {
+    if (!isAbort(error, signal) && isCreditOrAuthError(error)) {
+      sumopodSkipUntil = Date.now() + BREAKER_COOLDOWN_MS;
+    }
+    throw error;
+  }
+}
+
+async function embedViaSumopodBatches(
   cleaned: string[],
   opts: EmbedOptions,
   signal?: AbortSignal,
@@ -326,7 +343,6 @@ export async function embedTexts(
     } catch (error) {
       if (isAbort(error, signal)) throw error;
       sumopodError = error;
-      if (isCreditOrAuthError(error)) sumopodSkipUntil = Date.now() + BREAKER_COOLDOWN_MS;
     }
   }
 

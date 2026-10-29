@@ -9,7 +9,7 @@
 alter table public.guide_chunks
   add column if not exists embed_model text not null default 'sumopod';
 
-alter table public.player_journal_chunks
+alter table if exists public.player_journal_chunks
   add column if not exists embed_model text not null default 'sumopod';
 
 -- New RPC instead of a new param on match_guide_chunks_hybrid: adding a param

@@ -3003,4 +3003,51 @@ assert.equal(
   "No new chat messages since the last update.",
 );
 
+// M1: forced-model (legacy Sumopod guide) query embed must trip the breaker on a 401,
+// then fail fast with no network call.
+{
+  const saved = { fetch: globalThis.fetch, key: process.env.SUMOPOD_API_KEY, rep: process.env.REPLICATE_API_TOKEN };
+  process.env.SUMOPOD_API_KEY = "test-key";
+  delete process.env.REPLICATE_API_TOKEN;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response(JSON.stringify({ error: { message: "unauthorized" } }), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    // lib/embed.ts uses the "@/" alias; map it for plain node.
+    const { registerHooks } = await import("node:module");
+    const root = new URL("../", import.meta.url);
+    registerHooks({
+      resolve(spec, ctx, next) {
+        if (!spec.startsWith("@/")) return next(spec, ctx);
+        const base = new URL(spec.slice(2), root).href;
+        for (const ext of [".ts", ".tsx", ".js"]) {
+          try {
+            return next(base + ext, ctx);
+          } catch {}
+        }
+        return next(base, ctx);
+      },
+    });
+    const embed = await import("../lib/embed.ts");
+    assert.equal(embed.isEmbedModelAvailable("sumopod"), true);
+    assert.equal(await embed.embedQuery("breaker check query one", undefined, undefined, "sumopod"), null);
+    assert.ok(calls >= 1, "first forced query should hit Sumopod");
+    assert.equal(embed.isEmbedModelAvailable("sumopod"), false, "401 on forced path must trip the breaker");
+    const before = calls;
+    assert.equal(await embed.embedQuery("breaker check query two", undefined, undefined, "sumopod"), null);
+    assert.equal(calls, before, "open breaker must skip Sumopod without a network call");
+  } finally {
+    globalThis.fetch = saved.fetch;
+    for (const [k, v] of [["SUMOPOD_API_KEY", saved.key], ["REPLICATE_API_TOKEN", saved.rep]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
 console.log("Self-check passed.");
