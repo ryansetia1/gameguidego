@@ -1,7 +1,7 @@
 # Embedding fallback via Replicate
 
-**Status: Planned (not started).** Decision recorded 2026-10-28; model chosen and
-research findings added 2026-10-29. Implement later.
+**Status: Phase 1 SHIPPED (issue #5, PR #7). Phase 2 (lazy re-embed) still planned.**
+Decision recorded 2026-10-28; model chosen and research findings added 2026-10-29.
 
 ## Problem
 
@@ -108,7 +108,27 @@ web search, while Sumopod is down. Lazy re-embed of stored chunk text to Qwen is
   `scripts/test-hybrid-retrieval.mjs` and the RAG eval set
   (`docs/plan/rag-eval-set.jsonl`) before shipping.
 
-## Open items before implementing
+## Shipped (Phase 1)
+
+Ingest crash-safe (Phase 1): embeds finish before any DB write; batches of 25 rows insert in
+reverse order so chunk 0 lands last, and "indexed" means chunk 0 exists, so a killed run is
+re-ingested instead of staying half-indexed. Leftover rows of an unindexed guide are deleted
+with the service-role client (`SUPABASE_SERVICE_ROLE_KEY`, server-only) and verified by recount
+before any extract/embed spend; read errors, a missing key or rows that will not delete skip
+the spend (`embedFailed`, "Indexing paused"). A flagged (stale/insufficient) index is replaced
+only after the new embeds exist (replace-on-success) and keeps serving if the replace cannot
+run. Concurrent ingests of one URL share a run per instance (`singleFlight`).
+
+## Known limits
+
+- L26: a Replicate outage re-extracts a new guide every turn (no negative cache). A 5-minute
+  negative cache is the upgrade path; low value because Gemini shares Replicate.
+- L21 (pre-existing, separate follow-up issue): `app/api/guide-upload/route.ts` user DELETE uses
+  the anon client (removes 0 rows under RLS) and takes `userId` from the body unauthenticated.
+  Fix: verify the bearer token, then delete with the service client.
+- Cross-instance concurrent ingest can still duplicate work (lease table is the upgrade path).
+
+## Open items
 
 - Model decided: Qwen3-Embedding-8B pinned above (BGE builds are English-only or
   cold, nomic is 768-dim). Remaining: run the eval gate on the wrapper.

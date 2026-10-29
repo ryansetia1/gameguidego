@@ -270,7 +270,11 @@ do not sync to the cloud or use Storage uploads.
   guide URLs. GameFAQs links normalize to the canonical FAQ root, then one
   `?print=1` Tavily extract → chunk → embed (`guide_bundle` always `null`).
   Accepts `game`/`platform`/`userId` for embed audit logs. Skips re-ingest when
-  chunks already exist for the canonical URL.
+  chunk 0 exists for the canonical URL: `isGuideIndexed`/`guideIndexedIn` require
+  `chunk_index` 0 and batches of 25 rows insert in REVERSE order, so chunk 0 lands last and a
+  killed run never looks indexed. Unindexed leftovers are cleared with the service-role client
+  (verified by recount) before any extract/embed spend. Concurrent ingests of one `guide_url`
+  share a single in-instance run (`singleFlight`).
 - `app/api/guide-ingest/status/route.ts`: lightweight read-only endpoint checking
   the indexing status (indexed: true/false) of any preferred guide URL without triggering ingest.
 - `lib/gamefaqs-bundle.js`: GameFAQs FAQ URL parse/canonicalize helpers and
@@ -283,11 +287,14 @@ do not sync to the cloud or use Storage uploads.
   return the model tag, stored per chunk in `guide_chunks.embed_model` and
   `player_journal_chunks.embed_model` (`sumopod` = legacy; `replicate:qwen3-embedding-8b@42d9684`).
   A guide is indexed by ONE model and queried with that same model, never cross-model. An in-memory
-  5-minute circuit breaker skips Sumopod after a 401/402/403/429 (per-instance, resets on cold
-  start). If a guide's model is unavailable, retrieval is lexical-only via `match_guide_chunks_model`
+  5-minute circuit breaker skips Sumopod after a 401/402/403/429, and a separate 60s breaker
+  covers network errors, timeouts (`APIConnectionError`) and 5xx (both per-instance, reset on cold
+  start; a Sumopod success clears the short one). Qwen is a pinned Replicate version; only queries
+  get the Qwen `Instruct:` prefix, documents do not. The Qwen ingest call gets `min(280s,
+  300s - elapsed - 45s)` (route `maxDuration` 300s), and the embed is skipped when under 30s is left. If a guide's model is unavailable, retrieval is lexical-only via `match_guide_chunks_model`
   (`p_embedding` null), then web search. Both providers down on ingest => `embedFailed`, an
   "Indexing paused" toast and the guide-row retry. Traces carry `model` and `embed_fallback`.
-  Apply `db/embed-model-tag.sql`. Plan: `docs/plan/embedding-fallback-replicate.md`. Shared `public.guide_chunks` + `match_guide_chunks_hybrid`
+  Apply `db/embed-model-tag.sql` (adds `embed_model` and the `match_guide_chunks_model` RPC). Plan: `docs/plan/embedding-fallback-replicate.md`. Shared `public.guide_chunks` + `match_guide_chunks_hybrid`
   RPC (pgvector, 1024-dim). **Hybrid retrieval:** `lib/guide-lexical.js` pulls
   proper-noun phrases out of the English rewrite (capitalisation + sentence position
   only, no per-game vocabulary), builds a sanitized `to_tsquery` adjacency clause, and
@@ -551,6 +558,8 @@ rows from `guide_chunks` and `guide_bundle_cache`.
 - `guide_chunks` (`db/guide-chunks.sql`; `guide_bundle` column unused, always null)
 - `match_guide_chunks_hybrid` + the stored `guide_chunks.chunk_tsv` column and its GIN
   index (`db/guide-chunks-hybrid.sql`; additive, vector + lexical)
+- `embed_model` column on `guide_chunks` / `player_journal_chunks` + `match_guide_chunks_model`
+  RPC (`db/embed-model-tag.sql`; journal rows are tagged too)
 - `embed_cache`, `search_cache`, `llm_calls` (incl. `embed_index`, `embed_query`)
 
 Debug retrieval with `RAG_DEBUG=1` → logs `[rag-calibrate] hit=… top=… scores=[…]
@@ -576,8 +585,11 @@ top_chunk=…` per query.
 - Embedding fallback ceilings: the circuit breaker is per serverless instance (resets on cold
   start). Replicate Qwen cold starts run 96 to 274s, so ingest waits up to 280s and the per-turn query
   path times out at 20s (guide then goes lexical-only). Replicate credit also pays for Gemini, so if
-  Replicate is the exhausted one the fallback adds no resilience. Old Sumopod-indexed guides are not
-  re-embedded (Phase 2).
+  Replicate is the exhausted one the fallback adds no resilience. Legacy Sumopod-indexed guides stay
+  lexical-only (then web search) while Sumopod is down until the Phase 2 lazy re-embed, which is
+  not built. A Replicate outage re-extracts a new guide every turn (no negative cache; a 5-minute
+  one is the upgrade path, low value because Gemini shares Replicate). Guide inserts use 25-row
+  batches (`GUIDE_CHUNK_INSERT_BATCH`) because larger ones hit the statement timeout.
 - Chat history is sent as plain text inside the prompt and trimmed by turn count,
   not token count.
 - Searches are cached in `public.search_cache` (7-day TTL) keyed by rewritten
@@ -600,9 +612,9 @@ top_chunk=…` per query.
   threshold, not a learned router. Cosine barely separates paragraphs inside one
   walkthrough (a real guide's 20 nearest chunks spanned 0.650–0.752), which is why
   exact-name lexical search carries the ranking now. Chunking is recursive boundary-split in
-  `lib/chunk-guide.js`, not semantic. Ingest has no single-flight lease (unique
-  index guards dup rows; concurrent first-time ingests of the same URL can
-  duplicate upstream embed work). Query-embed cache is best-effort (`embed_cache`).
+  `lib/chunk-guide.js`, not semantic. Ingest is single-flight per `guide_url` within one server
+  instance (`singleFlight`; unique index guards dup rows); concurrent first-time ingests
+  across instances can still duplicate upstream embed work (a lease table is the upgrade path). Query-embed cache is best-effort (`embed_cache`).
   Given page only; hub/multi-page guides rely on the user pasting the real page
   (surfaced via optional `guideHint` toast; ingest failures toast from
   `POST /api/guide-ingest` before solve, with solve as fallback).
@@ -765,7 +777,11 @@ Server-only secrets (never expose via `NEXT_PUBLIC_`, never commit `.env.local`)
 - `SUPABASE_SERVICE_ROLE_KEY` (optional, server-only; NEVER expose via
   `NEXT_PUBLIC_`). Enables **Sign in with Steam** by minting a Supabase account for
   the Steam identity (`/api/steam/session`). Without it the bridge 501s and Steam
-  stays a link-only action on a Google/email account.
+  stays a link-only action on a Google/email account. Also used server-side
+  (`getServiceClient`, `lib/supabase-server.js`) to delete `guide_chunks` rows, which have no
+  anon DELETE policy: leftover cleanup of killed ingests and stale/insufficient index replace.
+  Without it that cleanup is skipped: partial guides stay blocked (no spend) and flagged guides
+  keep their old index. Safe to deploy without it.
 
 Public client vars (safe to expose; protected by RLS), optional — enable
 accounts, saved chats, and the search cache:

@@ -71,6 +71,17 @@ dibandingkan: query di-embed dengan model yang meng-index guide itu; kalau model
 tersedia, retrieval lexical-only lalu web search. Migrasi: `db/embed-model-tag.sql`
 (aditif + idempoten). Cold start Replicate 96 s/d 274 s: ingest menunggu sampai 280 s, query 20 s.
 
+### Ingest crash-safe
+
+embeds finish before any DB write; batches of 25 rows insert in
+reverse order so chunk 0 lands last, and "indexed" means chunk 0 exists, so a killed run is
+re-ingested instead of staying half-indexed. Leftover rows of an unindexed guide are deleted
+with the service-role client (`SUPABASE_SERVICE_ROLE_KEY`, server-only) and verified by recount
+before any extract/embed spend; read errors, a missing key or rows that will not delete skip
+the spend (`embedFailed`, "Indexing paused"). A flagged (stale/insufficient) index is replaced
+only after the new embeds exist (replace-on-success) and keeps serving if the replace cannot
+run. Concurrent ingests of one URL share a run per instance (`singleFlight`).
+
 ## Model Sebelumnya (Nonaktif)
 
 ### Qwen3-Embedding-8B (Replicate)

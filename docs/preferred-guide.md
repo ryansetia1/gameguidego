@@ -445,9 +445,9 @@ refreshed. New caches from the fixed path are complete.
 
 - `GUIDE_HIT` similarity threshold is hand-tuned, one constant.
 - Chunking is recursive boundary-split, not semantic.
-- Ingest has no single-flight lease (unique index guards dup rows; concurrent
-  first-time ingests of the same URL can duplicate upstream embed work). Upgrade:
-  a `claim_guide_lease` like the HLTB pattern.
+- Ingest is single-flight per `guide_url` within one server instance (`singleFlight`;
+  unique index guards dup rows). Concurrent first-time ingests across instances can
+  still duplicate upstream embed work. Upgrade: a `claim_guide_lease` like the HLTB pattern.
 - Query-embed cache is best-effort (same permissive pattern as `search_cache`).
   No cache = duplicate Qwen3 calls on retries; not a correctness issue.
 - Retrieval is top-K cosine; an answer spread across many sections can still be
