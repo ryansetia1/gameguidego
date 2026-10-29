@@ -73,7 +73,7 @@ tersedia, retrieval lexical-only lalu web search. Migrasi: `db/embed-model-tag.s
 
 ### Ingest crash-safe
 
-embeds finish before any DB write; batches of 25 rows insert in
+Embeds finish before any DB write; batches of 25 rows insert in
 reverse order so chunk 0 lands last, and "indexed" means chunk 0 exists, so a killed run is
 re-ingested instead of staying half-indexed. Leftover rows of an unindexed guide are deleted
 with the service-role client (`SUPABASE_SERVICE_ROLE_KEY`, server-only) and verified by recount

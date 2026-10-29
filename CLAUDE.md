@@ -528,8 +528,8 @@ is no multi-page discovery, bundle prefs, or per-section ingest.
 
 1. **Add** (`app/guide-link-field.tsx`): paste any GameFAQs FAQ URL → stored as
    canonical root immediately (no preview checklist).
-2. **Ingest** (`lib/guide-ingest.ts`, `POST /api/guide-ingest`): skip if chunks exist
-   for canonical `guide_url`; else Tavily `extractGuidePage` (tries `?print=1` first;
+2. **Ingest** (`lib/guide-ingest.ts`, `POST /api/guide-ingest`): skip if chunk 0 exists
+   for canonical `guide_url` (partial leftovers are cleared first); else Tavily `extractGuidePage` (tries `?print=1` first;
    on empty/blocked extract, Wayback via `?print=1` for GameFAQs)
    → `chunkGuide` → embed → `guide_chunks` with `guide_bundle = null`.
 3. **Status** (`GET /api/guide-ingest/status`): per-URL `indexed: true/false`.
@@ -933,7 +933,7 @@ Sound human, not like AI. Specifically avoid these tells:
 
 ### Fix 1: GameFAQs print=1 ingest (2026-07-26)
 - Replaced multi-page bundle discovery/ingest with one `?print=1` extract per canonical
-  FAQ URL (`lib/guide-ingest.ts`). Skips Tavily when chunks already exist for that URL.
+  FAQ URL (`lib/guide-ingest.ts`). Skips Tavily when chunk 0 exists for that URL.
 
 ### Fix 3: Full Trace Instrumentation
 - **`lib/embed.ts`**: Added `embed_query_start`, `embed_query_end`, `embed_query_cache_hit`, `embed_texts_start`, `embed_texts_end` trace events. The 96-second black hole (embedding model cold start) is now fully visible.
