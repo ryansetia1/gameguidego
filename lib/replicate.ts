@@ -68,7 +68,7 @@ function withTimeout(ms: number, signal?: AbortSignal): AbortSignal {
 let replicateInstance: Replicate | null = null;
 
 /** Shared Replicate SDK instance (just holds the auth token). */
-function getReplicate(): Replicate | null {
+export function getReplicate(): Replicate | null {
   const token = process.env.REPLICATE_API_TOKEN;
   if (!token) return null;
   if (!replicateInstance) replicateInstance = new Replicate({ auth: token });

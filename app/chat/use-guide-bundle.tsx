@@ -135,6 +135,7 @@ export function useGuideBundle({
             ...prev,
             [url]: guideIndexStateFromIngest(undefined, guideMeta[url]),
           }));
+          setToast("Indexing paused, try again later.");
           return;
         }
         const ingestData = (await response.json()) as {

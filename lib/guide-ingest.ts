@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { chunkGuideWithMeta, formatEmbedPrefix } from "@/lib/chunk-guide.js";
-import { embedTexts } from "@/lib/embed";
+import { embedTexts, isEmbedConfigured, SUMOPOD_MODEL_TAG } from "@/lib/embed";
 import type { EmbedLogMeta } from "@/lib/embed-log";
 import { toVectorString } from "@/lib/embed-cache";
 import { cleanSnippet } from "@/lib/clean.js";
@@ -36,7 +36,7 @@ export function normalizeGuideUrl(raw: string): string {
 }
 
 export function isGuideRagAvailable(): boolean {
-  return Boolean(getServerClient() && process.env.SUMOPOD_API_KEY);
+  return Boolean(getServerClient() && isEmbedConfigured());
 }
 
 export type IngestResult = {
@@ -44,6 +44,8 @@ export type IngestResult = {
   chunkCount: number;
   hubWarning: boolean;
   isBlocked?: boolean;
+  /** Every embedding provider failed; the guide is fine, retry later. */
+  embedFailed?: boolean;
   title?: string;
 };
 
@@ -233,6 +235,8 @@ async function insertGuideChunks(input: {
   guideUrl: string;
   chunks: GuideChunkMeta[];
   embeddings: number[][];
+  /** Model tag that produced `embeddings`; stored per row so queries use the same model. */
+  model: string;
 }): Promise<{ indexed: boolean; chunkCount: number }> {
   const guideUrl = normalizeGuideUrl(input.guideUrl);
   if (!input.chunks.length) return { indexed: false, chunkCount: 0 };
@@ -249,13 +253,21 @@ async function insertGuideChunks(input: {
     section_path: chunk.section_path ?? [],
     section_confidence: chunk.section_confidence ?? null,
     embedding: toVectorString(input.embeddings[chunk_index]),
+    embed_model: input.model,
   }));
 
   const insertStart = Date.now();
   try {
     for (let offset = 0; offset < rows.length; offset += GUIDE_CHUNK_INSERT_BATCH) {
       const batch = rows.slice(offset, offset + GUIDE_CHUNK_INSERT_BATCH);
-      const { error } = await input.supabase.from("guide_chunks").insert(batch);
+      let { error } = await input.supabase.from("guide_chunks").insert(batch);
+      // db/embed-model-tag.sql not applied yet: Sumopod rows are the implicit default,
+      // so store them untagged. Never store a non-Sumopod vector without its tag.
+      if (error && /embed_model/.test(error.message) && input.model === SUMOPOD_MODEL_TAG) {
+        ({ error } = await input.supabase
+          .from("guide_chunks")
+          .insert(batch.map(({ embed_model: _tag, ...row }) => row)));
+      }
       if (error) {
         const { count } = await input.supabase
           .from("guide_chunks")
@@ -317,7 +329,7 @@ async function storeGuideChunks(input: {
   text: string;
   signal?: AbortSignal;
   embedLog?: EmbedLogMeta;
-}): Promise<{ indexed: boolean; chunkCount: number }> {
+}): Promise<{ indexed: boolean; chunkCount: number; embedFailed?: boolean }> {
   const chunks = chunkGuideWithMeta(input.text);
   if (!chunks.length) return { indexed: false, chunkCount: 0 };
 
@@ -330,13 +342,15 @@ async function storeGuideChunks(input: {
 
   const embedInputs = chunks.map((chunk) => `${formatEmbedPrefix(chunk)}${chunk.text}`);
 
+  // One call = one model for the whole guide (Sumopod, else Qwen), never mixed.
   let embeddings: number[][];
+  let model: string;
   try {
-    embeddings = await embedTexts(embedInputs, input.signal, {
+    ({ vectors: embeddings, model } = await embedTexts(embedInputs, input.signal, {
       purpose: "ingest",
       guideUrl: input.guideUrl,
       ...input.embedLog,
-    });
+    }));
   } catch (error) {
     void logTraceEvent(
       "ingest_embed_error",
@@ -345,7 +359,7 @@ async function storeGuideChunks(input: {
       { guideUrl: input.guideUrl, error: true },
     );
     console.error("Guide ingest embed failed:", error);
-    return { indexed: false, chunkCount: 0 };
+    return { indexed: false, chunkCount: 0, embedFailed: true };
   }
 
   return insertGuideChunks({
@@ -353,6 +367,7 @@ async function storeGuideChunks(input: {
     guideUrl: input.guideUrl,
     chunks,
     embeddings,
+    model,
   });
 }
 
@@ -362,7 +377,7 @@ async function ingestGuidePage(
   ctx?: IngestContext,
 ): Promise<IngestResult> {
   const supabase = getServerClient();
-  if (!supabase || !process.env.SUMOPOD_API_KEY) {
+  if (!supabase || !isEmbedConfigured()) {
     return { indexed: false, chunkCount: 0, hubWarning: false };
   }
 
@@ -453,7 +468,7 @@ async function ingestGuidePage(
       Date.now() - startMs,
       { guideUrl, error: "Store failed" },
     );
-    return { indexed: false, chunkCount: 0, hubWarning: false };
+    return { indexed: false, chunkCount: 0, hubWarning: false, ...(stored.embedFailed ? { embedFailed: true } : {}) };
   }
 
   const title = await cacheGuideTitleFromExtract(supabase, guideUrl, extracted.content, signal);
@@ -503,7 +518,7 @@ export async function ingestGuideFromText(input: {
   ctx?: IngestContext;
 }): Promise<IngestResult> {
   const supabase = getServerClient();
-  if (!supabase || !process.env.SUMOPOD_API_KEY) {
+  if (!supabase || !isEmbedConfigured()) {
     return { indexed: false, chunkCount: 0, hubWarning: false };
   }
 
@@ -534,7 +549,7 @@ export async function ingestGuideFromText(input: {
       Date.now() - startMs,
       { guideUrl: input.guideUrl },
     );
-    return { indexed: false, chunkCount: 0, hubWarning: false };
+    return { indexed: false, chunkCount: 0, hubWarning: false, ...(stored.embedFailed ? { embedFailed: true } : {}) };
   }
 
   const title = await cacheGuideTitleFromExtract(supabase, input.guideUrl, input.text);

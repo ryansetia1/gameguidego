@@ -2,13 +2,16 @@ import { getServerClient } from "@/lib/supabase-server";
 
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-// Namespace the cache by embedding model, so swapping EMBED_MODEL can't serve
-// a stale wrong-dimension vector into match_guide_chunks.
-const MODEL_TAG = process.env.EMBED_MODEL || "text-embedding-3-large";
+// Namespace the cache by full model tag (provider + version), so a vector from one
+// model can never be served for another. Sumopod rows also carry the EMBED_MODEL env.
+export function embedCacheTag(model?: string): string {
+  if (model && model !== "sumopod") return model;
+  return `sumopod:${process.env.EMBED_MODEL || "text-embedding-3-large"}`;
+}
 
-export function embedCacheKey(query: string): string {
+export function embedCacheKey(query: string, model?: string): string {
   const normalized = query.replace(/\s+/g, " ").trim().toLowerCase();
-  return normalized ? `${MODEL_TAG}|${normalized}` : "";
+  return normalized ? `${embedCacheTag(model)}|${normalized}` : "";
 }
 
 function toVectorString(embedding: number[]): string {

@@ -279,7 +279,15 @@ do not sync to the cloud or use Storage uploads.
   `lib/embed.ts` + `lib/embed-cache.ts`: preferred-guide RAG. Tavily extract the
   pasted page (`extractGuidePage`), structure-aware chunking (`chunkGuide`),
   text-embedding-3-large on Sumopod (OpenAI-compatible) (`EMBED_MODEL`, default
-  `text-embedding-3-large`), shared `public.guide_chunks` + `match_guide_chunks_hybrid`
+  `text-embedding-3-large`) with a **Replicate Qwen3-Embedding-8B fallback**: `embedTexts`/`embedQuery`
+  return the model tag, stored per chunk in `guide_chunks.embed_model` and
+  `player_journal_chunks.embed_model` (`sumopod` = legacy; `replicate:qwen3-embedding-8b@42d9684`).
+  A guide is indexed by ONE model and queried with that same model, never cross-model. An in-memory
+  5-minute circuit breaker skips Sumopod after a 401/402/403/429 (per-instance, resets on cold
+  start). If a guide's model is unavailable, retrieval is lexical-only via `match_guide_chunks_model`
+  (`p_embedding` null), then web search. Both providers down on ingest => `embedFailed`, an
+  "Indexing paused" toast and the guide-row retry. Traces carry `model` and `embed_fallback`.
+  Apply `db/embed-model-tag.sql`. Plan: `docs/plan/embedding-fallback-replicate.md`. Shared `public.guide_chunks` + `match_guide_chunks_hybrid`
   RPC (pgvector, 1024-dim). **Hybrid retrieval:** `lib/guide-lexical.js` pulls
   proper-noun phrases out of the English rewrite (capitalisation + sentence position
   only, no per-game vocabulary), builds a sanitized `to_tsquery` adjacency clause, and
@@ -565,6 +573,11 @@ top_chunk=…` per query.
   left edge).
 - Model-call input fields are Gemini-specific; switching `REPLICATE_MODEL` to a
   non-Gemini model would silently drop `system_instruction`/`thinking_budget`.
+- Embedding fallback ceilings: the circuit breaker is per serverless instance (resets on cold
+  start). Replicate Qwen cold starts run 96 to 274s, so ingest waits up to 280s and the per-turn query
+  path times out at 20s (guide then goes lexical-only). Replicate credit also pays for Gemini, so if
+  Replicate is the exhausted one the fallback adds no resilience. Old Sumopod-indexed guides are not
+  re-embedded (Phase 2).
 - Chat history is sent as plain text inside the prompt and trimmed by turn count,
   not token count.
 - Searches are cached in `public.search_cache` (7-day TTL) keyed by rewritten
@@ -733,8 +746,11 @@ Server-only secrets (never expose via `NEXT_PUBLIC_`, never commit `.env.local`)
   final chunk order after rerank — revert if rules-after-Cohere hurts quality).
 - `SUMOPOD_API_KEY` (required for preferred-guide RAG).
 - `SUMOPOD_BASE_URL` (optional, default `https://ai.sumopod.com/v1`).
-- `EMBED_MODEL` (optional, default `text-embedding-3-large`; preferred-guide
-  RAG embedder. Swapping dims requires re-ingest).
+- `EMBED_MODEL` (optional, default `text-embedding-3-large`; Sumopod embedder.
+  Swapping dims requires re-ingest). **Fallback:** when Sumopod fails (or is unset)
+  `lib/embed.ts` uses Replicate `lucataco/qwen3-embedding-8b` (pinned version, 1024-dim)
+  with the existing `REPLICATE_API_TOKEN`; no extra env. Apply `db/embed-model-tag.sql`
+  before deploying.
 - `LLM_LOG` (optional; `1` enables the `llm-log.json` model-call log in
   production — it is on automatically in dev). `LLM_LOG_PATH` overrides the path.
 - `LLM_DB_LOG` (optional; `0` disables writes to `public.llm_calls`. On by default

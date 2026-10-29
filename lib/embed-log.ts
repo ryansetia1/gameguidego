@@ -16,6 +16,8 @@ function resolveEmbedModel(): string {
 /** Best-effort embed audit log (file + llm_calls when Supabase is set). */
 export function logEmbedCall(input: {
   kind: "embed_index" | "embed_query";
+  /** Model tag that produced the vectors (defaults to the Sumopod env model). */
+  model?: string;
   textCount: number;
   durationMs: number;
   sampleText?: string;
@@ -27,6 +29,7 @@ export function logEmbedCall(input: {
   const meta = input.meta ?? { purpose: input.kind === "embed_query" ? "rag_query" : "ingest" };
   const prompt = JSON.stringify({
     purpose: meta.purpose,
+    model: input.model ?? null,
     textCount: input.textCount,
     guideUrl: meta.guideUrl ?? null,
     bundleKey: meta.bundleKey ?? null,
@@ -38,7 +41,7 @@ export function logEmbedCall(input: {
 
   logLlmCall({
     kind: input.kind,
-    model: resolveEmbedModel(),
+    model: input.model && input.model !== "sumopod" ? input.model : resolveEmbedModel(),
     system: meta.purpose,
     prompt,
     response: JSON.stringify({

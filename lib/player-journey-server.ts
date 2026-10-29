@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { chunkGuide } from "@/lib/chunk-guide.js";
-import { embedTexts } from "@/lib/embed";
+import { embedTexts, SUMOPOD_MODEL_TAG } from "@/lib/embed";
 import { toVectorString } from "@/lib/embed-cache";
 import { journalUpdateToast } from "@/lib/journal-hints.js";
 import { normGameKey } from "@/lib/player-memory.js";
@@ -149,7 +149,8 @@ export async function indexJournalBody(input: {
     return { chunkCount: 0 };
   }
 
-  const embeddings = await embedTexts(chunks, input.signal, {
+  // One model per journal (rows are rewritten together), tagged so queries match it.
+  const { vectors: embeddings, model } = await embedTexts(chunks, input.signal, {
     game: input.gameKey,
     platform: input.platform,
     userId: input.userId,
@@ -163,12 +164,19 @@ export async function indexJournalBody(input: {
     chunk_index,
     chunk_text,
     embedding: toVectorString(embeddings[chunk_index]),
+    embed_model: model,
   }));
 
   let embedBatches = 0;
   for (let offset = 0; offset < rows.length; offset += CHUNK_INSERT_BATCH) {
     const batch = rows.slice(offset, offset + CHUNK_INSERT_BATCH);
-    const { error } = await input.supabase.from("player_journal_chunks").insert(batch);
+    let { error } = await input.supabase.from("player_journal_chunks").insert(batch);
+    // db/embed-model-tag.sql not applied yet: Sumopod is the implicit default tag.
+    if (error && /embed_model/.test(error.message) && model === SUMOPOD_MODEL_TAG) {
+      ({ error } = await input.supabase
+        .from("player_journal_chunks")
+        .insert(batch.map(({ embed_model: _tag, ...row }) => row)));
+    }
     if (error) throw error;
     embedBatches += 1;
   }

@@ -1030,6 +1030,11 @@ assert.match(
   /different link or source/i,
 );
 assert.equal(guideIngestHint({ available: false, indexed: false }), null);
+assert.match(guideIngestHint({ embedFailed: true }) ?? "", /Indexing paused, try again later/);
+assert.match(
+  guideIngestHintFromResponse({ available: true, results: [{ indexed: false, embedFailed: true }] }) ?? "",
+  /Indexing paused/,
+);
 assert.equal(guideIngestHint({ available: true, indexed: true }), null);
 assert.match(
   guideIngestHint({ available: true, indexedCount: 1, total: 3 }) ?? "",

@@ -59,6 +59,18 @@ const response = await client.embeddings.create({
 
 ---
 
+## Fallback aktif: Qwen3-Embedding-8B (Replicate)
+
+Sejak issue #5, Qwen jadi fallback otomatis saat Sumopod gagal (kredit habis, 401/402/403/429)
+atau tidak dikonfigurasi. Memakai `REPLICATE_API_TOKEN`, versi dipin
+`42d968487820032a1535d81ea20df16f442ea308ec5abae6b5d6cf4675eb3e2f`, `embedding_dim: 1024`,
+`normalize: true`, batch 16. Query memakai `instruction` (`Instruct: ...\nQuery:`), dokumen tidak.
+Tag di DB: `guide_chunks.embed_model` / `player_journal_chunks.embed_model`
+(`sumopod` = lama, `replicate:qwen3-embedding-8b@42d9684`). Vektor beda model tidak pernah
+dibandingkan: query di-embed dengan model yang meng-index guide itu; kalau modelnya sedang tidak
+tersedia, retrieval lexical-only lalu web search. Migrasi: `db/embed-model-tag.sql`
+(aditif + idempoten). Cold start Replicate 96 s/d 274 s: ingest menunggu sampai 280 s, query 20 s.
+
 ## Model Sebelumnya (Nonaktif)
 
 ### Qwen3-Embedding-8B (Replicate)
