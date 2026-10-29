@@ -68,6 +68,20 @@ const BREAKER_COOLDOWN_MS = 5 * 60_000;
 // instead of paying a failing round trip per embed.
 // ponytail: per-instance memory, resets on cold start; move to a shared table if it matters
 let sumopodSkipUntil = 0;
+// Short trip for network errors, timeouts and 5xx: self-expires, and a success clears it.
+// Kept separate so it can never shorten the long credit/auth cooldown above.
+const TRANSIENT_COOLDOWN_MS = 60_000;
+let sumopodTransientUntil = 0;
+
+function sumopodCircuitOpen(): boolean {
+  const now = Date.now();
+  return now < sumopodSkipUntil || now < sumopodTransientUntil;
+}
+
+function isTransientSumopodError(error: unknown): boolean {
+  const status = (error as { status?: number })?.status;
+  return status === undefined || status >= 500;
+}
 
 export type EmbedResult = { vectors: number[][]; model: string };
 export type EmbedOptions = {
@@ -75,6 +89,8 @@ export type EmbedOptions = {
   query?: boolean;
   /** Force exactly this model tag (no fallback). Needed to search an existing guide. */
   model?: string;
+  /** Ingest only: cap the Qwen call below QWEN_INGEST_TIMEOUT_MS so the caller ends before its hard kill. */
+  ingestTimeoutMs?: number;
 };
 
 function resolveEmbedModel(): string {
@@ -106,7 +122,7 @@ export function isEmbedConfigured(): boolean {
 export function isEmbedModelAvailable(model: string): boolean {
   if (model === QWEN_MODEL_TAG) return Boolean(process.env.REPLICATE_API_TOKEN);
   if (model === SUMOPOD_MODEL_TAG) {
-    return Boolean(process.env.SUMOPOD_API_KEY) && Date.now() >= sumopodSkipUntil;
+    return Boolean(process.env.SUMOPOD_API_KEY) && !sumopodCircuitOpen();
   }
   return false;
 }
@@ -164,12 +180,15 @@ async function embedViaSumopod(
   opts: EmbedOptions,
   signal?: AbortSignal,
 ): Promise<{ vectors: number[][]; inputTokens: number | null }> {
-  if (Date.now() < sumopodSkipUntil) throw new Error("Sumopod circuit open");
+  if (sumopodCircuitOpen()) throw new Error("Sumopod circuit open");
   try {
-    return await embedViaSumopodBatches(cleaned, opts, signal);
+    const result = await embedViaSumopodBatches(cleaned, opts, signal);
+    sumopodTransientUntil = 0;
+    return result;
   } catch (error) {
-    if (!isAbort(error, signal) && isCreditOrAuthError(error)) {
-      sumopodSkipUntil = Date.now() + BREAKER_COOLDOWN_MS;
+    if (!isAbort(error, signal)) {
+      if (isCreditOrAuthError(error)) sumopodSkipUntil = Date.now() + BREAKER_COOLDOWN_MS;
+      else if (isTransientSumopodError(error)) sumopodTransientUntil = Date.now() + TRANSIENT_COOLDOWN_MS;
     }
     throw error;
   }
@@ -232,7 +251,9 @@ async function embedViaQwen(
   const replicate = getReplicate();
   if (!replicate) throw new Error("REPLICATE_API_TOKEN is not configured");
 
-  const timeoutMs = opts.query ? QWEN_QUERY_TIMEOUT_MS : QWEN_INGEST_TIMEOUT_MS;
+  const timeoutMs = opts.query
+    ? QWEN_QUERY_TIMEOUT_MS
+    : Math.min(QWEN_INGEST_TIMEOUT_MS, opts.ingestTimeoutMs ?? QWEN_INGEST_TIMEOUT_MS);
   const callSignal = signal
     ? AbortSignal.any([AbortSignal.timeout(timeoutMs), signal])
     : AbortSignal.timeout(timeoutMs);
@@ -334,7 +355,7 @@ export async function embedTexts(
   }
 
   const sumopodConfigured = Boolean(process.env.SUMOPOD_API_KEY);
-  const circuitOpen = Date.now() < sumopodSkipUntil;
+  const circuitOpen = sumopodCircuitOpen();
   let sumopodError: unknown = null;
   if (sumopodConfigured && !circuitOpen) {
     try {
@@ -355,7 +376,7 @@ export async function embedTexts(
     from: SUMOPOD_MODEL_TAG,
     to: QWEN_MODEL_TAG,
     reason: fallbackReason,
-    circuit: Date.now() < sumopodSkipUntil ? "open" : "closed",
+    circuit: sumopodCircuitOpen() ? "open" : "closed",
   });
   if (!process.env.REPLICATE_API_TOKEN) {
     throw sumopodError ?? new Error("No embedding provider is configured");

@@ -3003,50 +3003,137 @@ assert.equal(
   "No new chat messages since the last update.",
 );
 
-// M1: forced-model (legacy Sumopod guide) query embed must trip the breaker on a 401,
-// then fail fast with no network call.
-{
-  const saved = { fetch: globalThis.fetch, key: process.env.SUMOPOD_API_KEY, rep: process.env.REPLICATE_API_TOKEN };
-  process.env.SUMOPOD_API_KEY = "test-key";
-  delete process.env.REPLICATE_API_TOKEN;
-  let calls = 0;
-  globalThis.fetch = async () => {
-    calls++;
-    return new Response(JSON.stringify({ error: { message: "unauthorized" } }), {
-      status: 401,
-      headers: { "content-type": "application/json" },
-    });
-  };
-  try {
-    // lib/embed.ts uses the "@/" alias; map it for plain node.
-    const { registerHooks } = await import("node:module");
-    const root = new URL("../", import.meta.url);
-    registerHooks({
-      resolve(spec, ctx, next) {
-        if (!spec.startsWith("@/")) return next(spec, ctx);
-        const base = new URL(spec.slice(2), root).href;
-        for (const ext of [".ts", ".tsx", ".js"]) {
-          try {
-            return next(base + ext, ctx);
-          } catch {}
-        }
-        return next(base, ctx);
-      },
-    });
-    const embed = await import("../lib/embed.ts");
-    assert.equal(embed.isEmbedModelAvailable("sumopod"), true);
-    assert.equal(await embed.embedQuery("breaker check query one", undefined, undefined, "sumopod"), null);
-    assert.ok(calls >= 1, "first forced query should hit Sumopod");
-    assert.equal(embed.isEmbedModelAvailable("sumopod"), false, "401 on forced path must trip the breaker");
-    const before = calls;
-    assert.equal(await embed.embedQuery("breaker check query two", undefined, undefined, "sumopod"), null);
-    assert.equal(calls, before, "open breaker must skip Sumopod without a network call");
-  } finally {
-    globalThis.fetch = saved.fetch;
-    for (const [k, v] of [["SUMOPOD_API_KEY", saved.key], ["REPLICATE_API_TOKEN", saved.rep]]) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
+// Checks below import .ts modules that use the "@/" alias. That needs Node's native TS
+// stripping plus module.registerHooks (Node 22.10+/23+); skip cleanly on older Node.
+const nodeModule = await import("node:module");
+const canRunTsChecks = typeof nodeModule.registerHooks === "function" && Boolean(process.features.typescript);
+if (!canRunTsChecks) {
+  console.log(`Skipping TS module checks (embed breaker, guide insert): Node ${process.version} lacks native TS or registerHooks.`);
+} else {
+  const root = new URL("../", import.meta.url);
+  nodeModule.registerHooks({
+    resolve(spec, ctx, next) {
+      if (!spec.startsWith("@/")) return next(spec, ctx);
+      const base = new URL(spec.slice(2), root).href;
+      for (const ext of [".ts", ".tsx", ".js"]) {
+        try {
+          return next(base + ext, ctx);
+        } catch {}
+      }
+      return next(base, ctx);
+    },
+  });
+
+  // Sumopod breaker: a 401 on the forced-model query path trips the long (credit) breaker and
+  // later calls make no network call; network/5xx errors trip only a SHORT breaker that expires.
+  {
+    const saved = { fetch: globalThis.fetch, now: Date.now, key: process.env.SUMOPOD_API_KEY, rep: process.env.REPLICATE_API_TOKEN };
+    process.env.SUMOPOD_API_KEY = "test-key";
+    delete process.env.REPLICATE_API_TOKEN;
+    let calls = 0;
+    let mode = "401";
+    globalThis.fetch = async () => {
+      calls++;
+      if (mode === "net") throw new TypeError("fetch failed");
+      const status = mode === "503" ? 503 : 401;
+      return new Response(JSON.stringify({ error: { message: mode === "503" ? "upstream down" : "unauthorized" } }), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    let skew = 0;
+    Date.now = () => saved.now() + skew;
+    const q = (embed, n) => embed.embedQuery(`breaker check query ${n}`, undefined, undefined, "sumopod");
+    try {
+      const embed = await import("../lib/embed.ts");
+      assert.equal(embed.isEmbedModelAvailable("sumopod"), true);
+
+      // credit/auth: long breaker
+      assert.equal(await q(embed, 1), null);
+      assert.ok(calls >= 1, "first forced query should hit Sumopod");
+      assert.equal(embed.isEmbedModelAvailable("sumopod"), false, "401 on forced path must trip the breaker");
+      const before = calls;
+      assert.equal(await q(embed, 2), null);
+      assert.equal(calls, before, "open breaker must skip Sumopod without a network call");
+      skew = 61_000;
+      assert.equal(embed.isEmbedModelAvailable("sumopod"), false, "credit cooldown must outlast the short transient TTL");
+      skew = 5 * 60_000 + 1000;
+      assert.equal(embed.isEmbedModelAvailable("sumopod"), true, "credit breaker must expire");
+
+      // network error + 5xx: short breaker that expires
+      for (const m of ["net", "503"]) {
+        mode = m;
+        const c0 = calls;
+        assert.equal(await q(embed, `${m}-a`), null);
+        assert.ok(calls > c0, "closed breaker must try Sumopod");
+        assert.equal(embed.isEmbedModelAvailable("sumopod"), false, `${m} must trip the short breaker`);
+        const c1 = calls;
+        assert.equal(await q(embed, `${m}-b`), null);
+        assert.equal(calls, c1, "short breaker must skip Sumopod without a network call");
+        skew += 61_000;
+        assert.equal(embed.isEmbedModelAvailable("sumopod"), true, `${m} short breaker must expire after ~60s`);
+      }
+    } finally {
+      globalThis.fetch = saved.fetch;
+      Date.now = saved.now;
+      for (const [k, v] of [["SUMOPOD_API_KEY", saved.key], ["REPLICATE_API_TOKEN", saved.rep]]) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
     }
+  }
+
+  // Guide insert: reverse batch order + chunk 0 last, delete-before-insert, and a run
+  // "killed" after k batches must NOT look indexed (so it re-ingests instead of staying half-indexed).
+  {
+  const { insertGuideChunks, guideIndexedIn } = await import("../lib/guide-ingest.ts");
+  const makeDb = (killAfterBatches = Infinity) => {
+    const rows = [{ guide_url: "x", chunk_index: 99 }]; // leftover of an earlier killed run
+    const log = [];
+    let batches = 0;
+    return {
+      rows,
+      log,
+      from: () => {
+        const filters = [];
+        const q = {
+          insert: async (batch) => {
+            if (batches >= killAfterBatches) return new Promise(() => {}); // hard kill: never resolves, no cleanup runs
+            batches++;
+            log.push(`insert:${batch[0].chunk_index}-${batch[batch.length - 1].chunk_index}`);
+            rows.push(...batch);
+            return { error: null };
+          },
+          delete: () => {
+            log.push("delete");
+            return { eq: async (_c, v) => { for (let i = rows.length - 1; i >= 0; i--) if (rows[i].guide_url === v) rows.splice(i, 1); return {}; } };
+          },
+          select: () => q,
+          eq: (c, v) => { filters.push([c, v]); return q; },
+          then: (res) => res({ count: rows.filter((r) => filters.every(([c, v]) => r[c] === v)).length, error: null }),
+        };
+        return q;
+      },
+    };
+  };
+  const n = 120; // 3 batches of 50/50/20
+  const chunks = Array.from({ length: n }, (_, i) => ({ text: "t" + i, section_path: [], section_confidence: 1, chunk_index: i }));
+  const embeddings = chunks.map(() => [0.1]);
+  const run = (db) => insertGuideChunks({ supabase: db, guideUrl: "http://x.test/g", chunks, embeddings, model: "m" });
+
+  const ok = makeDb();
+  await run(ok);
+  assert.equal(ok.log[0], "delete", "must clear leftovers before the first insert");
+  assert.deepEqual(ok.log.slice(1), ["insert:100-119", "insert:50-99", "insert:0-49"], "batches must go in reverse so chunk 0 is last");
+
+  for (const k of [1, 2]) {
+    const db = makeDb(k);
+    await Promise.race([run(db), new Promise((r) => setTimeout(r, 20))]);
+    const url = "http://x.test/g";
+    assert.ok(db.rows.some((r) => r.guide_url === url), "partial rows must still be present after the kill");
+    assert.equal(await guideIndexedIn(db, url), false, `killed after ${k} batch(es) must not count as indexed`);
+  }
+  assert.equal(await guideIndexedIn(ok, "http://x.test/g"), true, "complete guide is indexed");
   }
 }
 
