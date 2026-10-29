@@ -131,9 +131,16 @@ export async function POST(request: Request) {
       replace: true,
     });
 
+    if (result.busy) {
+      return NextResponse.json(
+        { error: "Another upload of that file is still running. Try again when it finishes." },
+        { status: 409 },
+      );
+    }
+
     if (!result.indexed) {
       const msg = result.lostOld
-        ? "Couldn't index the new file and the old copy was replaced. Upload it again."
+        ? "Couldn't index the new file, and the old copy is gone. Upload it again."
         : "Could not index that guide. Try again in a moment.";
       await logTraceEvent("upload_error", `Guide ingest failed: ${guideUrl}`, undefined, {
         guideUrl,

@@ -61,6 +61,8 @@ export type IngestResult = {
   /** Every embedding provider failed; the guide is fine, retry later. */
   embedFailed?: boolean;
   title?: string;
+  /** Upload: a different file under the same key is still being indexed; nothing was done. */
+  busy?: boolean;
   /** Upload replace: the old index was purged but the new insert failed, so no index remains. */
   lostOld?: boolean;
 };
@@ -711,6 +713,8 @@ export async function ensureGuideIngested(
  * Ingest a guide from pre-extracted text (e.g. uploaded PDF/TXT/MD).
  * Skips Tavily extract — text is already available. Idempotent per guideUrl.
  */
+const inflightUploads = new Map<string, string>();
+
 export function ingestGuideFromText(input: {
   guideUrl: string;
   text: string;
@@ -719,9 +723,18 @@ export function ingestGuideFromText(input: {
   /** Re-upload: swap an existing index only after the new embeds are ready. */
   replace?: boolean;
 }): Promise<IngestResult> {
-  // Keyed by content too: a second, different file under the same name must not get the first one's result.
-  const flightKey = `${input.guideUrl}:${createHash("sha1").update(input.text).digest("hex")}`;
-  return singleFlight(flightKey, () => runIngestGuideFromText({ ...input, signal: undefined }));
+  // One writer per guide_url: the same file shares the flight, a different file is refused so
+  // two uploads never interleave batches or mix embed models in one index.
+  // ponytail: per instance only; cross-instance needs a lease table.
+  const hash = createHash("sha1").update(input.text).digest("hex");
+  const running = inflightUploads.get(input.guideUrl);
+  if (running !== undefined && running !== hash) {
+    return Promise.resolve({ indexed: false, chunkCount: 0, hubWarning: false, busy: true });
+  }
+  inflightUploads.set(input.guideUrl, hash);
+  return singleFlight(input.guideUrl, () => runIngestGuideFromText({ ...input, signal: undefined })).finally(() => {
+    if (inflightUploads.get(input.guideUrl) === hash) inflightUploads.delete(input.guideUrl);
+  });
 }
 
 async function runIngestGuideFromText(input: {

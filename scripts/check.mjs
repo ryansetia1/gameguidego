@@ -3266,7 +3266,33 @@ if (!canRunTsChecks) {
       const rows = [{ game: "Zelda", platform: "Switch" }, { game: "Metroid", platform: "Switch" }];
       assert.equal(countOtherRoomRefs(rows, "Zelda", "Switch"), 1, "only the other room counts");
       assert.equal(countOtherRoomRefs([rows[0]], "zelda", " switch "), 0, "same room (normalized) is not a conflict");
-      const fake = (data, err) => ({ from: () => { const q = { select: () => q, contains: () => Promise.resolve({ data, error: err }), eq: () => Promise.resolve({ data: [], error: null }) }; return q; } });
+      // the production encoding: quoted array element, so , { } " \\ in a key cannot split it
+      const { pgArrayElem } = await import("../lib/upload-auth.js");
+      assert.equal(pgArrayElem("upload://u/Zelda,%20BotW.pdf"), '"upload://u/Zelda,%20BotW.pdf"');
+      assert.equal(pgArrayElem('upload://u/a\\b"c{d}.pdf'), '"upload://u/a\\\\b\\"c{d}.pdf"');
+      let sent = [];
+      const rec = { from: () => { const q = { select: () => q, filter: (c, op, v) => (sent.push([c, op, v]), Promise.resolve({ data: [{ game: "Other", platform: "PC" }], error: null })), eq: () => Promise.resolve({ data: [], error: null }) }; return q; } };
+      assert.equal(await otherRoomReferences(rec, "upload://u/Zelda,%20BotW.pdf", "Zelda", "Switch"), 1);
+      assert.deepEqual(sent, [["preferred_guide_urls", "cs", '{"upload://u/Zelda,%20BotW.pdf"}']], "comma key must reach PostgREST quoted");
+      // same through the real postgrest-js client: the wire value must keep the key as ONE quoted element
+      {
+        const { createClient } = await import("@supabase/supabase-js");
+        const urls = [];
+        const real = createClient("http://x.test", "k", { global: { fetch: async (u) => (urls.push(String(u)), new Response("[]", { headers: { "content-type": "application/json" } })) } });
+        await otherRoomReferences(real, 'upload://u/Zelda,%20B"o\\tW.pdf', "G", "P");
+        const cs = new URL(urls.find((u) => u.includes("preferred_guide_urls"))).searchParams.get("preferred_guide_urls");
+        assert.equal(cs, 'cs.{"upload://u/Zelda,%20B\\"o\\\\tW.pdf"}', "wire filter quotes and escapes the key");
+      }
+      // M-B: a different file under a running upload key is refused without any work
+      {
+        const { ingestGuideFromText } = await import("../lib/guide-ingest.ts");
+        const first = ingestGuideFromText({ guideUrl: "upload://u/busy.pdf", text: "file A" });
+        const second = await ingestGuideFromText({ guideUrl: "upload://u/busy.pdf", text: "file B" });
+        assert.equal(second.busy, true, "different content under a running key is busy");
+        await first;
+        assert.notEqual((await ingestGuideFromText({ guideUrl: "upload://u/busy.pdf", text: "file B" })).busy, true, "key is free after the flight ends");
+      }
+      const fake = (data, err) => ({ from: () => { const q = { select: () => q, filter: () => Promise.resolve({ data, error: err }), eq: () => Promise.resolve({ data: [], error: null }) }; return q; } });
       assert.equal(await otherRoomReferences(fake(rows, null), "upload://u/a", "Zelda", "Switch"), 1);
       assert.equal(await otherRoomReferences(fake([rows[0]], null), "upload://u/a", "Zelda", "Switch"), 0);
       assert.equal(await otherRoomReferences(fake(null, { message: "x" }), "upload://u/a", "Zelda", "Switch"), null, "read error = unknown, never purge");
@@ -3301,11 +3327,14 @@ if (!canRunTsChecks) {
       assert.ok(/!error\.status \|\| error\.status >= 500/.test(route), "auth outage is 503, not 401");
       assert.ok(/if \(refs > 0\) return NextResponse\.json\(\{ success: true, kept: true/.test(del), "DELETE keeps a file another game uses");
       assert.ok(/if \(refs > 0\) \{\s*return NextResponse\.json\([\s\S]*?status: 409/.test(route), "POST 409s on another game's file");
+      assert.ok(route.includes("the old copy is gone"), "lostOld copy says the old copy is gone");
       assert.ok(/result\.lostOld/.test(route), "route tells the user to re-upload after a lost replace");
       const ing = (await import("node:fs")).readFileSync(new URL("../lib/guide-ingest.ts", import.meta.url), "utf8");
       const runUp = ing.slice(ing.indexOf("async function runIngestGuideFromText"));
       assert.ok(runUp.indexOf("getServiceClient()") < runUp.indexOf("storeGuideChunks("), "upload replace is gated on the service key before any spend");
-      assert.ok(/createHash\("sha1"\)\.update\(input\.text\)/.test(ing), "upload single-flight is keyed by content");
+      assert.ok(/singleFlight\(input\.guideUrl, \(\) => runIngestGuideFromText/.test(ing), "upload flight is keyed on guideUrl only");
+      assert.ok(/running !== undefined && running !== hash\) \{\s*return Promise\.resolve\(\{[^}]*busy: true/.test(ing), "a different file under a running key is refused");
+      assert.ok(/result\.busy[\s\S]*?status: 409/.test(route), "route maps busy to 409");
       assert.ok(/input\.replace && !stored\.indexed \? \{ \.\.\.stored, lostOld: true \}/.test(ing), "failed replace insert reports lostOld");
     }
   }

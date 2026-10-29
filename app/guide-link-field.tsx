@@ -168,10 +168,13 @@ export function GuideLinkField({
     [commitAddUrl, value],
   );
 
+  const [removingUrl, setRemovingUrl] = useState("");
+
   const removeUrl = useCallback(
     async (url: string) => {
       // Uploaded files: the server must confirm the delete first, else the row would vanish while the chunks stay.
       if (url.startsWith("upload://") && userId) {
+        setRemovingUrl(url);
         try {
           const res = await fetch("/api/guide-upload", {
             method: "DELETE",
@@ -186,6 +189,8 @@ export function GuideLinkField({
         } catch {
           setAddError("Couldn't remove that file. Check your connection and try again.");
           return;
+        } finally {
+          setRemovingUrl("");
         }
       }
 
@@ -447,7 +452,8 @@ export function GuideLinkField({
                 <button
                   type="button"
                   className="guide-url-remove"
-                  disabled={disabled}
+                  disabled={disabled || removingUrl === url}
+                  aria-busy={removingUrl === url}
                   aria-label={`Remove ${uploaded ? uploadedGuideFilename(url) : displayLabel}`}
                   onClick={() => void confirmRemoveUrl(url)}
                 >

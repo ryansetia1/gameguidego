@@ -319,8 +319,11 @@ do not sync to the cloud or use Storage uploads.
   embeds exist. The key has no game in it, so when another of the user's game rooms still
   lists the key (`lib/upload-auth.js#otherRoomReferences`), POST returns 409 before any
   embed spend and DELETE keeps the rows (`{ kept: true }`). Both 503 without
-  `SUPABASE_SERVICE_ROLE_KEY`. Known ceiling: a failed insert after the replace purge
-  loses the old upload (`lostOld`); the user re-uploads.
+  `SUPABASE_SERVICE_ROLE_KEY`. A different file under a key still being indexed gets 409
+  (`busy`, per instance). Known ceilings: a failed insert after the replace purge loses the
+  old upload (`lostOld`, user re-uploads); the reference check sees saved chats only (unsaved
+  drafts and temporary chats are invisible) and is check-then-act, so two rooms uploading the
+  same key at once can both pass; upgrade is per-room keys (`upload://<uid>/<roomKey>/<file>`).
   Full design: [`docs/preferred-guide.md`](docs/preferred-guide.md).
   Embedding model specs & migration checklist: [`docs/embedding-models.md`](docs/embedding-models.md).
 - `lib/tavily.ts`: `searchGuides(query)` orchestrates Tavily tiered search then a
