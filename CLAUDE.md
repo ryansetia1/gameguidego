@@ -614,8 +614,8 @@ top_chunk=…` per query.
   batches (`GUIDE_CHUNK_INSERT_BATCH`) because larger ones hit the statement timeout.
 - Chat history is sent as plain text inside the prompt and trimmed by turn count,
   not token count.
-- Searches are cached in `public.search_cache` (7-day TTL) keyed by rewritten
-  query + preferred URL, so repeat/popular queries skip Tavily. A preliminary
+- Searches are cached in `public.search_cache` (7-day TTL) keyed by the web
+  query (`buildWebSearchQuery`) + `::web` / `::web-skip`, so repeat/popular queries skip Tavily. A preliminary
   cache (`rewrite::hash`) prevents running the `resolveQuestion` rewrite call
   on exact input cache hits. Empty web results are never cached (one miss used
   to lock a query for 7 days); skip-guide mode uses its own `::web-skip` key.

@@ -1532,6 +1532,11 @@ assert.equal(
   for (const name of ["Ragnarok", "Adel", "3"]) assert.ok(keywords.includes(name), q);
   assert.ok(!/\b(how|the|in)\b/i.test(keywords.join(" ")), q);
 }
+// Only the whole game phrase is an echo; a shared word inside a name stays.
+assert.equal(
+  buildWebSearchQuery("Mega Man 2", "NES", "Mega Man 2 NES Quick Man stage"),
+  "Mega Man 2 NES Quick Man stage walkthrough guide",
+);
 // Hyphenated / possessive titles dedupe against the prefix too.
 assert.equal(
   buildWebSearchQuery("Spider-Man", "PS4", "Spider-Man backpack Harlem"),
