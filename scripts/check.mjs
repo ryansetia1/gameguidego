@@ -1537,6 +1537,14 @@ assert.equal(
   buildWebSearchQuery("Mega Man 2", "NES", "Mega Man 2 NES Quick Man stage"),
   "Mega Man 2 NES Quick Man stage walkthrough guide",
 );
+assert.equal(
+  buildWebSearchQuery("Mega Man 2", "NES", "Quick Man versus Metal Man order"),
+  "Mega Man 2 NES Quick Man versus Metal Man order walkthrough guide",
+);
+assert.equal(
+  buildWebSearchQuery("Mega Man 2", "NES", "Mega Man Quick Man weakness"),
+  "Mega Man 2 NES Mega Man Quick Man weakness walkthrough guide",
+);
 // Hyphenated / possessive titles dedupe against the prefix too.
 assert.equal(
   buildWebSearchQuery("Spider-Man", "PS4", "Spider-Man backpack Harlem"),
