@@ -16,7 +16,7 @@ import {
   filterGuideDiscoveryResults,
   guideDiscoveryMatchesGame,
 } from "@/lib/guide-search.js";
-import { selectSources } from "@/lib/rank";
+import { confidenceGate, selectSources } from "@/lib/rank";
 import { logTraceEvent } from "@/lib/trace";
 
 const TAVILY_URL = "https://api.tavily.com/search";
@@ -666,16 +666,26 @@ async function searchTavily(
   apiKey: string,
   query: string,
   signal?: AbortSignal,
+  confidenceMin?: number,
 ): Promise<SearchResult[]> {
-  return selectSources(await tieredSearch(apiKey, query, signal));
+  return selectSources(await tieredSearch(apiKey, query, signal), { confidenceMin });
 }
 
-/** Collect tiered Tavily results without the answer-time confidence gate. */
+/**
+ * Collect tiered Tavily results without the answer-time confidence gate. Stops
+ * early once there are MIN_RESULTS hits and one clears the default gate.
+ * Always the default gate, so "Search web instead" (lower gate) searches at
+ * least as far as default mode and never returns less. Counting hits alone
+ * (ignoring score) stopped at the GameFAQs tier with nothing the gate would
+ * keep, so stronger later tiers never ran (Deliver Us The Moon: GameFAQs 0.28,
+ * open web 0.55).
+ */
 async function tieredSearch(
   apiKey: string,
   query: string,
   signal?: AbortSignal,
 ): Promise<SearchResult[]> {
+  const stopScore = confidenceGate();
   const seen = new Set<string>();
   const collected: SearchResult[] = [];
   let attempts = 0;
@@ -709,7 +719,8 @@ async function tieredSearch(
       collected.push(result);
     }
 
-    if (collected.length >= MIN_RESULTS) break;
+    // Mirrors selectSources: one hit over the gate is enough to keep sources.
+    if (collected.length >= MIN_RESULTS && collected.some((r) => r.score >= stopScore)) break;
   }
 
   // Every Tavily call failed (quota/outage) — signal the caller to try a fallback
@@ -944,6 +955,8 @@ export async function searchSerperImages(
 export async function searchGuides(
   query: string,
   signal?: AbortSignal,
+  // Lower only for explicit "Search web instead"; default keeps the 0.5 gate.
+  confidenceMin?: number,
 ): Promise<SearchResult[]> {
   const tavilyKey = process.env.TAVILY_API_KEY;
   const serperKey = process.env.SERPER_API_KEY;
@@ -953,7 +966,7 @@ export async function searchGuides(
 
   if (tavilyKey) {
     try {
-      return await searchTavily(tavilyKey, query, signal);
+      return await searchTavily(tavilyKey, query, signal, confidenceMin);
     } catch (error) {
       if (!serperKey) throw error;
       console.error(
