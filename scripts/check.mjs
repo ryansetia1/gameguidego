@@ -15,7 +15,7 @@ import {
   trimImageResolvedSubject,
 } from "../lib/prompt.js";
 import { parseGuideTitleFromExtract } from "../lib/guide-title.js";
-import { selectSources } from "../lib/rank.js";
+import { WEB_SKIP_CONFIDENCE_MIN, confidenceGate, selectSources } from "../lib/rank.js";
 import { parseBlocks, parseInline } from "../lib/markdown.js";
 import {
   chatPayloadWithoutTopicColumns,
@@ -64,6 +64,7 @@ import {
 import { warmUpMicrophone } from "../lib/voice-meter.js";
 import {
   buildGuideDiscoveryQuery,
+  buildWebSearchQuery,
   filterGuideDiscoveryResults,
   guideDiscoveryMatchesGame,
 } from "../lib/guide-search.js";
@@ -1482,6 +1483,58 @@ assert.deepEqual(
 // answers from its own knowledge.
 assert.deepEqual(selectSources([src(0.49), src(0.3)]), []);
 assert.deepEqual(selectSources([]), []);
+// "Search web instead" lowers the gate: live Deliver Us The Moon scores sat at
+// 0.50 or just under, which default mode drops but skip mode must keep.
+assert.deepEqual(selectSources([src(0.48), src(0.45)]), []);
+assert.deepEqual(
+  selectSources([src(0.48), src(0.45), src(0.3)], { confidenceMin: WEB_SKIP_CONFIDENCE_MIN })
+    .map((r) => r.score),
+  [0.48, 0.45],
+);
+// Tiered search early-stops on hits that clear the same gate.
+assert.equal(confidenceGate(), 0.5);
+assert.equal(confidenceGate(WEB_SKIP_CONFIDENCE_MIN), 0.4);
+assert.equal(confidenceGate(0), 0.4);
+// The per-result floor still holds: no confidenceMin can let junk through.
+assert.deepEqual(selectSources([src(0.39)], { confidenceMin: 0 }), []);
+assert.deepEqual(selectSources([src(0.39)], { confidenceMin: WEB_SKIP_CONFIDENCE_MIN }), []);
+
+// Answer-time web query: short, no filler, no repeated game/platform words.
+assert.equal(
+  buildWebSearchQuery(
+    "Deliver Us The Moon",
+    "PC",
+    "Deliver Us The Moon PC Tombaugh second visit destroy wall pushable object location walkthrough guide",
+  ),
+  "Deliver Us The Moon PC Tombaugh second visit destroy wall pushable object location walkthrough guide",
+);
+// The real cached miss: a sentence-shaped rewrite (sentence-initial capitals and
+// request phrasing are not names; the place name must survive the cap).
+{
+  const q = buildWebSearchQuery(
+    "Deliver Us The Moon",
+    "PC",
+    "Deliver Us The Moon PC During the second visit to Tombaugh, I am stuck near an elevator and a single power source. I need to find the object that can be pushed to destroy a wall for the second time in this area. Please provide instructions on where to locate this specific item.",
+  );
+  const keywords = q.replace(/^Deliver Us The Moon PC /, "").replace(/ walkthrough guide$/, "").split(" ");
+  assert.ok(keywords.length <= 8, q);
+  assert.ok(keywords.includes("Tombaugh"), q);
+  assert.ok(!/\b(During|Please|provide|instructions|Moon|PC|I)\b/.test(keywords.join(" ")), q);
+}
+{
+  const q = buildWebSearchQuery(
+    "Final Fantasy VIII",
+    "PlayStation",
+    "how do I get the Ragnarok airship after defeating Adel in the space station on disc 3 while the party is split",
+  );
+  const keywords = q.replace(/^Final Fantasy VIII PlayStation /, "").replace(/ walkthrough guide$/, "").split(" ");
+  assert.ok(keywords.length <= 8, q);
+  for (const name of ["Ragnarok", "Adel", "3"]) assert.ok(keywords.includes(name), q);
+  assert.ok(!/\b(how|the|in)\b/i.test(keywords.join(" ")), q);
+}
+// Non-English topic passes through (language-agnostic), empty topic is safe.
+assert.equal(buildWebSearchQuery("Ōkami", "", "Ōkami Amaterasu lokasi pedang"), "Ōkami Amaterasu lokasi pedang walkthrough guide");
+assert.equal(buildWebSearchQuery("Hades", "PC", ""), "Hades PC walkthrough guide");
 
 // Platform matching: acronyms/shorthands resolve to the right console, an empty
 // query returns every group, and gibberish returns nothing.

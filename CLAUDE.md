@@ -346,7 +346,12 @@ do not sync to the cloud or use Storage uploads.
 - `lib/rank.js`: `selectSources(results)` applies a confidence gate (returns
   `[]` when even the best score is below `CONFIDENCE_MIN`, so the model answers
   from knowledge alone), keeps results within `SCORE_WINDOW` of the top score,
-  and caps at 3. Covered by `npm run check`.
+  and caps at 3. "Search web instead" (`skipPreferredGuide`) passes
+  `confidenceMin: WEB_SKIP_CONFIDENCE_MIN` (0.4, the per-result floor) so marginal
+  sources still show; other modes keep 0.5. `tieredSearch` early-stops only once 3
+  hits clear that gate (`confidenceGate`). The web query is
+  `buildWebSearchQuery` (`lib/guide-search.js`): game + platform + at most 8
+  keywords from the rewrite + "walkthrough guide". Covered by `npm run check`.
 - `lib/clean.js`: `cleanSnippet(text)` strips markdown link soup, bare URLs,
   GameFAQs CTAs, and Q&A vote/user lines. `focusSection(text, query, cap)` trims
   a long extracted page to the `cap`-sized window with the most query-term hits,
@@ -611,7 +616,8 @@ top_chunk=…` per query.
 - Searches are cached in `public.search_cache` (7-day TTL) keyed by rewritten
   query + preferred URL, so repeat/popular queries skip Tavily. A preliminary
   cache (`rewrite::hash`) prevents running the `resolveQuestion` rewrite call
-  on exact input cache hits.
+  on exact input cache hits. Empty web results are never cached (one miss used
+  to lock a query for 7 days); skip-guide mode uses its own `::web-skip` key.
   Without Supabase env vars the cache no-ops and every turn re-runs the tiered
   search (up to 4 sequential `advanced` Tavily calls, ~2x credits vs `basic`).
 - `search_cache` has permissive RLS (public select/insert/update via the anon

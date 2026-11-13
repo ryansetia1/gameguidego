@@ -42,6 +42,8 @@ import {
 import { retrieveFromPlayerJournal } from "@/lib/player-journey-rag";
 import { runJournalUpdate } from "@/lib/player-journey-server";
 import { searchGuides, searchSerperImages, type SearchResult } from "@/lib/tavily";
+import { WEB_SKIP_CONFIDENCE_MIN } from "@/lib/rank";
+import { buildWebSearchQuery } from "@/lib/guide-search.js";
 import {
   buildVisualSearchQuery,
   pickLoadableIllustration,
@@ -130,15 +132,23 @@ function parseHistory(value: unknown): Turn[] {
 
 async function tieredWebSearch(
   searchQuery: string,
-  signal?: AbortSignal,
+  { skipGuide = false, signal }: { skipGuide?: boolean; signal?: AbortSignal } = {},
 ): Promise<SearchResult[]> {
-  const cacheKey = `${searchQuery}::web`;
+  // Separate key for "Search web instead": its lower gate keeps marginal sources
+  // that default modes must not be served from cache.
+  const cacheKey = `${searchQuery}::${skipGuide ? "web-skip" : "web"}`;
   const cached = await getCachedSearch(cacheKey);
-  if (Array.isArray(cached)) return cached as SearchResult[];
+  // Empty results are never cached (one miss used to lock a query for 7 days);
+  // still ignore legacy [] rows here.
+  if (Array.isArray(cached) && cached.length > 0) return cached as SearchResult[];
 
   try {
-    const results = await searchGuides(searchQuery, signal);
-    void setCachedSearch(cacheKey, results);
+    const results = await searchGuides(
+      searchQuery,
+      signal,
+      skipGuide ? WEB_SKIP_CONFIDENCE_MIN : undefined,
+    );
+    if (results.length > 0) void setCachedSearch(cacheKey, results);
     return results;
   } catch (searchError) {
     console.error("Search failed, continuing without sources:", searchError);
@@ -353,9 +363,7 @@ export async function POST(request: Request) {
         const hasSearchProvider = Boolean(
           process.env.TAVILY_API_KEY || process.env.SERPER_API_KEY,
         );
-        const searchQuery = [game, platform, searchTopic, "walkthrough guide"]
-          .filter(Boolean)
-          .join(" ");
+        const searchQuery = buildWebSearchQuery(game, platform, searchTopic);
 
         const retrievalStart = Date.now();
         let rag: Awaited<ReturnType<typeof retrieveFromPreferredGuides>> = null;
@@ -367,9 +375,10 @@ export async function POST(request: Request) {
           if (hasSearchProvider) {
             sendEvent("status", { text: "Searching the web..." });
             void logTraceEvent("web_search_start", "Starting tiered web search (guide skipped)");
-            sources = await tieredWebSearch(searchQuery);
+            sources = await tieredWebSearch(searchQuery, { skipGuide: true });
             void logTraceEvent("web_search_complete", "Finished tiered web search", Date.now() - retrievalStart, {
               sourceCount: sources.length,
+              searchQuery,
               skipPreferredGuide: true,
             });
             pipelineType = sources.length > 0 ? "web_skip_guide" : "knowledge_only";
