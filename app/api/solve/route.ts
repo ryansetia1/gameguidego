@@ -132,11 +132,12 @@ function parseHistory(value: unknown): Turn[] {
 
 async function tieredWebSearch(
   searchQuery: string,
-  { skipGuide = false, signal }: { skipGuide?: boolean; signal?: AbortSignal } = {},
+  { webPrimary = true, signal }: { webPrimary?: boolean; signal?: AbortSignal } = {},
 ): Promise<SearchResult[]> {
-  // Separate key for "Search web instead": its lower gate keeps marginal sources
-  // that default modes must not be served from cache.
-  const cacheKey = `${searchQuery}::${skipGuide ? "web-skip" : "web"}`;
+  // Web is the only evidence (no guide, guide miss, or "Search web instead"), so a
+  // marginal source beats none: lower gate, own cache key so a strict "supplement"
+  // turn is never served these weaker rows.
+  const cacheKey = `${searchQuery}::${webPrimary ? "web-primary" : "web"}`;
   const cached = await getCachedSearch(cacheKey);
   // Empty results are never cached (one miss used to lock a query for 7 days);
   // still ignore legacy [] rows here.
@@ -146,7 +147,7 @@ async function tieredWebSearch(
     const results = await searchGuides(
       searchQuery,
       signal,
-      skipGuide ? WEB_SKIP_CONFIDENCE_MIN : undefined,
+      webPrimary ? WEB_SKIP_CONFIDENCE_MIN : undefined,
     );
     if (results.length > 0) void setCachedSearch(cacheKey, results);
     return results;
@@ -375,7 +376,7 @@ export async function POST(request: Request) {
           if (hasSearchProvider) {
             sendEvent("status", { text: "Searching the web..." });
             void logTraceEvent("web_search_start", "Starting tiered web search (guide skipped)");
-            sources = await tieredWebSearch(searchQuery, { skipGuide: true });
+            sources = await tieredWebSearch(searchQuery);
             void logTraceEvent("web_search_complete", "Finished tiered web search", Date.now() - retrievalStart, {
               sourceCount: sources.length,
               searchQuery,
@@ -415,7 +416,7 @@ export async function POST(request: Request) {
           if (rag?.skipWebSearch && alsoSearchWeb && hasSearchProvider) {
             sendEvent("status", { text: "Searching the web..." });
             void logTraceEvent("web_search_start", "Starting tiered web search (guide supplement)");
-            const web = await tieredWebSearch(searchQuery);
+            const web = await tieredWebSearch(searchQuery, { webPrimary: false });
             void logTraceEvent("web_search_complete", "Finished tiered web search", Date.now() - retrievalStart, {
               sourceCount: web.length,
               alsoSearchWeb: true,
