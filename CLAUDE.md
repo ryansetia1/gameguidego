@@ -346,9 +346,10 @@ do not sync to the cloud or use Storage uploads.
 - `lib/rank.js`: `selectSources(results)` applies a confidence gate (returns
   `[]` when even the best score is below `CONFIDENCE_MIN`, so the model answers
   from knowledge alone), keeps results within `SCORE_WINDOW` of the top score,
-  and caps at 3. "Search web instead" (`skipPreferredGuide`) passes
+  and caps at 3. Whenever web is the only evidence (no guide, guide miss, or "Search
+  web instead") `tieredWebSearch` passes
   `confidenceMin: WEB_SKIP_CONFIDENCE_MIN` (0.4, the per-result floor) so marginal
-  sources still show; other modes keep 0.5. `tieredSearch` early-stops once it has 3
+  sources still show; only the "Also search web" supplement keeps 0.5. `tieredSearch` early-stops once it has 3
   hits and at least one clears the default 0.5 gate (`confidenceGate()`), so skip
   mode never searches less than default mode. The web query is
   `buildWebSearchQuery` (`lib/guide-search.js`): game + platform + at most 8
@@ -615,10 +616,10 @@ top_chunk=…` per query.
 - Chat history is sent as plain text inside the prompt and trimmed by turn count,
   not token count.
 - Searches are cached in `public.search_cache` (7-day TTL) keyed by the web
-  query (`buildWebSearchQuery`) + `::web` / `::web-skip`, so repeat/popular queries skip Tavily. A preliminary
+  query (`buildWebSearchQuery`) + `::web-primary` / `::web`, so repeat/popular queries skip Tavily. A preliminary
   cache (`rewrite::hash`) prevents running the `resolveQuestion` rewrite call
   on exact input cache hits. Empty web results are never cached (one miss used
-  to lock a query for 7 days); skip-guide mode uses its own `::web-skip` key.
+  to lock a query for 7 days); the lenient web-primary gate uses its own `::web-primary` key, the strict supplement turn keeps `::web`.
   ponytail: no negative cache, so a query that keeps missing re-runs all 4 tiers
   every turn; a short-TTL empty cache is the upgrade path if Tavily spend shows it.
   Without Supabase env vars the cache no-ops and every turn re-runs the tiered
