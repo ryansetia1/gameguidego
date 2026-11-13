@@ -668,23 +668,24 @@ async function searchTavily(
   signal?: AbortSignal,
   confidenceMin?: number,
 ): Promise<SearchResult[]> {
-  return selectSources(await tieredSearch(apiKey, query, signal, confidenceGate(confidenceMin)), {
-    confidenceMin,
-  });
+  return selectSources(await tieredSearch(apiKey, query, signal), { confidenceMin });
 }
 
 /**
  * Collect tiered Tavily results without the answer-time confidence gate. Stops
- * early once MIN_RESULTS hits clear `stopScore`: counting weak hits stopped at
- * the GameFAQs tier with nothing the gate would keep, so stronger later tiers
- * never ran (Deliver Us The Moon: GameFAQs 0.28, open web 0.55).
+ * early once there are MIN_RESULTS hits and one clears the default gate.
+ * Always the default gate, so "Search web instead" (lower gate) searches at
+ * least as far as default mode and never returns less. Counting hits alone
+ * (ignoring score) stopped at the GameFAQs tier with nothing the gate would
+ * keep, so stronger later tiers never ran (Deliver Us The Moon: GameFAQs 0.28,
+ * open web 0.55).
  */
 async function tieredSearch(
   apiKey: string,
   query: string,
   signal?: AbortSignal,
-  stopScore = 0,
 ): Promise<SearchResult[]> {
+  const stopScore = confidenceGate();
   const seen = new Set<string>();
   const collected: SearchResult[] = [];
   let attempts = 0;
@@ -718,7 +719,8 @@ async function tieredSearch(
       collected.push(result);
     }
 
-    if (collected.filter((r) => r.score >= stopScore).length >= MIN_RESULTS) break;
+    // Mirrors selectSources: one hit over the gate is enough to keep sources.
+    if (collected.length >= MIN_RESULTS && collected.some((r) => r.score >= stopScore)) break;
   }
 
   // Every Tavily call failed (quota/outage) — signal the caller to try a fallback

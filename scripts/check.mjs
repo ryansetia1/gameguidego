@@ -1532,6 +1532,15 @@ assert.equal(
   for (const name of ["Ragnarok", "Adel", "3"]) assert.ok(keywords.includes(name), q);
   assert.ok(!/\b(how|the|in)\b/i.test(keywords.join(" ")), q);
 }
+// Hyphenated / possessive titles dedupe against the prefix too.
+assert.equal(
+  buildWebSearchQuery("Spider-Man", "PS4", "Spider-Man backpack Harlem"),
+  "Spider-Man PS4 backpack Harlem walkthrough guide",
+);
+assert.equal(
+  buildWebSearchQuery("Assassin's Creed", "PC", "Assassin's Creed eagle vision"),
+  "Assassin's Creed PC eagle vision walkthrough guide",
+);
 // Non-English topic passes through (language-agnostic), empty topic is safe.
 assert.equal(buildWebSearchQuery("Ōkami", "", "Ōkami Amaterasu lokasi pedang"), "Ōkami Amaterasu lokasi pedang walkthrough guide");
 assert.equal(buildWebSearchQuery("Hades", "PC", ""), "Hades PC walkthrough guide");
