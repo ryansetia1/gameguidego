@@ -15,7 +15,7 @@ type Props = {
 };
 
 /**
- * Themed cover chooser: search TheGamesDB (same `/api/games` as game-name
+ * Themed cover chooser: search IGDB (same `/api/games` as game-name
  * autocomplete) and pick a box-art from a grid, or upload from device. Covers are
  * CDN URLs, so picking one costs no Storage; `resolveCoverUrl` passes them through.
  */

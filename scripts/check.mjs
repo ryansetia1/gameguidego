@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 
 import { cleanSnippet, focusSection } from "../lib/clean.js";
-import { mapGames, formatReleaseHint, prepareAutocompleteGames } from "../lib/games.js";
+import {
+  IGDB_GAME_TYPES,
+  IGDB_ID_OFFSET,
+  mapIgdbGames,
+  formatReleaseHint,
+  prepareAutocompleteGames,
+} from "../lib/games.js";
 import { coerceHighlights, coerceSpoilers, parseSummary } from "../lib/highlights.js";
 import { demoJsonRepair } from "../lib/json-repair.js";
 import { PLATFORMS, matchPlatforms, tgdbPlatformToLabel } from "../lib/platforms.js";
@@ -1362,45 +1368,41 @@ assert.equal(isReplicateRateLimit(new Error("network down")), false);
 assert.equal(parsePositiveInt("12", 3, 8), 8);
 assert.equal(parsePositiveInt("0", 3, 8), 3);
 
-// TheGamesDB payload mapping: keep valid entries, derive year from release_date,
-// build a front-boxart URL from the include block, and drop malformed/empty ones.
-const games = mapGames({
-  data: {
-    games: [
-      { id: 1, game_title: "Final Fantasy VII", release_date: "1997-01-31", platform: 10 },
-      { id: 2, game_title: "   " }, // dropped: empty title
-      { id: 3, game_title: "Chrono Trigger" }, // no date -> empty year
-      { bad: true }, // dropped: no id/title
-    ],
+// IGDB payload mapping: one row per platform, offset ids, year/date from the unix
+// timestamp, cover from image_id; malformed/empty entries are dropped.
+const games = mapIgdbGames([
+  {
+    id: 20326,
+    name: "Deliver Us the Moon",
+    first_release_date: 1570665600,
+    cover: { image_id: "co20yy" },
+    platforms: [{ name: "PC (Microsoft Windows)" }, { name: "PlayStation 4" }],
   },
-  include: {
-    boxart: {
-      base_url: { medium: "https://cdn.thegamesdb.net/images/medium/" },
-      data: {
-        1: [
-          { side: "back", filename: "boxart/back/1.jpg" },
-          { side: "front", filename: "boxart/front/1.jpg" },
-        ],
-      },
-    },
-    platform: { 10: { id: 10, name: "Sony Playstation" } },
-  },
-});
-assert.equal(games.length, 2);
+  { id: 2, name: "   " }, // dropped: empty title
+  { id: 3, name: "Chrono Trigger" }, // no date/cover/platforms -> one bare row
+  { bad: true }, // dropped: no id/name
+]);
+assert.equal(games.length, 3);
 assert.deepEqual(games[0], {
-  id: 1,
-  name: "Final Fantasy VII",
-  year: "1997",
-  releaseDate: "1997-01-31",
-  cover: "https://cdn.thegamesdb.net/images/medium/boxart/front/1.jpg",
-  platform: "Sony Playstation",
+  id: IGDB_ID_OFFSET + 20326,
+  name: "Deliver Us the Moon",
+  year: "2019",
+  releaseDate: "2019-10-10",
+  cover: "https://images.igdb.com/igdb/image/upload/t_cover_big/co20yy.jpg",
+  platform: "PC (Microsoft Windows)",
 });
-assert.equal(games[1].year, "");
-assert.equal(games[1].releaseDate, "");
-assert.equal(games[1].cover, ""); // no boxart -> empty
-assert.equal(games[1].platform, ""); // no platform id -> empty
-assert.deepEqual(mapGames("not-an-array"), []);
-assert.deepEqual(mapGames({ data: {} }), []);
+assert.equal(games[1].platform, "PlayStation 4");
+assert.equal(games[1].id, games[0].id, "platform rows share the game id");
+assert.equal(games[2].year, "");
+assert.equal(games[2].cover, "");
+assert.equal(games[2].platform, "");
+assert.ok(IGDB_ID_OFFSET + 1 < 2 ** 31, "offset ids fit the int4 catalog_game_id column");
+assert.deepEqual(IGDB_GAME_TYPES, [0, 4, 8, 9, 10, 11]);
+assert.deepEqual(mapIgdbGames("not-an-array"), []);
+assert.deepEqual(mapIgdbGames({ data: {} }), []);
+// Per-platform rows of one game survive dedupe and keep their order.
+const fanned = prepareAutocompleteGames(games.slice(0, 2));
+assert.deepEqual(fanned.map((g) => g.platform), ["PC (Microsoft Windows)", "PlayStation 4"]);
 
 // Autocomplete dedupe: identical TGDB rows under one console collapse to one;
 // real regional/date variants stay with a release-date hint.
@@ -1435,6 +1437,13 @@ assert.equal(tgdbPlatformToLabel("Sony Playstation 2"), "PlayStation 2");
 assert.equal(tgdbPlatformToLabel("Nintendo Game Boy Advance"), "Game Boy Advance");
 assert.equal(tgdbPlatformToLabel("Microsoft Xbox 360"), "Xbox 360");
 assert.equal(tgdbPlatformToLabel("Some Unknown Console"), "");
+// IGDB names.
+assert.equal(tgdbPlatformToLabel("PC (Microsoft Windows)"), "PC");
+assert.equal(tgdbPlatformToLabel("Xbox Series X|S"), "Xbox Series X|S");
+assert.equal(tgdbPlatformToLabel("Super Nintendo Entertainment System"), "SNES");
+assert.equal(tgdbPlatformToLabel("Sega Mega Drive/Genesis"), "Sega Genesis / Mega Drive");
+assert.equal(tgdbPlatformToLabel("PlayStation VR2"), "", "headsets never map to a console");
+assert.equal(tgdbPlatformToLabel("Meta Quest 3"), "");
 
 // Follow-up query rewrite: instruction stays English/standalone, and the
 // prompt carries the conversation so references can be resolved.
