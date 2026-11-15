@@ -5,8 +5,7 @@
 Mobile-first, installable (PWA) Next.js prototype that answers a player's game
 question. The model (Gemini 2.5 Flash on Replicate) answers from its own
 knowledge; tiered web search provides supporting evidence. Supports
-TheGamesDB-backed game-name autocomplete (with box art; IGDB is the eventual
-upgrade), a fuzzy/acronym-aware platform selector, multi-turn
+IGDB-backed game-name autocomplete (with box art), a fuzzy/acronym-aware platform selector, multi-turn
 follow-up chat, an optional preferred-guide source, and optional Supabase
 accounts that save per-game chats. The UI is English; the model still answers in
 the player's input language. No login wall: signed-out users keep full access;
@@ -36,7 +35,7 @@ do not sync to the cloud or use Storage uploads.
   structured highlight sections on assistant replies, a game metadata card with
   box art (replaces the input fields once a chat starts; edit reopens the fields),
   cover art (signed-in only, to keep the anon flow simple and Storage-free):
-  TheGamesDB box art plus optional device upload whose Storage write is DEFERRED to
+  IGDB box art plus optional device upload whose Storage write is DEFERRED to
   the first save (so abandoned drafts cost nothing), with a letter-tile placeholder
   fallback; autocomplete also auto-fills the platform selector via
   `tgdbPlatformToLabel`; a sticky mini-header (cover + game/platform; tap to
@@ -129,7 +128,7 @@ do not sync to the cloud or use Storage uploads.
   platform combobox. Delegates filtering to `lib/platforms.js`.
 - `lib/platforms.js`: owns the `PLATFORMS` list and `matchPlatforms(query)`, a
   normalized-substring + acronym/alias matcher (n64, nds, psx, ps1, ps2, gba,
-  xsx, ...), plus `tgdbPlatformToLabel(name)` which maps a TheGamesDB platform
+  xsx, ...), plus `tgdbPlatformToLabel(name)` which maps an IGDB (or legacy TheGamesDB) platform
   name to one of our labels (numbered consoles before the bare family; "" when
   unsure, so autocomplete never auto-fills the wrong platform). `npm run check`.
 - `app/game-autocomplete.tsx`: debounced game-name autocomplete for the game
@@ -137,7 +136,7 @@ do not sync to the cloud or use Storage uploads.
   per row, and groups results by platform label (`groupByPlatform` via
   `tgdbPlatformToLabel`) so a multi-console game lists one row per console under a
   header — headers only when >1 group. `prepareAutocompleteGames` (in
-  `lib/games.js`) collapses identical TGDB rows under the same name · platform ·
+  `lib/games.js`) collapses identical duplicate rows under the same name · platform ·
   year and shows a release-date hint when real variants remain. Allows free text and hides itself when the
   DB is unavailable (`available: false`). `onPick` surfaces the chosen
   `{ name, year, cover, platform }` to the page (manual typing clears the stale
@@ -241,12 +240,16 @@ do not sync to the cloud or use Storage uploads.
   fuzzy). Results are cached in `public.hltb_cache` (`cache_key` = normalized
   title, nullable `data` jsonb, 30d TTL). No login required. Fail-open when
   Supabase is unset (direct upstream search).
-- `app/api/games/route.ts`: TheGamesDB proxy. Runs
-  `Games/ByGameName?include=boxart,platform` with `THEGAMESDB_API_KEY` and returns
-  `{ games, available }` (each game has `cover` + raw `platform` name). Missing key
-  or any failure => `available: false` so the field degrades to free text.
-  `lib/games.js#mapGames` shapes the payload. Provider swap to IGDB later is this
-  file + `mapGames` only.
+- `app/api/games/route.ts`: IGDB proxy. Twitch client-credentials token
+  (`IGDB_CLIENT_ID` + `IGDB_CLIENT_SECRET`, cached per instance, refreshed on 401),
+  then `POST /v4/games` with `search`, filtered to `game_type` Main/Standalone/Remake/
+  Remaster/Expanded/Port (`IGDB_GAME_TYPES`; drops DLC, bundles, mods). Returns
+  `{ games, available }`: one row per platform of each game (`cover` + raw
+  `platform` name). Missing keys or any failure => `available: false` so the field
+  degrades to free text. `lib/games.js#mapIgdbGames` shapes the payload; `id` is the
+  IGDB id + `IGDB_ID_OFFSET` (1e9) so it never collides with old TheGamesDB ids already
+  stored in the int4 `catalog_game_id` columns. Platform rows of one game share an id,
+  so React keys and the dedupe sort use id + platform.
 - `app/api/solve/route.ts`: validates/sanitizes `{ game, platform, question,
   history, preferredUrls, spoilerPrefs, playerName }` at the trust boundary (history capped to 10, content
   truncated, `preferredUrls` capped/deduped via `lib/guide-urls.js`, `spoilerPrefs` coerced to booleans,
@@ -477,9 +480,9 @@ do not sync to the cloud or use Storage uploads.
 - `app/profile-menu.tsx`: signed-in nav avatar dropdown — link to `/profile`,
   global spoiler toggle, theme picker (System/Light/Dark via `lib/theme.js`),
   sign out. Theme/spoiler writes sync to `user_metadata` when signed in.
-- `lib/games.js`: `mapGames(payload)` maps a TheGamesDB `ByGameName?include=boxart`
-  payload to `{ id, name, year, releaseDate, cover, platform }` (year from
-  `release_date`, cover from the front box-art in the `include` block), dropping
+- `lib/games.js`: `mapIgdbGames(payload)` maps an IGDB `/v4/games` payload to
+  `{ id, name, year, releaseDate, cover, platform }` (year from `first_release_date`,
+  cover from `cover.image_id` as `t_cover_big`), one row per platform, dropping
   malformed entries. `prepareAutocompleteGames` dedupes noisy same-console
   duplicates and attaches a release-date hint when rows still differ.
   Covered by `npm run check`.
@@ -713,21 +716,23 @@ top_chunk=…` per query.
   shape unless we redesign ingest around search+`site:` (would miss off-page
   structure and still wouldn't mirror full-book chunking). Evaluate Brave for
   answer-time search before ingest.
-- Game autocomplete + box art use TheGamesDB (single API key, web-friendly, but
-  coverage/quality is patchier than IGDB and it has a monthly quota). IGDB has the
-  best coverage and is the intended upgrade, gated only on Twitch app credentials;
-  the provider swap is `app/api/games/route.ts` + `lib/games.js#mapGames`.
+- Game autocomplete + box art use IGDB (Twitch app credentials, about 4 req/s,
+  free for non-commercial use). Search is accent-sensitive ("Pokemon Platinum" can
+  surface a ROM hack that "Pokémon Platinum" does not; mods are filtered by
+  `game_type`). One game fans out to one row per platform, so the dropdown
+  (`MAX_ROWS` 14) can show only the top couple of games for a broad query. Platforms
+  without a label in `tgdbPlatformToLabel` (e.g. Stadia) show under their raw name.
 - Cover art is signed-in only (anon users get the plain fields, no Storage use).
-  TheGamesDB covers are hotlinked from its CDN (zero Storage). Device uploads are
+  IGDB covers are hotlinked from its CDN (zero Storage). Device uploads are
   held as a local `blob:` preview and written to the public `covers` bucket only at
   save time (`resolveCoverUrl` in the persist path), so abandoned picks never land
   in Storage. Bucket policy: owner-write under `<uid>/`, public read. Storage is
   cleaned to respect the free tier: deleting a chat removes its cover + all its
   message images, clearing a cover deletes its file, and replacing a cover deletes
   the one it replaced (`coverStoragePath` maps a public URL back to a bucket path;
-  TheGamesDB CDN covers are skipped). Message images upload to `<uid>/msg/` at send.
-- Autocomplete platform auto-fill depends on TheGamesDB returning
-  `include=platform` and `tgdbPlatformToLabel` recognising the name; unknown names
+  IGDB/CDN covers are skipped). Message images upload to `<uid>/msg/` at send.
+- Autocomplete platform auto-fill depends on IGDB returning
+  `platforms.name` and `tgdbPlatformToLabel` recognising the name; unknown names
   leave the selector untouched for manual choice.
 - **Steam link + Supabase server auth:** `auth.updateUser()` on a server route
   fails with `Auth session missing!` if the Supabase client only has a bearer
@@ -793,9 +798,9 @@ Server-only secrets (never expose via `NEXT_PUBLIC_`, never commit `.env.local`)
   production — it is on automatically in dev). `LLM_LOG_PATH` overrides the path.
 - `LLM_DB_LOG` (optional; `0` disables writes to `public.llm_calls`. On by default
   when Supabase vars are set — apply `db/llm-calls.sql` first. Insert-only RLS).
-- `THEGAMESDB_API_KEY` (optional; enables game-name autocomplete + box art via
-  TheGamesDB). Missing key => the field degrades to free text. IGDB (Twitch
-  `TWITCH_CLIENT_ID`/`SECRET`) is the intended eventual upgrade but not wired now.
+- `IGDB_CLIENT_ID` + `IGDB_CLIENT_SECRET` (optional; Twitch app credentials, enables
+  game-name autocomplete + box art via IGDB). Missing keys => the field degrades to
+  free text. Replaced `THEGAMESDB_API_KEY`, which is no longer read.
 - `STEAM_API_KEY` (optional; Steam Web API key for owned-games library import after
   OpenID login, plus the persona name/avatar on Sign in with Steam). Missing key =>
   Connect Steam / Steam library stay hidden or no-op. User's Steam profile Game

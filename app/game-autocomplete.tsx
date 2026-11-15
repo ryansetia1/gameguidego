@@ -17,10 +17,10 @@ type Game = {
 };
 
 // Best-effort client cache of autocomplete results (24h) so repeat lookups don't
-// spend TheGamesDB's monthly quota. In-memory Map mirrored to localStorage; any
+// hit IGDB on every keystroke. In-memory Map mirrored to localStorage; any
 // failure just falls through to the network. Only successful (available) results
 // are cached, so a missing/broken key retries once fixed.
-const CACHE_KEY = "gg:games-cache-v2";
+const CACHE_KEY = "gg:games-cache-v3";
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 const CACHE_MAX = 200;
 
@@ -314,7 +314,7 @@ export function GameAutocomplete({
                 header,
                 ...group.items.map(({ game, index }) => (
                   <li
-                    key={game.id}
+                    key={`${game.id}-${game.platform}`}
                     role="option"
                     aria-selected={index + resultOffset === active}
                     className={`combo-option${index + resultOffset === active ? " active" : ""}`}
