@@ -7690,7 +7690,7 @@ details.sources small {
   color: var(--signal-dark);
 }
 
-.save-answer.is-saved .icon {
+.save-answer.is-saved.is-toggled .icon {
   animation: bookmark-pop 160ms var(--ease-pop);
 }
 
@@ -7849,6 +7849,7 @@ details.sources small {
 
 .saved-row-spoiler {
   align-self: flex-start;
+  font-size: 12px;
   padding: 2px 6px;
   background: var(--spoiler-surface);
   color: var(--spoiler-hint);

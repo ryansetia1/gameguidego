@@ -412,7 +412,8 @@ do not sync to the cloud or use Storage uploads.
   highlights, spoilers, own source links) per game (`normGameKey`) into `localStorage`
   `gg:saved-answers` (cap 20/game, 200/device; quota errors toast, never toggle). Signed-in
   users sync to `public.saved_answers` (`db/saved-answers.sql`, RLS own rows) on open, on
-  `online`, and after each change; anon saves are claimed by the next signed-in sync;
+  `online`, and after each change (a missing table, `isMissingTableError`, turns sync off
+  quietly for the session); anon saves are claimed by the next signed-in sync (within caps);
   removes of synced rows are tombstones until the server delete lands. Drawer opens from
   the game card kebab ("Saved answers (N)") or the toast's View action. `public/sw.js`
   falls back to the cached `/` shell for offline navigations so saved answers open offline.
@@ -518,8 +519,9 @@ do not sync to the cloud or use Storage uploads.
   `#00FFAA` + centered logo, `sips` pad) are wired as `apple-touch-startup-image`
   `<link>` tags generated from `APPLE_SPLASH` in `app/layout.tsx` (curated
   portrait device set). Re-run the `sips` commands to regenerate from a new source.
-  `public/sw.js` is a network-first service worker (cache `gg-runtime-v2`, evicts
-  stale caches on activate) registered by `app/sw-register.tsx`. The `viewport`
+  `public/sw.js` is a network-first service worker (cache `gg-runtime-v2`, precaches
+  the `/` shell on install and serves it for offline navigations, evicts stale caches
+  on activate) registered by `app/sw-register.tsx`. The `viewport`
   export in `app/layout.tsx` sets `maximumScale: 1` + `userScalable: false` to
   disable pinch-zoom (honored in the installed PWA; iOS Safari tabs ignore it by
   design).
@@ -605,6 +607,9 @@ rows from `guide_chunks` and `guide_bundle_cache`.
 - `embed_model` column on `guide_chunks` / `player_journal_chunks` + `match_guide_chunks_model`
   RPC (`db/embed-model-tag.sql`; journal rows are tagged too)
 - `embed_cache`, `search_cache`, `llm_calls` (incl. `embed_index`, `embed_query`)
+- `saved_answers` (`db/saved-answers.sql`, also `supabase/migrations/20261123120000_saved_answers.sql`;
+  saved-answer sync, RLS own rows). Optional: when missing (PGRST205 / 42P01) the client
+  goes quiet device-only for the session.
 
 Debug retrieval with `RAG_DEBUG=1` → logs `[rag-calibrate] hit=… top=… scores=[…]
 top_chunk=…` per query.
@@ -886,7 +891,7 @@ large chat or persistence work:
 - [`docs/plan/guide-web-override.md`](docs/plan/guide-web-override.md): **Shipped**
   composer toggles when a preferred guide is attached — **Search web instead**
   (`skipPreferredGuide` / `web_skip_guide`) and **Guide + web search** (was "Also search web")
-  (`alsoSearchWeb` / `rag_supplemented`) and **Knowledge only** (`knowledgeOnly`: no guide, no web); default OFF; `lib/guide-retrieval-mode.js`.
+  (`alsoSearchWeb` / `rag_supplemented`) and **Knowledge only** (`knowledgeOnly`: no guide, no web); default OFF; `lib/guide-retrieval-mode.js`. Mode is remembered per game in `localStorage` (`gg:guide-retrieval-mode-by-game`, keyed by `normGameKey`).
 - [`docs/plan/guide-source-selector.md`](docs/plan/guide-source-selector.md): **Shipped**
   per-turn multi-select RAG source strip on the composer (Auto = all guides vs subset);
   `ragGuideUrls` on `POST /api/solve` + user message for retry/edit.

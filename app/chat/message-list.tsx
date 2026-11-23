@@ -14,6 +14,7 @@ import {
 import { AnswerBody } from "./answer-body";
 import type { Message } from "./types";
 import { WRITING_ANSWER_PLACEHOLDER, messageShowsVariantNav } from "@/lib/chat-messages.js";
+import { isSavableReply } from "@/lib/saved-answers.js";
 import { KIND_LABELS, type Highlight, type SpoilerReveal } from "@/lib/highlights.js";
 import {
   answerModeInfo,
@@ -251,6 +252,8 @@ function AnswerFoot({
   onToggleSave?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Pop only when the player toggles it, not when an already-saved reply mounts.
+  const [justToggled, setJustToggled] = useState(false);
   const sources = enrichMessageSources(message.sources, guideMeta) as Message["sources"];
   const mode = answerModeInfo(message.pipelineType, sources);
   const expandable = Boolean(
@@ -353,10 +356,13 @@ function AnswerFoot({
           {onToggleSave && saved !== undefined && (
             <button
               type="button"
-              className={`turn-action turn-action-icon save-answer${saved ? " is-saved" : ""}`}
+              className={`turn-action turn-action-icon save-answer${saved ? " is-saved" : ""}${justToggled ? " is-toggled" : ""}`}
               aria-label={saved ? "Remove from saved" : "Save answer"}
               aria-pressed={saved}
-              onClick={onToggleSave}
+              onClick={() => {
+                setJustToggled(true);
+                onToggleSave();
+              }}
             >
               <IconBookmark filled={saved} />
             </button>
@@ -625,7 +631,7 @@ export function MessageList({
                 onAddGuide={onAddGuide}
                 onNavigateVariant={onNavigateVariant}
                 saved={
-                  isSaved && !(loading && index === messages.length - 1)
+                  isSaved && isSavableReply(message) && !(loading && index === messages.length - 1)
                     ? isSaved(index)
                     : undefined
                 }

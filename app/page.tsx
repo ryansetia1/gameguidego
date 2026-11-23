@@ -63,7 +63,7 @@ import {
   spoilerMajorFromUserMetadata,
 } from "@/lib/spoiler-prefs.js";
 import { loadVisualAuto } from "@/lib/visual-search-prefs.js";
-import { consumeAnonSaveHint } from "@/lib/saved-answers.js";
+import { consumeAnonSaveHint, isSavableReply } from "@/lib/saved-answers.js";
 import { groupChatsByRoom, isTopicColumnDbError, mergeChatsFromServer, normGameKey, syncRoomSharedMeta, syncSharedMetaToLocalGames, topicsForRoom, gameRoomKey, upsertChatInList } from "@/lib/game-room.js";
 import {
   displayTopicTitle,
@@ -1093,35 +1093,30 @@ export default function Home() {
     }
   }, [spoilerPrefs.major, turnOffSpoilers, updateGameSpoiler]);
 
+  // Per-game mode (issue #16): restore on game change, save only on user toggles
+  // so a transient game/URL hydration can never overwrite a saved choice.
   useEffect(() => {
-    setGuideRetrievalMode(loadGuideRetrievalMode());
-  }, []);
+    setGuideRetrievalMode(loadGuideRetrievalMode(game));
+  }, [game]);
 
-  useEffect(() => {
-    saveGuideRetrievalMode(guideRetrievalMode);
-  }, [guideRetrievalMode]);
-
-  useEffect(() => {
-    if (preferredUrls.length === 0 && guideRetrievalMode !== "default") {
-      setGuideRetrievalMode("default");
-    }
-  }, [preferredUrls.length, guideRetrievalMode]);
+  // No preferred guide => behave as default, but keep the saved mode for when a guide returns.
+  const effectiveGuideRetrievalMode = preferredUrls.length > 0 ? guideRetrievalMode : "default";
 
   useEffect(() => {
     if (preferredUrls.length <= 1) setGuideSourceSelection(null);
   }, [preferredUrls.length]);
 
-  const toggleSkipGuide = useCallback(() => {
-    setGuideRetrievalMode((prev) => toggleGuideRetrievalMode(prev, "skip"));
-  }, []);
-
-  const toggleKnowledgeOnly = useCallback(() => {
-    setGuideRetrievalMode((prev) => toggleGuideRetrievalMode(prev, "knowledge"));
-  }, []);
-
-  const toggleSupplementGuide = useCallback(() => {
-    setGuideRetrievalMode((prev) => toggleGuideRetrievalMode(prev, "supplement"));
-  }, []);
+  const toggleGuideMode = useCallback(
+    (target: "skip" | "supplement" | "knowledge") => {
+      const next = toggleGuideRetrievalMode(guideRetrievalMode, target);
+      setGuideRetrievalMode(next);
+      saveGuideRetrievalMode(game, next);
+    },
+    [game, guideRetrievalMode],
+  );
+  const toggleSkipGuide = useCallback(() => toggleGuideMode("skip"), [toggleGuideMode]);
+  const toggleKnowledgeOnly = useCallback(() => toggleGuideMode("knowledge"), [toggleGuideMode]);
+  const toggleSupplementGuide = useCallback(() => toggleGuideMode("supplement"), [toggleGuideMode]);
 
   useEffect(() => {
     if (editingIndex === null) return;
@@ -1724,14 +1719,15 @@ export default function Home() {
 
   function toggleSavedAnswer(index: number) {
     const message = messages[index];
-    if (!message || message.role !== "assistant") return;
+    if (!message || !isSavableReply(message) || editingGame) return;
     const question =
       messages
         .slice(0, index)
         .reverse()
         .find((row) => row.role === "user")?.content ?? "";
-    // The thread's own game, not a half-edited game field.
-    const savedGame = conversationGame.current || game;
+    // One source for read and write: `game`. Outside edit mode it is the thread's game
+    // (saveGameMeta renames the room); while the field is being edited saving is off.
+    const savedGame = game;
     if (!savedGame.trim()) return;
     const result = savedAnswers.toggle({ game: savedGame, platform, question, message });
     if (result.status === "saved") {
@@ -2213,7 +2209,7 @@ export default function Home() {
     platform,
     catalogGameId,
     preferredUrls,
-    guideRetrievalMode,
+    guideRetrievalMode: effectiveGuideRetrievalMode,
     guideSourceSelection,
     setGuideSourceSelection,
     cover,
@@ -2750,7 +2746,7 @@ export default function Home() {
             setGuideNudgeDismissed(true);
           }}
           isSaved={(index) => savedAnswers.isSaved(game, messages[index]?.content ?? "")}
-          onToggleSave={game.trim() ? toggleSavedAnswer : undefined}
+          onToggleSave={game.trim() && !editingGame ? toggleSavedAnswer : undefined}
         />
       ) : null}
 
@@ -2817,7 +2813,7 @@ export default function Home() {
           onToggleTemporary={() => void toggleTemporary()}
           onToggleSpoiler={toggleEffectiveSpoiler}
           showGuideRetrievalToggles={preferredUrls.length > 0}
-          guideRetrievalMode={guideRetrievalMode}
+          guideRetrievalMode={effectiveGuideRetrievalMode}
           onToggleSkipGuide={toggleSkipGuide}
           onToggleSupplementGuide={toggleSupplementGuide}
           onToggleKnowledgeOnly={toggleKnowledgeOnly}
@@ -2981,6 +2977,7 @@ export default function Home() {
           deviceFull={savedAnswers.deviceFull}
           online={savedAnswers.online}
           syncFailed={savedAnswers.syncFailed}
+          syncAvailable={savedAnswers.syncAvailable}
           readingId={savedReadingId}
           onOpenItem={openSavedItem}
           onBack={dismissOverlay}

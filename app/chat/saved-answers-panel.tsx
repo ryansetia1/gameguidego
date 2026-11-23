@@ -8,7 +8,7 @@ import type { SavedAnswer } from "./use-saved-answers";
 import {
   SAVED_DEVICE_CAP,
   SAVED_PER_GAME_CAP,
-  isSpoilerGated,
+  showsSpoilerHint,
   savedDateLabel,
   savedPreview,
 } from "@/lib/saved-answers.js";
@@ -74,6 +74,7 @@ export function SavedAnswersPanel({
   deviceFull,
   online,
   syncFailed,
+  syncAvailable,
   readingId,
   onOpenItem,
   onBack,
@@ -88,6 +89,8 @@ export function SavedAnswersPanel({
   deviceFull: boolean;
   online: boolean;
   syncFailed: boolean;
+  /** False when the server table is missing: no sync wording, rows read "On this device". */
+  syncAvailable: boolean;
   /** Saved item open in the reading view; null shows the list. */
   readingId: string | null;
   onOpenItem: (id: string) => void;
@@ -220,7 +223,7 @@ export function SavedAnswersPanel({
               </div>
             ) : (
               <>
-                {signedIn && syncFailed && (
+                {signedIn && syncAvailable && syncFailed && (
                   <p className="saved-sync-banner">
                     Couldn&apos;t sync. We&apos;ll retry when you&apos;re back online.
                   </p>
@@ -239,17 +242,14 @@ export function SavedAnswersPanel({
                         <strong className="saved-row-title">
                           {item.question || "Saved answer"}
                         </strong>
-                        {isSpoilerGated(item) ? (
-                          <span className="saved-row-preview saved-row-spoiler">
-                            Spoiler hidden. Open to reveal.
-                          </span>
-                        ) : (
-                          <span className="saved-row-preview">{savedPreview(item.content)}</span>
+                        <span className="saved-row-preview">{savedPreview(item.content)}</span>
+                        {showsSpoilerHint(item, spoilerMajor) && (
+                          <span className="saved-row-spoiler">Spoiler hidden. Open to reveal.</span>
                         )}
                         <span className="saved-row-meta">
                           {savedDateLabel(item.createdAt)}
                           {signedIn && !item.synced ? (
-                            syncFailed ? (
+                            syncAvailable && syncFailed ? (
                               <span className="saved-chip">
                                 <IconClock size={12} /> Not synced
                               </span>
