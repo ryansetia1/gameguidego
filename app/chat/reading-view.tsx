@@ -97,6 +97,8 @@ export function ReadingView({
   // Restore the remembered position silently; a fresh item starts at the top.
   useLayoutEffect(() => {
     const scroller = scrollRef.current;
+    // Removed (e.g. un-bookmarked from the chat): restore again if Undo brings it back.
+    if (!item) restored.current = false;
     if (!scroller || !item || restored.current) return;
     restored.current = true;
     const pos = loadReadingPos(itemId);
@@ -128,11 +130,15 @@ export function ReadingView({
     const scroller = scrollRef.current;
     if (!scroller || !item) return;
     let timer = 0;
-    const save = () =>
+    const save = () => {
+      // When the item disappears, this cleanup runs after the answer's DOM is gone
+      // (scrollTop clamped, no headings); saving then would wipe the real position.
+      if (!scroller.querySelector(".reading-page")) return;
       saveReadingPos(
         itemId,
         positionFromScroll(scroller.scrollTop, headingTops(scroller, sections.length)),
       );
+    };
     const onScroll = () => {
       window.clearTimeout(timer);
       timer = window.setTimeout(save, SAVE_DEBOUNCE_MS);

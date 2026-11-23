@@ -426,13 +426,16 @@ do not sync to the cloud or use Storage uploads.
   saved pane is a second grid column beside the chat (no backdrop, no trap); below it the
   list is a drawer and the reading view is full-screen. **History:** the pane pushes
   tagged entries (`{ gggSaved: "list" }`, then `{ gggSaved: "read", gggSavedId }` per opened
-  item). `onPopState` decides from the tag of the entry it lands on, with no counters:
-  pane open + landed on a saved entry = a layer above the pane was left (close the topmost
-  overlay first, else show the list/item the entry names, so forward works too); pane open
-  + landed below = close the pane; pane closed + landed on a saved entry = leftover, do
-  nothing; anything else is an ordinary back (`closeTopOverlay` then `consumeBackLayer`).
-  Overlays (sidebar, libraries, menu, auth) are always above the pane, which is `inert`
-  while one is open. X/Esc calls `history.go(-1|-2)` and lets popstate close the pane.
+  item), and every app entry carries `gggDepth` (`pushAppHistory`). In split mode the chat
+  stays usable, so chat entries (thread, topics, new-game form) and overlays can sit ABOVE
+  the pane's entries. `onPopState` delegates to `savedPopAction` (`lib/saved-history.js`,
+  covered by `npm run check`): back below the "list" entry closes the pane; back off a
+  "read" entry shows the list; back off anything else above the pane is an ordinary back
+  (`closeTopOverlay` then `consumeBackLayer`); forward reopens a pane entry and never
+  closes the pane; with the pane closed, leftover pane entries are no-ops. The reading
+  Back arrow pops its "read" entry only when it is on top, else goes to the list directly.
+  X/Esc calls `history.go(-1|-2)` and lets popstate close the pane. The pane is `inert`
+  while an overlay is open.
 - `lib/voice.js` + `app/voice-input.tsx`: composer mic via the free Web Speech API
   (**all users**). Buffered-until-stop dictation; platform-split capture (desktop
   `continuous` + rebuild finals, iOS `continuous: false` + `results[0]` + restart).

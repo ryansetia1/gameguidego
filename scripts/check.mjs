@@ -3599,4 +3599,31 @@ if (!canRunTsChecks) {
   assert.equal(rp.scrollFromPosition({ section: 3, offset: 0 }, tops), null, "missing section -> top");
 }
 
+// Saved pane history (#18): back/forward decisions from depth + left/landed entry tags.
+{
+  const { savedPopAction: act } = await import("../lib/saved-history.js");
+  const list = { gggSaved: "list" };
+  const read = (id) => ({ gggSaved: "read", gggSavedId: id });
+  const open = { paneOpen: true, listDepth: 4 };
+  // Chat entry pushed above the pane (split mode): back is the chat's own back.
+  assert.deepEqual(act({ ...open, prevDepth: 5, depth: 4, left: { gggChat: true }, landing: list }), { type: "layer" });
+  assert.deepEqual(act({ ...open, prevDepth: 6, depth: 5, left: { gggTopics: true }, landing: read("a") }), { type: "layer" }, "chat back above a read entry");
+  // Overlay (sidebar) above the pane: ordinary back closes it.
+  assert.deepEqual(act({ ...open, prevDepth: 5, depth: 4, left: { gggOverlay: true }, landing: list }), { type: "layer" });
+  // Back off a read entry → list, even with chat entries between.
+  assert.deepEqual(act({ ...open, prevDepth: 5, depth: 4, left: read("a"), landing: list }), { type: "show", readingId: null });
+  assert.deepEqual(act({ ...open, prevDepth: 6, depth: 5, left: read("b"), landing: { gggChat: true } }), { type: "show", readingId: null });
+  // Back below the list entry (Back from list, or X's go(-2)) closes the pane.
+  assert.deepEqual(act({ ...open, prevDepth: 4, depth: 3, left: list, landing: { gggChat: true } }), { type: "close" });
+  assert.deepEqual(act({ ...open, prevDepth: 5, depth: 3, left: read("a"), landing: { gggChat: true } }), { type: "close" });
+  // Forward: reopen a pane entry; never close the pane or reopen overlays.
+  assert.deepEqual(act({ ...open, prevDepth: 4, depth: 5, left: list, landing: read("a") }), { type: "show", readingId: "a" });
+  assert.deepEqual(act({ ...open, prevDepth: 4, depth: 5, left: list, landing: { gggOverlay: true } }), { type: "none" });
+  // Pane closed: leftover pane entries are inert both ways; the rest is ordinary back.
+  const closed = { paneOpen: false, listDepth: 4 };
+  assert.deepEqual(act({ ...closed, prevDepth: 3, depth: 4, left: { gggChat: true }, landing: list }), { type: "none" });
+  assert.deepEqual(act({ ...closed, prevDepth: 4, depth: 3, left: list, landing: { gggChat: true } }), { type: "none" });
+  assert.deepEqual(act({ ...closed, prevDepth: 3, depth: 2, left: { gggChat: true }, landing: { gggTopics: true } }), { type: "layer" });
+}
+
 console.log("Self-check passed.");

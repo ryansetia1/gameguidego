@@ -64,6 +64,7 @@ import {
 } from "@/lib/spoiler-prefs.js";
 import { loadVisualAuto } from "@/lib/visual-search-prefs.js";
 import { consumeAnonSaveHint, isSavableReply } from "@/lib/saved-answers.js";
+import { savedPopAction } from "@/lib/saved-history.js";
 import { groupChatsByRoom, isTopicColumnDbError, mergeChatsFromServer, normGameKey, syncRoomSharedMeta, syncSharedMetaToLocalGames, topicsForRoom, gameRoomKey, upsertChatInList } from "@/lib/game-room.js";
 import {
   displayTopicTitle,
@@ -157,11 +158,21 @@ let historyDepth =
     ? 0
     : ((window.history.state as { gggDepth?: number } | null)?.gggDepth ?? 0);
 
+// The current entry's state (what a popstate "left") and the depth of the saved pane's
+// "list" entry; both feed savedPopAction (lib/saved-history.js).
+let currentEntry: SavedEntry =
+  typeof window === "undefined" ? null : (window.history.state as SavedEntry);
+let savedListDepth = 0;
+
 function pushAppHistory(state: Record<string, unknown>) {
   const depth = ((window.history.state as { gggDepth?: number } | null)?.gggDepth ?? 0) + 1;
-  window.history.pushState({ ...state, gggDepth: depth }, "");
+  const next = { ...state, gggDepth: depth };
+  window.history.pushState(next, "");
   historyDepth = depth;
+  currentEntry = next as SavedEntry;
 }
+
+type SavedEntry = { gggSaved?: "list" | "read"; gggSavedId?: string } | null;
 
 export default function Home() {
   const [game, setGame] = useState("");
@@ -365,6 +376,7 @@ export default function Home() {
     const next = { ...state };
     delete next.gggOverlay;
     window.history.replaceState(next, "");
+    currentEntry = next as SavedEntry;
   }
 
   /** Strip overlay marker in-place (no popstate); safe before router.push. */
@@ -376,6 +388,7 @@ export default function Home() {
     delete next.gggOverlay;
     if (!next.gggHomeRoot) next.gggHomeRoot = true;
     window.history.replaceState(next, "");
+    currentEntry = next as SavedEntry;
   }
 
   function dismissOverlay() {
@@ -492,41 +505,23 @@ export default function Home() {
   }, [input, editSlotEl, composerExpanded]);
 
   useEffect(() => {
-    /**
-     * Saved-pane entries are judged by the tag of the entry we land on, so forward and
-     * self-caused traversals need no bookkeeping:
-     * - pane open, landed on a saved entry: a layer above the pane was left. Close the
-     *   topmost overlay if one is open; otherwise show what the entry names (list, or
-     *   the item in a "read" entry, which also makes forward work).
-     * - pane open, landed below its entries: the pane's own entry was left. Close it.
-     * - pane closed, landed on a saved entry: a leftover (e.g. via forward). Do nothing.
-     * Direction comes from `gggDepth` (pushAppHistory); forward never closes the pane.
-     * - anything else: an ordinary back press.
-     */
+    /** Pane-aware back/forward; the decision table lives in lib/saved-history.js. */
     function onPopState(event: PopStateEvent) {
-      const state = event.state as {
-        gggSaved?: "list" | "read";
-        gggSavedId?: string;
-        gggDepth?: number;
-      } | null;
+      const state = event.state as (SavedEntry & { gggDepth?: number }) | null;
       const depth = state?.gggDepth ?? 0;
-      const forward = depth > historyDepth;
+      const action = savedPopAction({
+        paneOpen: savedOpenRef.current,
+        depth,
+        prevDepth: historyDepth,
+        listDepth: savedListDepth,
+        left: currentEntry,
+        landing: state,
+      });
       historyDepth = depth;
-      if (savedOpenRef.current) {
-        if (state?.gggSaved) {
-          if (!forward && closeTopOverlay()) return;
-          setSavedReadingId(state.gggSaved === "read" ? (state.gggSavedId ?? null) : null);
-          return;
-        }
-        // Forward into an overlay entry above the pane: overlays don't reopen on
-        // forward, so leave the pane as it is.
-        if (forward) return;
-        closeSavedState();
-        return;
-      }
-      if (state?.gggSaved) return;
-      if (closeTopOverlay()) return;
-      consumeBackLayer();
+      currentEntry = state;
+      if (action.type === "close") closeSavedState();
+      else if (action.type === "show") setSavedReadingId(action.readingId);
+      else if (action.type === "layer" && !closeTopOverlay()) consumeBackLayer();
     }
 
     /** Close the topmost overlay, if any. Returns whether one was closed. */
@@ -1759,11 +1754,25 @@ export default function Home() {
   function openSavedAnswers() {
     setMenuOpenId(null);
     if (savedOpenRef.current) return;
+    // From the toast's View: don't open under the sidebar/libraries (like openSavedLibrary).
+    setSidebarOpen(false);
+    setLibraryOpen(false);
+    setSteamLibraryOpen(false);
     savedOpenRef.current = true;
     setSavedPaneGame(game);
     setSavedReadingId(null);
     setSavedOpen(true);
     pushSavedHistory("list");
+    savedListDepth = historyDepth;
+  }
+
+  /**
+   * Reading view Back arrow: pop our "read" entry when it is on top; if chat entries
+   * were pushed above it (split mode), go to the list directly instead.
+   */
+  function backToSavedList() {
+    if (currentEntry?.gggSaved === "read") window.history.back();
+    else setSavedReadingId(null);
   }
 
   function openSavedItem(id: string) {
@@ -3059,6 +3068,7 @@ export default function Home() {
             sidebarOpen ||
             libraryOpen ||
             steamLibraryOpen ||
+            newGameOpen ||
             authOpen ||
             navMenu !== null ||
             confirmState !== null ||
@@ -3073,7 +3083,7 @@ export default function Home() {
           syncAvailable={savedAnswers.syncAvailable}
           readingId={savedReadingId}
           onOpenItem={openSavedItem}
-          onBack={dismissOverlay}
+          onBack={backToSavedList}
           onClose={closeSavedPane}
           onRemove={removeSavedAnswer}
         />
