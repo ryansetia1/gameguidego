@@ -70,6 +70,7 @@ export function SavedAnswersPanel({
   game,
   items,
   readingItem,
+  inert = false,
   signedIn,
   spoilerMajor,
   deviceFull,
@@ -86,6 +87,8 @@ export function SavedAnswersPanel({
   items: SavedAnswer[];
   /** The open item looked up by id across all games (survives a game change). */
   readingItem: SavedAnswer | undefined;
+  /** An overlay (sidebar, library, menu, dialog) is open above the side panel. */
+  inert?: boolean;
   signedIn: boolean;
   /** Same gate as the chat: major-spoiler reveals render only when spoilers are on. */
   spoilerMajor: boolean;
@@ -173,6 +176,7 @@ export function SavedAnswersPanel({
         aria-modal={split ? undefined : true}
         aria-label={readingId ? "Saved answer" : "Saved answers"}
         onKeyDown={split ? undefined : trapTab}
+        inert={inert}
       >
         {readingId ? (
           <ReadingView

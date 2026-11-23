@@ -112,12 +112,14 @@ export function ReadingView({
     }
   }, [itemId, item, sections.length]);
 
-  // Item gone: forget its position, but only when the device store really lost it
-  // (not a transient empty render).
+  // Item gone: forget its position once the player leaves this view and it is still
+  // gone from the device store (a Remove → Undo in the meantime keeps it).
   useEffect(() => {
     if (item) return;
-    const stillStored = loadSavedItems().some((row) => row.id === itemId && !row.deleted);
-    if (!stillStored) clearReadingPos(itemId);
+    return () => {
+      const stillStored = loadSavedItems().some((row) => row.id === itemId && !row.deleted);
+      if (!stillStored) clearReadingPos(itemId);
+    };
   }, [item, itemId]);
 
   // Save position on scroll (debounced) and once more on close. Layout effect so the

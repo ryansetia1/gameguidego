@@ -147,6 +147,22 @@ async function deleteMessageImages(messages: Message[]) {
 }
 
 
+/**
+ * Every app history entry carries `gggDepth` (one more than the entry it was pushed on),
+ * so popstate can tell back from forward. Module state: the page mounts once.
+ * Starts from history.state so a reload keeps the current entry's depth.
+ */
+let historyDepth =
+  typeof window === "undefined"
+    ? 0
+    : ((window.history.state as { gggDepth?: number } | null)?.gggDepth ?? 0);
+
+function pushAppHistory(state: Record<string, unknown>) {
+  const depth = ((window.history.state as { gggDepth?: number } | null)?.gggDepth ?? 0) + 1;
+  window.history.pushState({ ...state, gggDepth: depth }, "");
+  historyDepth = depth;
+}
+
 export default function Home() {
   const [game, setGame] = useState("");
   const [platform, setPlatform] = useState("");
@@ -256,11 +272,13 @@ export default function Home() {
   const [savedOpen, setSavedOpen] = useState(false);
   // Saved answer open in the reading view (own history entry, so back returns to the list).
   const [savedReadingId, setSavedReadingId] = useState<string | null>(null);
-  // Saved pane history: its entries are tagged { gggSaved: "list" | "read" }. The ref
-  // mirrors "pane open" for the popstate handler; ignorePops swallows popstates we
-  // caused ourselves (close via history.go, stepping over stale saved entries).
+  // Saved pane history: entries are tagged { gggSaved: "list" | "read", gggSavedId }.
+  // The popstate handler decides from the tag of the entry it lands on (see onPopState).
+  // The ref mirrors "pane open" for that handler.
   const savedOpenRef = useRef(false);
-  const ignorePopsRef = useRef(0);
+  // The game whose list the pane shows: the one it was opened for, or the open item's
+  // game, so a game change in the chat (or reading another game's item) keeps its list.
+  const [savedPaneGame, setSavedPaneGame] = useState("");
   const [lastLibrary, setLastLibrary] = useState<"saved" | "steam">("saved");
   const {
     promptState,
@@ -324,13 +342,13 @@ export default function Home() {
   const replacedCoverRef = useRef<string | null>(null);
   function pushOverlayHistory() {
     if (typeof window === "undefined") return;
-    window.history.pushState({ gggOverlay: true }, "");
+    pushAppHistory({ gggOverlay: true });
   }
 
   function pushTopicsHistory() {
     if (typeof window === "undefined") return;
     topicsHistoryPushed.current = true;
-    window.history.pushState({ gggTopics: true }, "");
+    pushAppHistory({ gggTopics: true });
   }
 
   /** Global loading/status only apply to the open thread; clear when leaving it. */
@@ -474,51 +492,76 @@ export default function Home() {
   }, [input, editSlotEl, composerExpanded]);
 
   useEffect(() => {
-    function onPopState() {
-      if (ignorePopsRef.current > 0) {
-        ignorePopsRef.current -= 1;
-        skipStaleSavedEntry();
+    /**
+     * Saved-pane entries are judged by the tag of the entry we land on, so forward and
+     * self-caused traversals need no bookkeeping:
+     * - pane open, landed on a saved entry: a layer above the pane was left. Close the
+     *   topmost overlay if one is open; otherwise show what the entry names (list, or
+     *   the item in a "read" entry, which also makes forward work).
+     * - pane open, landed below its entries: the pane's own entry was left. Close it.
+     * - pane closed, landed on a saved entry: a leftover (e.g. via forward). Do nothing.
+     * Direction comes from `gggDepth` (pushAppHistory); forward never closes the pane.
+     * - anything else: an ordinary back press.
+     */
+    function onPopState(event: PopStateEvent) {
+      const state = event.state as {
+        gggSaved?: "list" | "read";
+        gggSavedId?: string;
+        gggDepth?: number;
+      } | null;
+      const depth = state?.gggDepth ?? 0;
+      const forward = depth > historyDepth;
+      historyDepth = depth;
+      if (savedOpenRef.current) {
+        if (state?.gggSaved) {
+          if (!forward && closeTopOverlay()) return;
+          setSavedReadingId(state.gggSaved === "read" ? (state.gggSavedId ?? null) : null);
+          return;
+        }
+        // Forward into an overlay entry above the pane: overlays don't reopen on
+        // forward, so leave the pane as it is.
+        if (forward) return;
+        closeSavedState();
         return;
       }
+      if (state?.gggSaved) return;
+      if (closeTopOverlay()) return;
       consumeBackLayer();
-      skipStaleSavedEntry();
     }
 
-    /** One back press closes the topmost layer. */
-    function consumeBackLayer() {
+    /** Close the topmost overlay, if any. Returns whether one was closed. */
+    function closeTopOverlay() {
       if (confirmFallbackModal) {
         confirmFallbackModal.onCancel();
-        return;
+        return true;
       }
       if (steamLibraryOpen) {
         setSteamLibraryOpen(false);
-        return;
+        return true;
       }
       if (libraryOpen) {
         setLibraryOpen(false);
-        return;
+        return true;
       }
       if (sidebarOpen) {
         setSidebarOpen(false);
         setMenuOpenId(null);
-        return;
+        return true;
       }
       if (navMenuRef.current) {
         setNavMenu(null);
         navMenuHistoryPushed.current = false;
-        return;
+        return true;
       }
       if (authOpen) {
         setAuthOpen(false);
-        return;
+        return true;
       }
-      // The saved pane sits under the overlays above (at the split breakpoint it is
-      // non-modal, so the sidebar/libraries can open on top of it).
-      if (savedOpenRef.current) {
-        if (savedReadingId) setSavedReadingId(null);
-        else closeSavedState();
-        return;
-      }
+      return false;
+    }
+
+    /** An ordinary back press with no overlay or saved pane open. */
+    function consumeBackLayer() {
       if (newGameOpen) {
         newGameHistoryPushed.current = false;
         setNewGameOpen(false);
@@ -564,7 +607,7 @@ export default function Home() {
 
       homeExitPromptAt.current = Date.now();
       setToast("Press back again to leave");
-      window.history.pushState({ gggHomeRoot: true }, "");
+      pushAppHistory({ gggHomeRoot: true });
     }
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -589,7 +632,7 @@ export default function Home() {
     const inThread = gameView === "thread";
     if (inThread && !chatHistoryPushed.current) {
       chatHistoryPushed.current = true;
-      window.history.pushState({ gggChat: true }, "");
+      pushAppHistory({ gggChat: true });
     } else if (gameView !== "thread") {
       chatHistoryPushed.current = false;
     }
@@ -630,7 +673,7 @@ export default function Home() {
       gggTopics?: boolean;
     } | null;
     if (top?.gggHomeRoot || top?.gggOverlay || top?.gggChat || top?.gggTopics) return;
-    window.history.pushState({ gggHomeRoot: true }, "");
+    pushAppHistory({ gggHomeRoot: true });
   }, [
     gameView,
     messages.length,
@@ -1703,8 +1746,8 @@ export default function Home() {
     return (window.history.state as { gggSaved?: "list" | "read" } | null)?.gggSaved;
   }
 
-  function pushSavedHistory(kind: "list" | "read") {
-    window.history.pushState({ gggOverlay: true, gggSaved: kind }, "");
+  function pushSavedHistory(kind: "list" | "read", id?: string) {
+    pushAppHistory({ gggOverlay: true, gggSaved: kind, gggSavedId: id });
   }
 
   function closeSavedState() {
@@ -1713,17 +1756,11 @@ export default function Home() {
     setSavedReadingId(null);
   }
 
-  /** Landed on a saved-pane entry while the pane is closed: step over it silently. */
-  function skipStaleSavedEntry() {
-    if (savedOpenRef.current || !savedHistoryTag()) return;
-    ignorePopsRef.current += 1;
-    window.history.back();
-  }
-
   function openSavedAnswers() {
     setMenuOpenId(null);
     if (savedOpenRef.current) return;
     savedOpenRef.current = true;
+    setSavedPaneGame(game);
     setSavedReadingId(null);
     setSavedOpen(true);
     pushSavedHistory("list");
@@ -1731,19 +1768,22 @@ export default function Home() {
 
   function openSavedItem(id: string) {
     setSavedReadingId(id);
-    pushSavedHistory("read");
+    pushSavedHistory("read", id);
   }
 
   /**
-   * Close (X / Esc). Pops our own entries only when they are on top (a "read" entry
-   * always sits on its "list" entry). If another overlay is above, just close; the
-   * leftover saved entries are skipped when back reaches them.
+   * Close (X / Esc): step back past our own entries ("read" always sits on its "list"
+   * entry); popstate lands below them and closes the pane. If that traversal never
+   * happens nothing is left half-closed: the pane just stays open. If our entry isn't
+   * on top (the pane is inert under overlays, so this is unlikely), close in place;
+   * the leftover entries are then no-ops when back/forward reaches them.
    */
   function closeSavedPane() {
     const tag = savedHistoryTag();
-    closeSavedState();
-    if (!tag) return;
-    ignorePopsRef.current += 1;
+    if (!tag) {
+      closeSavedState();
+      return;
+    }
     window.history.go(tag === "read" ? -2 : -1);
   }
 
@@ -1949,7 +1989,12 @@ export default function Home() {
   }
 
 
-  onSignedOutRef.current = newGame;
+  onSignedOutRef.current = () => {
+    // The signed-in user's saved answers are hidden once signed out; don't leave the
+    // pane showing "gone". Leftover pane history entries are no-ops.
+    if (savedOpenRef.current) closeSavedState();
+    newGame();
+  };
 
   function toggleRowMenu(id: string, event: MouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
@@ -3008,8 +3053,17 @@ export default function Home() {
     </main>
       {savedOpen && (
         <SavedAnswersPanel
-          game={game}
-          items={savedAnswers.forGame(game)}
+          game={savedPaneGame}
+          items={savedAnswers.forGame(savedPaneGame)}
+          inert={
+            sidebarOpen ||
+            libraryOpen ||
+            steamLibraryOpen ||
+            authOpen ||
+            navMenu !== null ||
+            confirmState !== null ||
+            promptState !== null
+          }
           readingItem={savedReadingId ? savedAnswers.byId(savedReadingId) : undefined}
           signedIn={Boolean(user)}
           spoilerMajor={spoilerPrefs.major}
