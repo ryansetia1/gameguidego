@@ -1,10 +1,10 @@
 import Replicate from "replicate";
 
 import { logLlmCall } from "@/lib/llm-log";
+import { DEFAULT_MODEL } from "@/lib/replicate";
 import { JOURNAL_BODY_MAX } from "@/lib/player-journey.js";
 import { getTraceId, logTraceEvent } from "@/lib/trace";
 
-const DEFAULT_MODEL = "google/gemini-2.5-flash";
 
 type ModelName = `${string}/${string}` | `${string}/${string}:${string}`;
 
@@ -103,7 +103,6 @@ export async function synthesizeJournalBody(
           system_instruction: JOURNAL_SYNTHESIZE_INSTRUCTION,
           temperature: 0.2,
           max_output_tokens: 8192,
-          thinking_budget: 0,
         },
         wait: { mode: "poll", interval: 500 },
       },

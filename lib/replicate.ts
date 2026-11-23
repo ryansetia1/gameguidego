@@ -21,7 +21,8 @@ type SpoilerPrefs = {
   major: boolean;
 };
 
-const DEFAULT_MODEL = "google/gemini-2.5-flash";
+/** Default Replicate model; override with REPLICATE_MODEL. */
+export const DEFAULT_MODEL = "google/gemini-3-flash";
 
 export type Turn = {
   role: "user" | "assistant";
@@ -193,7 +194,6 @@ export async function resolveQuestion(input: {
         ...(images.length ? { images } : {}),
         temperature: 0.2,
         max_output_tokens: maxOutputTokens,
-        thinking_budget: 0,
       },
       15_000,
       input.signal,
@@ -288,7 +288,6 @@ export async function summarize(input: SummarizeInput): Promise<SummaryResult> {
       ...(images.length ? { images } : {}),
       temperature: 0.35,
       max_output_tokens: 4096,
-      thinking_budget: 0,
     },
     50_000,
     input.signal,
@@ -356,7 +355,6 @@ export async function censorSpoilers(input: {
         system_instruction: SPOILER_CENSOR_INSTRUCTION,
         temperature: 0.2,
         max_output_tokens: 4096,
-        thinking_budget: 0,
       },
       30_000,
       input.signal,

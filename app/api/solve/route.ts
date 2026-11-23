@@ -373,11 +373,12 @@ export async function POST(request: Request) {
           sources = retryContext.sources;
           pipelineType = retryContext.pipelineType as SolveJourneyEntry["pipelineType"] || "knowledge_only";
           guideHint = retryContext.guideHint;
+        } else if (knowledgeOnly) {
+          // Player asked for the model's own knowledge: no guide, no web, with or
+          // without a preferred guide attached.
+          pipelineType = "knowledge_only";
         } else if (preferredUrls.length && skipPreferredGuide) {
-          if (knowledgeOnly) {
-            // Player asked for the model's own knowledge: no guide, no web.
-            pipelineType = "knowledge_only";
-          } else if (hasSearchProvider) {
+          if (hasSearchProvider) {
             sendEvent("status", { text: "Searching the web..." });
             void logTraceEvent("web_search_start", "Starting tiered web search (guide skipped)");
             sources = await tieredWebSearch(searchQuery);
@@ -461,7 +462,7 @@ export async function POST(request: Request) {
           void logTraceEvent("web_search_complete", "Finished tiered web search", Date.now() - retrievalStart, { sourceCount: sources.length });
         }
         
-        if (pipelineType === "knowledge_only") {
+        if (pipelineType === "knowledge_only" && !knowledgeOnly) {
           if (!preferredUrls.length) {
             guideHint = WEB_KNOWLEDGE_FALLBACK_HINT;
           } else if (rag && rag.indexedCount > 0) {
