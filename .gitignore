@@ -13,3 +13,6 @@ llm-log.json
 # Personal RAG calibration set (may hold private guide URLs)
 docs/plan/rag-eval-set.jsonl
 .vercel
+
+# Local HTML design mockups (per checkout, never committed)
+mockups/
