@@ -64,7 +64,7 @@ import {
 } from "@/lib/spoiler-prefs.js";
 import { loadVisualAuto } from "@/lib/visual-search-prefs.js";
 import { consumeAnonSaveHint, isSavableReply } from "@/lib/saved-answers.js";
-import { savedPopAction } from "@/lib/saved-history.js";
+import { chatBackPopsHistory, savedPopAction, type SavedEntry } from "@/lib/saved-history.js";
 import { groupChatsByRoom, isTopicColumnDbError, mergeChatsFromServer, normGameKey, syncRoomSharedMeta, syncSharedMetaToLocalGames, topicsForRoom, gameRoomKey, upsertChatInList } from "@/lib/game-room.js";
 import {
   displayTopicTitle,
@@ -172,7 +172,6 @@ function pushAppHistory(state: Record<string, unknown>) {
   currentEntry = next as SavedEntry;
 }
 
-type SavedEntry = { gggSaved?: "list" | "read"; gggSavedId?: string } | null;
 
 export default function Home() {
   const [game, setGame] = useState("");
@@ -511,6 +510,7 @@ export default function Home() {
       const depth = state?.gggDepth ?? 0;
       const action = savedPopAction({
         paneOpen: savedOpenRef.current,
+        readingId: savedReadingId,
         depth,
         prevDepth: historyDepth,
         listDepth: savedListDepth,
@@ -1397,7 +1397,8 @@ export default function Home() {
   function backToTopicList() {
     clearActiveTurnUi();
     setMenuOpenId(null);
-    if (typeof window !== "undefined" && chatHistoryPushed.current) {
+    // Pop only our own chat entry; saved-pane entries above it are left alone.
+    if (typeof window !== "undefined" && chatBackPopsHistory(chatHistoryPushed.current, window.history.state)) {
       window.history.back();
       return;
     }

@@ -429,11 +429,14 @@ do not sync to the cloud or use Storage uploads.
   item), and every app entry carries `gggDepth` (`pushAppHistory`). In split mode the chat
   stays usable, so chat entries (thread, topics, new-game form) and overlays can sit ABOVE
   the pane's entries. `onPopState` delegates to `savedPopAction` (`lib/saved-history.js`,
-  covered by `npm run check`): back below the "list" entry closes the pane; back off a
-  "read" entry shows the list; back off anything else above the pane is an ordinary back
+  covered by `npm run check`): back below the "list" entry closes the pane; back off the
+  "read" entry the pane shows goes to the list; back off anything else above the pane
+  (incl. a stale "read" entry the Back arrow skipped) is an ordinary back
   (`closeTopOverlay` then `consumeBackLayer`); forward reopens a pane entry and never
-  closes the pane; with the pane closed, leftover pane entries are no-ops. The reading
-  Back arrow pops its "read" entry only when it is on top, else goes to the list directly.
+  closes the pane; with the pane closed, stepping off or forward onto a leftover pane entry
+  is a no-op. The reading Back arrow pops its "read" entry only when it is on top, else goes
+  to the list directly. Likewise in-app "Back to game" (`backToTopicList`) pops history only
+  when the chat entry is on top (`chatBackPopsHistory`), else resets to topics in place.
   X/Esc calls `history.go(-1|-2)` and lets popstate close the pane. The pane is `inert`
   while an overlay is open.
 - `lib/voice.js` + `app/voice-input.tsx`: composer mic via the free Web Speech API
