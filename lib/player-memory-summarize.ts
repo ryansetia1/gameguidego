@@ -1,6 +1,7 @@
 import Replicate from "replicate";
 
 import { logLlmCall } from "@/lib/llm-log";
+import { DEFAULT_MODEL } from "@/lib/replicate";
 import { repairJsonStructure } from "@/lib/json-repair.js";
 import { getTraceId, logTraceEvent } from "@/lib/trace";
 import {
@@ -11,7 +12,6 @@ import {
   type PlayerStyleShape,
 } from "@/lib/player-memory.js";
 
-const DEFAULT_MODEL = "google/gemini-2.5-flash";
 
 type ModelName = `${string}/${string}` | `${string}/${string}:${string}`;
 
@@ -165,13 +165,12 @@ async function runMemoryModel(
           prompt,
           system_instruction: MEMORY_SUMMARIZE_INSTRUCTION,
           temperature: 0.2,
-          // Gemini 2.5 Flash burns a variable, sometimes large slice of this cap on
-          // internal reasoning even with thinking_budget:0 — 2048 then 4096 both still
+          // Gemini Flash burned a variable, sometimes large slice of this cap on
+          // internal reasoning even with thinking off; 2048 then 4096 both still
           // truncated this nested games JSON mid-value on some calls, so parse failed
           // and memory silently stopped updating. 8192 gives headroom; repairJsonStructure
           // salvages the leading data (style + finished games) if a call still truncates.
           max_output_tokens: 8192,
-          thinking_budget: 0,
         },
         wait: { mode: "poll", interval: 500 },
       },

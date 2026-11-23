@@ -364,7 +364,7 @@ do not sync to the cloud or use Storage uploads.
   `npm run check`.
 - `lib/replicate.ts`: Replicate adapter. `summarize(input)` sends
   `system_instruction` + `prompt` separately with Gemini fields
-  (`max_output_tokens`, `thinking_budget: 0`), polls prediction status to yield granular `status` events (e.g. "Starting AI engine") to the UI during generation, and parses the JSON
+  (`max_output_tokens`; `thinking_level` left at its default `none`), polls prediction status to yield granular `status` events (e.g. "Starting AI engine") to the UI during generation, and parses the JSON
   `{ answer, highlights, spoilers, spoilerRisk }` via `lib/highlights.js#parseSummary`.
   All Gemini calls (`resolveQuestion`, `summarize`, `censorSpoilers`) share a single
   `Replicate` SDK instance (`getReplicate()` singleton). Preferred-guide **Phase C
@@ -643,7 +643,7 @@ top_chunk=…` per query.
   is meant for the installed PWA (a browser tab's own back-gesture can fight the
   left edge).
 - Model-call input fields are Gemini-specific; switching `REPLICATE_MODEL` to a
-  non-Gemini model would silently drop `system_instruction`/`thinking_budget`.
+  non-Gemini model would silently drop `system_instruction`.
 - Embedding fallback ceilings: the circuit breaker is per serverless instance (resets on cold
   start). Replicate Qwen cold starts run 96 to 274s, so ingest waits up to 280s and the per-turn query
   path times out at 20s (guide then goes lexical-only). Replicate credit also pays for Gemini, so if
@@ -726,7 +726,7 @@ top_chunk=…` per query.
   prose/markdown fences when the model drifts. ponytail: prompt-instructed JSON
   rather than `response_mime_type` (not exposed on Replicate's Gemini input).
 - Flash on Replicate consumes ~1k tokens of reasoning overhead against
-  `max_output_tokens` even with `thinking_budget: 0`, so `summarize` uses 4096
+  `max_output_tokens` even with thinking off, so `summarize` uses 4096
   to avoid truncated answers (1200 cut answers off after ~100 visible tokens).
 - Relevance filtering can't separate same-series wrong-game guides (RE0 vs RE
   Code: Veronica score alike); the top-3 trim plus the "ignore off-game
@@ -814,7 +814,7 @@ Server-only secrets (never expose via `NEXT_PUBLIC_`, never commit `.env.local`)
   `visual_search_complete` trace as `unloadableUrls`. Follow-ups with no
   explicit subject ("rupanya gimana?") resolve from history in the same rewrite.
   See [`docs/plan/visual-search-rewrite-fold.md`](docs/plan/visual-search-rewrite-fold.md).
-- `REPLICATE_MODEL` (optional, default `google/gemini-2.5-flash`).
+- `REPLICATE_MODEL` (optional, default `google/gemini-3-flash`).
 - `COHERE_API_KEY` (optional, server-only; its **presence** enables the Phase C
   preferred-guide reranker — no other flag. Unset = route on cosine `GUIDE_HIT`.
   Fully fail-open: trial-expired / 429 / network errors fall back to cosine. Trial

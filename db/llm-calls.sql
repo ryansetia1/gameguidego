@@ -7,7 +7,7 @@ create table if not exists public.llm_calls (
   id uuid primary key default gen_random_uuid(),
   created_at timestamptz not null default now(),
   kind text not null check (kind in ('rewrite', 'summarize', 'censor', 'embed_index', 'embed_query')),
-  model text not null, -- Replicate model id, e.g. google/gemini-2.5-flash (REPLICATE_MODEL)
+  model text not null, -- Replicate model id, e.g. google/gemini-3-flash (REPLICATE_MODEL)
   system_instruction text not null,
   prompt text not null,
   response text not null default '',

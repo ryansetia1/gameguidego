@@ -1,7 +1,7 @@
 # GameGuide Go
 
 A mobile-first, installable (PWA) game companion. An AI model on Replicate
-(default `google/gemini-2.5-flash`) answers from its own knowledge, and Tavily
+(default `google/gemini-3-flash`) answers from its own knowledge, and Tavily
 web search provides supporting evidence. The interface is English, but the model
 answers in whatever language you ask your question in.
 
@@ -134,7 +134,7 @@ full list):
 TAVILY_API_KEY=tvly-...
 SERPER_API_KEY=...
 REPLICATE_API_TOKEN=r8_...
-REPLICATE_MODEL=google/gemini-2.5-flash
+REPLICATE_MODEL=google/gemini-3-flash
 THEGAMESDB_API_KEY=...
 STEAM_API_KEY=...
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
@@ -156,7 +156,7 @@ degrades gracefully when its variables are absent:
 | Supabase pair | Cloud saved chats, accounts, search cache, Storage |
 
 The model input fields (`system_instruction`, `max_output_tokens`,
-`thinking_budget`) are tuned for Gemini on Replicate; only swap `REPLICATE_MODEL`
+`thinking_level`, left at its default `none`) are tuned for Gemini on Replicate; only swap `REPLICATE_MODEL`
 for a model with equivalent fields.
 
 ### Game-name autocomplete + box art (TheGamesDB)
