@@ -968,9 +968,12 @@ large chat or persistence work:
 - No login wall: signed-out users must keep full access.
 - Preserve source links alongside every generated guide.
 - **CRITICAL LINTING RULE**: Setiap kali mengedit file React komponen (`.tsx`) atau TypeScript (`.ts`), Anda WAJIB menjalankan linter (misalnya melalui npm run lint atau mengecek *warning* pada IDE) dan memperbaiki semua error seperti pelanggaran *Rules of Hooks*, missing imports, dsb sebelum menyatakan tugas selesai kepada Tuan muda.
-- **Supabase migrations via the MCP connector** (provided to the assistant through
-  Orca; do not add `.mcp.json`): additive and idempotent only (`create ... if not
-  exists`, `add column if not exists`, `create or replace`). Destructive statements
+- **Supabase migrations via MCP:** use the `supabase` connector (provided through
+  Orca) first. If it can't access the GGG project (signed in to another account),
+  use the repo's `supabase-ggg` server from `.mcp.json` (scoped to
+  `luoymycbpnvamdtlzjem`; the owner authenticates once via `/mcp`). Either way:
+  additive and idempotent only (`create ... if not exists`, `add column if not
+  exists`, `create or replace`). Destructive statements
   (`drop`, `truncate`, `delete` without a `where`, column type changes, policy
   removal) need the owner's explicit permission first. Save every applied SQL under
   `db/` as well, per the existing convention.
