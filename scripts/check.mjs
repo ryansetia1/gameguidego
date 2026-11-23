@@ -3555,6 +3555,34 @@ if (!canRunTsChecks) {
   assert.ok(sa.savedPreview("x".repeat(300)).endsWith("…"));
   assert.ok(sa.isSpoilerGated({ spoilers: [{ title: "t", detail: "d" }] }));
   assert.ok(!sa.isSpoilerGated({ spoilers: [] }));
+  // Preview follows the chat gate: reveals (and their hint) only with major spoilers on.
+  assert.ok(sa.showsSpoilerHint({ spoilers: [{ title: "t", detail: "d" }] }, true));
+  assert.ok(!sa.showsSpoilerHint({ spoilers: [{ title: "t", detail: "d" }] }, false));
+  // Missing server table (prod before db/saved-answers.sql) → quiet device-only.
+  assert.ok(sa.isMissingTableError({ code: "PGRST205", message: "Could not find the table 'public.saved_answers' in the schema cache" }));
+  assert.ok(sa.isMissingTableError({ code: "42P01", message: 'relation "public.saved_answers" does not exist' }));
+  assert.ok(sa.isMissingTableError({ message: "Could not find the table 'public.saved_answers' in the schema cache" }));
+  assert.ok(!sa.isMissingTableError({ code: "PGRST301", message: "JWT expired" }));
+  assert.ok(!sa.isMissingTableError(new TypeError("Failed to fetch")));
+  assert.ok(!sa.isMissingTableError(null));
+  // Only finished replies can be bookmarked.
+  assert.ok(sa.isSavableReply({ role: "assistant", content: "Go left." }));
+  assert.ok(!sa.isSavableReply({ role: "assistant", content: "Writing answer..." }));
+  assert.ok(!sa.isSavableReply({ role: "assistant", content: "  " }));
+  assert.ok(!sa.isSavableReply({ role: "user", content: "hi" }));
+  // Removed while its first upsert was in flight: server has it, device doesn't → tombstone.
+  const inflight = mk("u1", "Other", "inflight", 6000);
+  const afterRemove = sa.mergeRemote([], "u1", [sa.toRow(inflight)], [inflight.id], []);
+  assert.equal(afterRemove.length, 1, "in-flight removal keeps a tombstone");
+  assert.equal(afterRemove[0].deleted, true, "and does not resurrect the answer");
+  assert.equal(sa.visibleItems(afterRemove, "u1").length, 0);
+  // claimAnon respects the caps; fromRow coerces shapes.
+  const full = Array.from({ length: sa.SAVED_PER_GAME_CAP }, (_, i) => ({ ...mk("u1", "Capped", `c${i}`, i), synced: true }));
+  const anonExtra = mk(null, "Capped", "anon", 99);
+  const claimedCap = sa.claimAnon([...full, anonExtra], "u1");
+  assert.equal(claimedCap.find((r) => r.id === anonExtra.id).owner, null, "claim stops at the per-game cap");
+  const coerced = sa.fromRow({ id: "x", user_id: "u1", game_key: "g", content: "c", highlights: [{ nope: 1 }], spoilers: "bad" });
+  assert.deepEqual([coerced.highlights, coerced.spoilers], [[], []], "fromRow drops malformed highlights/spoilers");
   const now = new Date(2026, 10, 23, 12);
   assert.equal(sa.savedDateLabel(new Date(2026, 10, 23, 1).toISOString(), now), "Today");
   assert.equal(sa.savedDateLabel(new Date(2026, 10, 3).toISOString(), now), "3 Nov");

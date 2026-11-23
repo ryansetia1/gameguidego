@@ -63,7 +63,7 @@ import {
   spoilerMajorFromUserMetadata,
 } from "@/lib/spoiler-prefs.js";
 import { loadVisualAuto } from "@/lib/visual-search-prefs.js";
-import { consumeAnonSaveHint } from "@/lib/saved-answers.js";
+import { consumeAnonSaveHint, isSavableReply } from "@/lib/saved-answers.js";
 import { groupChatsByRoom, isTopicColumnDbError, mergeChatsFromServer, normGameKey, syncRoomSharedMeta, syncSharedMetaToLocalGames, topicsForRoom, gameRoomKey, upsertChatInList } from "@/lib/game-room.js";
 import {
   displayTopicTitle,
@@ -1694,14 +1694,15 @@ export default function Home() {
 
   function toggleSavedAnswer(index: number) {
     const message = messages[index];
-    if (!message || message.role !== "assistant") return;
+    if (!message || !isSavableReply(message) || editingGame) return;
     const question =
       messages
         .slice(0, index)
         .reverse()
         .find((row) => row.role === "user")?.content ?? "";
-    // The thread's own game, not a half-edited game field.
-    const savedGame = conversationGame.current || game;
+    // One source for read and write: `game`. Outside edit mode it is the thread's game
+    // (saveGameMeta renames the room); while the field is being edited saving is off.
+    const savedGame = game;
     if (!savedGame.trim()) return;
     const result = savedAnswers.toggle({ game: savedGame, platform, question, message });
     if (result.status === "saved") {
@@ -2717,7 +2718,7 @@ export default function Home() {
             setGuideNudgeDismissed(true);
           }}
           isSaved={(index) => savedAnswers.isSaved(game, messages[index]?.content ?? "")}
-          onToggleSave={game.trim() ? toggleSavedAnswer : undefined}
+          onToggleSave={game.trim() && !editingGame ? toggleSavedAnswer : undefined}
         />
       ) : null}
 
@@ -2903,6 +2904,7 @@ export default function Home() {
           deviceFull={savedAnswers.deviceFull}
           online={savedAnswers.online}
           syncFailed={savedAnswers.syncFailed}
+          syncAvailable={savedAnswers.syncAvailable}
           onClose={dismissOverlay}
           onRemove={removeSavedAnswer}
         />
