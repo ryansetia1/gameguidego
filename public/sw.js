@@ -1,12 +1,21 @@
 // @ts-nocheck -- runs in ServiceWorkerGlobalScope, not the app's Window scope.
-// Minimal service worker: enough to make the app installable, with a
-// network-first runtime cache as a lightweight offline fallback.
-// ponytail: no precache/versioning strategy; upgrade to a real offline shell
-// (e.g. Workbox or a versioned precache list) if offline support matters.
+// Minimal service worker: installable, network-first runtime cache, plus a
+// one-page offline shell ("/") so saved answers (device copy) open offline.
+// Any page navigation that fails offline falls back to the cached shell.
+// ponytail: the shell's JS chunks are cached at runtime on the first online
+// visit, not precached; a first-ever visit while offline still fails. Upgrade
+// path: a versioned precache list from the build manifest.
 const CACHE = "gg-runtime-v2";
+const SHELL = "/";
 
-self.addEventListener("install", () => {
-  self.skipWaiting();
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches
+      .open(CACHE)
+      .then((cache) => cache.add(SHELL))
+      .catch(() => {})
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener("activate", (event) => {
@@ -34,6 +43,10 @@ self.addEventListener("fetch", (event) => {
           .catch(() => {});
         return response;
       })
-      .catch(() => caches.match(request)),
+      .catch(() =>
+        caches
+          .match(request)
+          .then((hit) => hit || (request.mode === "navigate" ? caches.match(SHELL) : undefined)),
+      ),
   );
 });

@@ -78,6 +78,9 @@ export type ActiveGameCardProps = {
   journeyExpanded?: boolean;
   onJourneyExpandedChange?: (open: boolean) => void;
   onJourneyToast?: (message: string) => void;
+  /** Saved answers for this game; the menu item opens the saved drawer. */
+  savedCount?: number;
+  onOpenSaved?: () => void;
   className?: string;
 };
 
@@ -129,6 +132,8 @@ export function ActiveGameCard({
   journeyExpanded = false,
   onJourneyExpandedChange,
   onJourneyToast,
+  savedCount = 0,
+  onOpenSaved,
   className,
 }: ActiveGameCardProps) {
   const hasBlocked = preferredUrls.some(
@@ -368,6 +373,11 @@ export function ActiveGameCard({
         </button>
         {menuOpenId === "game-card" && (
           <div className="row-menu-pop" role="menu">
+            {onOpenSaved && (
+              <button type="button" className="row-menu-item" onClick={onOpenSaved}>
+                Saved answers{savedCount > 0 ? ` (${savedCount})` : ""}
+              </button>
+            )}
             <button type="button" className="row-menu-item" onClick={onEditGame}>
               Edit
             </button>
