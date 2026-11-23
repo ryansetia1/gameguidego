@@ -570,6 +570,7 @@ export async function POST(request: Request) {
           topicTitle: generatedTitle,
           journalReminder,
           journalReminderSummary,
+          model: answerModel,
         } =
           await summarize({
           game,
@@ -685,6 +686,7 @@ export async function POST(request: Request) {
           spoilers: spoilerPrefs.major ? spoilers : [],
           sources: finalSources,
           pipelineType,
+          model: answerModel,
           ...(guideHint ? { guideHint } : {}),
           ...(illustration ? { illustration } : {}),
           ...(topicTitle ? { topicTitle } : {}),
@@ -725,6 +727,7 @@ export async function POST(request: Request) {
                 highlights,
                 spoilers,
                 pipelineType,
+                model: answerModel,
                 spoilerMajor: spoilerPrefs.major,
                 illustration,
               });

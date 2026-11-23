@@ -216,6 +216,7 @@ import {
   userTurnCount,
   variantRowsFromPersistedAssistant,
 } from "../lib/chat-thread.js";
+import { buildModelInput, isAllowedModel, modelLabel } from "../lib/ai-models.js";
 import {
   selectMessagesForServerMerge,
   tailTurnIndexFromMessages,
@@ -3633,6 +3634,30 @@ if (!canRunTsChecks) {
   assert.equal(chatBackPopsHistory(true, list), false, "pane list above the chat");
   assert.equal(chatBackPopsHistory(true, read("a")), false, "pane read above the chat");
   assert.equal(chatBackPopsHistory(false, { gggChat: true }), false);
+}
+
+// #23 model allowlist + per-model input mapping + per-message model survives a
+// normalized read (chat_responses has no model column; the JSONB cache carries it).
+{
+  const call = { prompt: "p", system: "s", maxTokens: 10, temperature: 0.2, images: ["i"] };
+  assert.deepEqual(buildModelInput("google/gemini-3-flash", call), {
+    prompt: "p", system_instruction: "s", images: ["i"], temperature: 0.2, max_output_tokens: 10,
+  });
+  assert.deepEqual(buildModelInput("openai/gpt-5.6-sol", call), {
+    prompt: "p", system_prompt: "s", image_input: ["i"], max_completion_tokens: 10, reasoning_effort: "none",
+  });
+  assert.equal(buildModelInput("custom/model", call).system_instruction, "s");
+  assert.equal(isAllowedModel("google/gemini-2.5-flash"), false);
+  assert.equal(modelLabel("openai/gpt-5.6-sol"), "GPT sol");
+  assert.equal(modelLabel("custom/model"), "");
+  assert.equal(modelLabel(undefined), "");
+  const merged = mergeAssistantFieldsFromLegacy(
+    [{ role: "user", content: "q" }, { role: "assistant", content: "a", variants: [{ content: "a0" }, { content: "a" }] }],
+    [{ role: "user", content: "q" }, { role: "assistant", content: "a", model: "openai/gpt-5.6-sol",
+      variants: [{ content: "a0", model: "google/gemini-3-flash" }, { content: "a", model: "openai/gpt-5.6-sol" }] }],
+  );
+  assert.equal(merged[1].model, "openai/gpt-5.6-sol");
+  assert.equal(merged[1].variants[0].model, "google/gemini-3-flash");
 }
 
 console.log("Self-check passed.");

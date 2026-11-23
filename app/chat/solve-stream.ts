@@ -6,6 +6,7 @@ export type SolveStreamPayload = {
   highlights?: unknown;
   spoilers?: unknown;
   pipelineType?: string;
+  model?: string;
   guideHint?: string;
   illustration?: Illustration;
   topicTitle?: string;

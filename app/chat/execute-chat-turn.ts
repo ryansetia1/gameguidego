@@ -302,6 +302,7 @@ export async function executeChatTurn({
       highlights: coerceHighlights(data.highlights),
       spoilers: coerceSpoilers(data.spoilers),
       pipelineType,
+      model: typeof data.model === "string" ? data.model : undefined,
       spoilerMajor: d.spoilerPrefs.major,
       illustration: proxifyIllustration(coerceIllustration(data.illustration)),
     });

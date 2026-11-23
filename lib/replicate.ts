@@ -16,13 +16,13 @@ import {
   buildSpoilerCensorPrompt,
 } from "@/lib/spoiler-prefs.js";
 import type { SearchResult } from "@/lib/tavily";
+import { buildModelInput } from "@/lib/ai-models.js";
+import { getActiveModel, type ModelName } from "@/lib/active-model";
 
 type SpoilerPrefs = {
   major: boolean;
 };
 
-/** Default Replicate model; override with REPLICATE_MODEL. */
-export const DEFAULT_MODEL = "google/gemini-3-flash";
 
 export type Turn = {
   role: "user" | "assistant";
@@ -49,15 +49,9 @@ export type SummaryResult = {
   topicTitle: string;
   journalReminder: string;
   journalReminderSummary: string;
+  /** Model id that wrote this answer (stored per message for the footer label). */
+  model: string;
 };
-
-type ModelName = `${string}/${string}` | `${string}/${string}:${string}`;
-
-function resolveModel(): ModelName | null {
-  const model = process.env.REPLICATE_MODEL || DEFAULT_MODEL;
-  if (!/^[^/\s]+\/[^/\s]+(?::[^/\s]+)?$/.test(model)) return null;
-  return model as ModelName;
-}
 
 // Combine the per-call timeout with an optional caller signal (client Stop /
 // disconnect), so aborting the request also cancels the Replicate prediction.
@@ -169,12 +163,12 @@ export async function resolveQuestion(input: {
   forRag?: boolean;
 }): Promise<{ searchTopic: string; visualSubject: string | null }> {
   const replicate = getReplicate();
-  const model = resolveModel();
-  if (!replicate || !model) return { searchTopic: input.question, visualSubject: null };
+  if (!replicate) return { searchTopic: input.question, visualSubject: null };
+  const model = await getActiveModel();
 
   const forRag = Boolean(input.forRag);
   const instruction = forRag ? REWRITE_RAG_INSTRUCTION : REWRITE_INSTRUCTION;
-  // Gemini 2.5 Flash consumes max_output_tokens for its internal thinking.
+  // Some models spend max_output_tokens on internal thinking.
   // We must provide a large enough budget so the visible text doesn't get cut off.
   const maxOutputTokens = forRag ? 4096 : 2048;
   const maxChars = forRag ? 1200 : 200;
@@ -188,13 +182,13 @@ export async function resolveQuestion(input: {
       await runModel(
       replicate,
       model,
-      {
+      buildModelInput(model, {
         prompt,
-        system_instruction: instruction,
-        ...(images.length ? { images } : {}),
+        system: instruction,
+        images,
         temperature: 0.2,
-        max_output_tokens: maxOutputTokens,
-      },
+        maxTokens: maxOutputTokens,
+      }),
       15_000,
       input.signal,
     );
@@ -255,10 +249,7 @@ export async function summarize(input: SummarizeInput): Promise<SummaryResult> {
     throw new Error("REPLICATE_API_TOKEN is not configured");
   }
 
-  const model = resolveModel();
-  if (!model) {
-    throw new Error("REPLICATE_MODEL must use owner/name format");
-  }
+  const model = await getActiveModel();
 
   const images = (input.images ?? []).filter((url) => typeof url === "string" && url);
   const systemInstruction = summarizeSystemInstruction(
@@ -282,13 +273,13 @@ export async function summarize(input: SummarizeInput): Promise<SummaryResult> {
     await runModel(
     replicate,
     model,
-    {
+    buildModelInput(model, {
       prompt,
-      system_instruction: systemInstruction,
-      ...(images.length ? { images } : {}),
+      system: systemInstruction,
+      images,
       temperature: 0.35,
-      max_output_tokens: 4096,
-    },
+      maxTokens: 4096,
+    }),
     50_000,
     input.signal,
     (logs, id) => {
@@ -319,7 +310,7 @@ export async function summarize(input: SummarizeInput): Promise<SummaryResult> {
     throw new Error("Replicate returned an empty response");
   }
 
-  return parsed;
+  return { ...parsed, model };
 }
 
 /**
@@ -340,8 +331,8 @@ export async function censorSpoilers(input: {
   signal?: AbortSignal;
 }): Promise<{ answer: string; highlights: Highlight[] } | null> {
   const replicate = getReplicate();
-  const model = resolveModel();
-  if (!replicate || !model) return null;
+  if (!replicate) return null;
+  const model = await getActiveModel();
 
   try {
     const prompt = buildSpoilerCensorPrompt(input);
@@ -350,12 +341,12 @@ export async function censorSpoilers(input: {
       await runModel(
       replicate,
       model,
-      {
+      buildModelInput(model, {
         prompt,
-        system_instruction: SPOILER_CENSOR_INSTRUCTION,
+        system: SPOILER_CENSOR_INSTRUCTION,
         temperature: 0.2,
-        max_output_tokens: 4096,
-      },
+        maxTokens: 4096,
+      }),
       30_000,
       input.signal,
     );

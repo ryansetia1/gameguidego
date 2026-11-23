@@ -30,6 +30,7 @@ import type { GuideMeta } from "../guide-link-field";
 import { isUploadedGuideUrl } from "@/lib/guide-urls.js";
 import { isJournalSourceUrl } from "@/lib/player-journey.js";
 import { visualImageProxyUrl } from "@/lib/visual-image-proxy.js";
+import { modelLabel } from "@/lib/ai-models.js";
 
 /** Stop nudging for a guide after this many answers; re-nudge naturally in a new game. */
 const NUDGE_MAX_ANSWERS = 10;
@@ -293,6 +294,8 @@ function AnswerFoot({
     messageShowsVariantNav(message) && message.variants ? message.variants : null;
   const activeVariant = message.activeVariantIndex ?? 0;
   const toggleSources = () => setOpen((value) => !value);
+  // Legacy answers have no model id: render nothing, not a placeholder.
+  const answeredBy = modelLabel(message.model);
 
   return (
     <div className="answer-foot">
@@ -322,6 +325,15 @@ function AnswerFoot({
           className="answer-foot-right"
           onClick={(event) => event.stopPropagation()}
         >
+          {answeredBy && (
+            <span
+              className="answer-model"
+              title={answeredBy}
+              aria-label={`Answered by ${answeredBy}`}
+            >
+              {answeredBy}
+            </span>
+          )}
           {variants && (
             <div className="variant-nav">
               <button
