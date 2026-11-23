@@ -1,7 +1,8 @@
 import Replicate from "replicate";
 
 import { logLlmCall } from "@/lib/llm-log";
-import { DEFAULT_MODEL } from "@/lib/replicate";
+import { buildModelInput } from "@/lib/ai-models.js";
+import { getActiveModel } from "@/lib/active-model";
 import { repairJsonStructure } from "@/lib/json-repair.js";
 import { getTraceId, logTraceEvent } from "@/lib/trace";
 import {
@@ -13,8 +14,6 @@ import {
 } from "@/lib/player-memory.js";
 
 
-type ModelName = `${string}/${string}` | `${string}/${string}:${string}`;
-
 type RunModelResult = {
   output: string;
   durationMs: number;
@@ -22,12 +21,6 @@ type RunModelResult = {
   inputTokens: number | null;
   outputTokens: number | null;
 };
-
-function resolveModel(): ModelName | null {
-  const model = process.env.REPLICATE_MODEL || DEFAULT_MODEL;
-  if (!/^[^/\s]+\/[^/\s]+(?::[^/\s]+)?$/.test(model)) return null;
-  return model as ModelName;
-}
 
 let replicateInstance: Replicate | null = null;
 
@@ -150,8 +143,8 @@ async function runMemoryModel(
   userId: string,
 ): Promise<RunModelResult | null> {
   const replicate = getReplicate();
-  const model = resolveModel();
-  if (!replicate || !model) return null;
+  if (!replicate) return null;
+  const model = await getActiveModel();
 
   const started = Date.now();
   let metrics: { predict_time?: number } | undefined;
@@ -161,17 +154,17 @@ async function runMemoryModel(
     const raw = await replicate.run(
       model,
       {
-        input: {
+        input: buildModelInput(model, {
           prompt,
-          system_instruction: MEMORY_SUMMARIZE_INSTRUCTION,
+          system: MEMORY_SUMMARIZE_INSTRUCTION,
           temperature: 0.2,
           // Gemini Flash burned a variable, sometimes large slice of this cap on
           // internal reasoning even with thinking off; 2048 then 4096 both still
           // truncated this nested games JSON mid-value on some calls, so parse failed
           // and memory silently stopped updating. 8192 gives headroom; repairJsonStructure
           // salvages the leading data (style + finished games) if a call still truncates.
-          max_output_tokens: 8192,
-        },
+          maxTokens: 8192,
+        }),
         wait: { mode: "poll", interval: 500 },
       },
       (prediction: { metrics?: { predict_time?: number }; logs?: string }) => {
@@ -209,7 +202,7 @@ export async function summarizePlayerMemory(
   input: SummarizeInput,
 ): Promise<MemorySummaryResult | null> {
   const prompt = buildSummarizePrompt(input);
-  const model = resolveModel() ?? "unknown";
+  const model = await getActiveModel();
 
   await logTraceEvent("memory_llm_start", "Memory summarize LLM call", undefined, {
     userId: input.userId,

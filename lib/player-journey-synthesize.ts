@@ -1,12 +1,11 @@
 import Replicate from "replicate";
 
 import { logLlmCall } from "@/lib/llm-log";
-import { DEFAULT_MODEL } from "@/lib/replicate";
+import { buildModelInput } from "@/lib/ai-models.js";
+import { getActiveModel } from "@/lib/active-model";
 import { JOURNAL_BODY_MAX } from "@/lib/player-journey.js";
 import { getTraceId, logTraceEvent } from "@/lib/trace";
 
-
-type ModelName = `${string}/${string}` | `${string}/${string}:${string}`;
 
 type DeltaMessage = { game: string; platform: string; content: string; at: string };
 
@@ -30,12 +29,6 @@ Rules:
 - Only record facts supported by the existing journal or the new messages. Do not invent progress.
 - When the journal nears the character cap, compact by pruning superseded or completed state instead of truncating mid-sentence.
 - No markdown fences, no text outside JSON.`;
-
-function resolveModel(): ModelName | null {
-  const model = process.env.REPLICATE_MODEL || DEFAULT_MODEL;
-  if (!/^[^/\s]+\/[^/\s]+(?::[^/\s]+)?$/.test(model)) return null;
-  return model as ModelName;
-}
 
 let replicateInstance: Replicate | null = null;
 
@@ -80,8 +73,8 @@ export async function synthesizeJournalBody(
   input: SynthesizeInput,
 ): Promise<{ body: string; durationMs: number; inputTokens: number | null; outputTokens: number | null } | null> {
   const replicate = getReplicate();
-  const model = resolveModel();
-  if (!replicate || !model) return null;
+  if (!replicate) return null;
+  const model = await getActiveModel();
 
   const prompt = buildPrompt(input);
   const started = Date.now();
@@ -98,12 +91,12 @@ export async function synthesizeJournalBody(
     const raw = await replicate.run(
       model,
       {
-        input: {
+        input: buildModelInput(model, {
           prompt,
-          system_instruction: JOURNAL_SYNTHESIZE_INSTRUCTION,
+          system: JOURNAL_SYNTHESIZE_INSTRUCTION,
           temperature: 0.2,
-          max_output_tokens: 8192,
-        },
+          maxTokens: 8192,
+        }),
         wait: { mode: "poll", interval: 500 },
       },
       (prediction: { metrics?: { predict_time?: number }; logs?: string }) => {

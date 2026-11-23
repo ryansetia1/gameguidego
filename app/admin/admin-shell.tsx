@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { IconArrowLeft } from "@/app/icons";
 import { AdminTabs } from "@/app/admin/admin-tabs";
+import { ModelPicker } from "@/app/admin/model-picker";
 import { isAdminEmail } from "@/lib/admin-constants";
 
 type AdminShellProps = {
@@ -92,6 +93,7 @@ export function AdminShell({ user, loading, children, actions, subtitle }: Admin
             </div>
             <AdminTabs />
           </div>
+          <ModelPicker />
           {children}
         </div>
       </section>

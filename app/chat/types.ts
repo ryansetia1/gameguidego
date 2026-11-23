@@ -34,6 +34,8 @@ export type Message = {
   images?: string[];
   illustration?: Illustration;
   pipelineType?: string;
+  /** Model id that wrote this assistant answer; absent on legacy answers. */
+  model?: string;
   /** Subset of preferred guides used for this user turn; omitted when Auto. */
   ragGuideUrls?: string[];
   variants?: Omit<Message, "role" | "variants" | "activeVariantIndex">[];

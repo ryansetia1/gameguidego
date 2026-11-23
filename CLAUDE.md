@@ -814,7 +814,16 @@ Server-only secrets (never expose via `NEXT_PUBLIC_`, never commit `.env.local`)
   `visual_search_complete` trace as `unloadableUrls`. Follow-ups with no
   explicit subject ("rupanya gimana?") resolve from history in the same rewrite.
   See [`docs/plan/visual-search-rewrite-fold.md`](docs/plan/visual-search-rewrite-fold.md).
-- `REPLICATE_MODEL` (optional, default `google/gemini-3-flash`).
+- `REPLICATE_MODEL` (optional, default `google/gemini-3-flash`). The admin picker
+  (`/admin`, `app/admin/model-picker.tsx` -> `app/api/admin/ai-model`) overrides it:
+  allowlist + per-model Replicate input mapping live only in `lib/ai-models.js`
+  (Gemini 3 Flash, GPT sol = `openai/gpt-5.6-sol`); `getActiveModel()` in
+  `lib/active-model.ts` resolves Supabase `app_settings.ai_model` (service role,
+  `db/app-settings.sql`) > env > default, 30s per-instance cache, used by solve,
+  memory and journey. Each assistant message stores its `model`; the answer footer
+  shows the label (`.answer-model`, text only). `chat_responses` has no model column:
+  it rides the `chats.messages` cache via `mergeAssistantFieldsFromLegacy`. Cost
+  estimates still use one flat Replicate rate for every model.
 - `COHERE_API_KEY` (optional, server-only; its **presence** enables the Phase C
   preferred-guide reranker — no other flag. Unset = route on cosine `GUIDE_HIT`.
   Fully fail-open: trial-expired / 429 / network errors fall back to cosine. Trial
