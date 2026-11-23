@@ -3695,4 +3695,12 @@ if (!canRunTsChecks) {
   assert.doesNotMatch(summarizeSystemInstruction(true, false), /\b(aku|kamu|seperti)\b/);
 }
 
+// #32: the bookmark's ::after tap target must stay anchored to the bookmark, so
+// its position:relative has to out-rank `.turn.guide .turn-action-icon` (static).
+{
+  const css = (await import("node:fs")).readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(css, /\.turn\.guide \.turn-action-icon \{\s*position: static;/);
+  assert.match(css, /\.turn\.guide \.turn-action-icon\.save-answer \{\s*position: relative;/);
+}
+
 console.log("Self-check passed.");

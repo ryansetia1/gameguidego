@@ -7700,7 +7700,11 @@ details.sources small {
 }
 
 /* --- Saved answers (#17) --- */
-.save-answer {
+/* Must beat `.turn.guide .turn-action-icon { position: static }`: without it the
+   ::after tap target anchors to the whole .answer-foot-bar and swallows clicks
+   on Regenerate and the version arrows (#32). */
+.save-answer,
+.turn.guide .turn-action-icon.save-answer {
   position: relative;
 }
 
