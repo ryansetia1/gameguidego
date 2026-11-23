@@ -150,7 +150,7 @@ export default function Home() {
   const [catalogGameId, setCatalogGameId] = useState<number | null>(null);
   const [preferredUrls, setPreferredUrls] = useState<string[]>([]);
   const [guideRetrievalMode, setGuideRetrievalMode] = useState<
-    "default" | "skip" | "supplement"
+    "default" | "skip" | "supplement" | "knowledge"
   >("default");
   const [guideSourceSelection, setGuideSourceSelection] = useState<string[] | null>(null);
   // Which optional section shows below the trigger row — only one at a time, so
@@ -1081,6 +1081,10 @@ export default function Home() {
 
   const toggleSkipGuide = useCallback(() => {
     setGuideRetrievalMode((prev) => toggleGuideRetrievalMode(prev, "skip"));
+  }, []);
+
+  const toggleKnowledgeOnly = useCallback(() => {
+    setGuideRetrievalMode((prev) => toggleGuideRetrievalMode(prev, "knowledge"));
   }, []);
 
   const toggleSupplementGuide = useCallback(() => {
@@ -2715,6 +2719,7 @@ export default function Home() {
           guideRetrievalMode={guideRetrievalMode}
           onToggleSkipGuide={toggleSkipGuide}
           onToggleSupplementGuide={toggleSupplementGuide}
+          onToggleKnowledgeOnly={toggleKnowledgeOnly}
           onVoiceListeningChange={setVoiceListening}
           onVoiceTranscript={(text) =>
             setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))

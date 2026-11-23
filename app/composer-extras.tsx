@@ -22,9 +22,10 @@ type Props = {
   onToggleSpoiler?: () => void;
   /** Show guide retrieval toggles when a preferred guide is attached. */
   showGuideRetrievalToggles?: boolean;
-  guideRetrievalMode?: "default" | "skip" | "supplement";
+  guideRetrievalMode?: "default" | "skip" | "supplement" | "knowledge";
   onToggleSkipGuide?: () => void;
   onToggleSupplementGuide?: () => void;
+  onToggleKnowledgeOnly?: () => void;
   onTranscript: (text: string) => void;
   onListeningChange?: (listening: boolean) => void;
   onSelectImages: (files: FileList | null) => void;
@@ -49,6 +50,7 @@ export function ComposerExtras({
   guideRetrievalMode = "default",
   onToggleSkipGuide,
   onToggleSupplementGuide,
+  onToggleKnowledgeOnly,
   onTranscript,
   onListeningChange,
   onSelectImages,
@@ -185,11 +187,29 @@ export function ComposerExtras({
                       setMenuView("main");
                     }}
                   >
-                    Also search web
+                    Guide + web search
                     <span
                       className={`composer-extras-state${guideRetrievalMode === "supplement" ? " on" : ""}`}
                     >
                       {guideRetrievalMode === "supplement" ? "On" : "Off"}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="composer-extras-toggle"
+                    aria-pressed={guideRetrievalMode === "knowledge"}
+                    onClick={() => {
+                      onToggleKnowledgeOnly?.();
+                      setMenuOpen(false);
+                      setMenuView("main");
+                    }}
+                  >
+                    Knowledge only
+                    <span
+                      className={`composer-extras-state${guideRetrievalMode === "knowledge" ? " on" : ""}`}
+                    >
+                      {guideRetrievalMode === "knowledge" ? "On" : "Off"}
                     </span>
                   </button>
                 </>

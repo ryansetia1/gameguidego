@@ -1057,14 +1057,27 @@ assert.equal(isPreferredGuideHint("Couldn't read that guide. Try a different lin
 assert.deepEqual(coerceGuideRetrievalFlags({ skipPreferredGuide: true, alsoSearchWeb: true }), {
   skipPreferredGuide: true,
   alsoSearchWeb: false,
+  knowledgeOnly: false,
 });
 assert.deepEqual(guideRetrievalModeToApi("supplement"), {
   skipPreferredGuide: false,
   alsoSearchWeb: true,
+  knowledgeOnly: false,
 });
 assert.equal(toggleGuideRetrievalMode("supplement", "skip"), "skip");
 assert.equal(toggleGuideRetrievalMode("skip", "supplement"), "supplement");
 assert.equal(coerceGuideRetrievalMode("nope"), "default");
+assert.deepEqual(guideRetrievalModeToApi("knowledge"), {
+  skipPreferredGuide: true,
+  alsoSearchWeb: false,
+  knowledgeOnly: true,
+});
+assert.equal(toggleGuideRetrievalMode("knowledge", "knowledge"), "default");
+assert.deepEqual(coerceGuideRetrievalFlags({ knowledgeOnly: true, alsoSearchWeb: true }), {
+  skipPreferredGuide: true,
+  alsoSearchWeb: false,
+  knowledgeOnly: true,
+});
 assert.equal(
   solveTurnToast({
     pipelineType: "web_skip_guide",

@@ -78,7 +78,7 @@ export function useChatTurn(deps: ChatTurnDeps) {
       d.guideSourceSelection,
       d.preferredUrls,
       d.guideIndexState,
-      d.guideRetrievalMode === "skip",
+      d.guideRetrievalMode === "skip" || d.guideRetrievalMode === "knowledge",
     );
     if (!blockReason) return true;
     d.setToast(blockReason);

@@ -54,9 +54,10 @@ export type ComposerShellProps = {
   onToggleTemporary: () => void;
   onToggleSpoiler: () => void;
   showGuideRetrievalToggles?: boolean;
-  guideRetrievalMode?: "default" | "skip" | "supplement";
+  guideRetrievalMode?: "default" | "skip" | "supplement" | "knowledge";
   onToggleSkipGuide?: () => void;
   onToggleSupplementGuide?: () => void;
+  onToggleKnowledgeOnly?: () => void;
   onVoiceListeningChange: (listening: boolean) => void;
   onVoiceTranscript: (text: string) => void;
   onStopGeneration: () => void;
@@ -101,6 +102,7 @@ export function ComposerShell({
   guideRetrievalMode,
   onToggleSkipGuide,
   onToggleSupplementGuide,
+  onToggleKnowledgeOnly,
   onVoiceListeningChange,
   onVoiceTranscript,
   onStopGeneration,
@@ -179,7 +181,7 @@ export function ComposerShell({
         selection={guideSourceSelection}
         onChange={onGuideSourceSelectionChange}
         disabled={composerLocked}
-        skipPreferredGuide={guideRetrievalMode === "skip"}
+        skipPreferredGuide={guideRetrievalMode === "skip" || guideRetrievalMode === "knowledge"}
       />
       <div className={`composer-inner ${isExpanded ? "expanded" : ""}`}>
         <div className="composer-input-row">
@@ -273,6 +275,7 @@ export function ComposerShell({
             guideRetrievalMode={guideRetrievalMode}
             onToggleSkipGuide={onToggleSkipGuide}
             onToggleSupplementGuide={onToggleSupplementGuide}
+            onToggleKnowledgeOnly={onToggleKnowledgeOnly}
             onListeningChange={onVoiceListeningChange}
             onTranscript={onVoiceTranscript}
             onSelectImages={(files) => void onSelectImages(files)}

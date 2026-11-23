@@ -13,7 +13,7 @@ export type ChatTurnDeps = {
   platform: string;
   catalogGameId: number | null;
   preferredUrls: string[];
-  guideRetrievalMode: "default" | "skip" | "supplement";
+  guideRetrievalMode: "default" | "skip" | "supplement" | "knowledge";
   guideSourceSelection: string[] | null;
   setGuideSourceSelection: (value: string[] | null) => void;
   cover: string;

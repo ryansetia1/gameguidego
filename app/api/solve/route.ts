@@ -182,7 +182,7 @@ export async function POST(request: Request) {
   const playerName = coerceDisplayName(record.playerName);
   const userId = cleanUuid(record.userId);
   const chatId = cleanUuid(record.chatId);
-  const { skipPreferredGuide, alsoSearchWeb } = coerceGuideRetrievalFlags(record);
+  const { skipPreferredGuide, alsoSearchWeb, knowledgeOnly } = coerceGuideRetrievalFlags(record);
   const visualAuto = coerceVisualAuto(record.visualAuto);
   const authHeader = request.headers.get("Authorization");
   const retryContext = record.retryContext as {
@@ -283,6 +283,7 @@ export async function POST(request: Request) {
           images,
           skipPreferredGuide,
           alsoSearchWeb,
+          knowledgeOnly,
           ragGuideUrls: ragGuideSubset,
         });
         const rewriteCacheKey = `rewrite::${createHash("sha256").update(rawInputs).digest("hex")}`;
@@ -373,7 +374,10 @@ export async function POST(request: Request) {
           pipelineType = retryContext.pipelineType as SolveJourneyEntry["pipelineType"] || "knowledge_only";
           guideHint = retryContext.guideHint;
         } else if (preferredUrls.length && skipPreferredGuide) {
-          if (hasSearchProvider) {
+          if (knowledgeOnly) {
+            // Player asked for the model's own knowledge: no guide, no web.
+            pipelineType = "knowledge_only";
+          } else if (hasSearchProvider) {
             sendEvent("status", { text: "Searching the web..." });
             void logTraceEvent("web_search_start", "Starting tiered web search (guide skipped)");
             sources = await tieredWebSearch(searchQuery);
