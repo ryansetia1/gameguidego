@@ -241,10 +241,16 @@ export function useSavedAnswers(user: User | null) {
     (game: string, content: string) => Boolean(findSaved(items, owner, game, content)),
     [items, owner],
   );
+  /** Any game: the open reading item must survive a game change in the chat. */
+  const byId = useCallback(
+    (id: string) => visibleItems(items, owner).find((row) => row.id === id) as SavedAnswer | undefined,
+    [items, owner],
+  );
   const deviceFull = visibleItems(items, owner).length >= SAVED_DEVICE_CAP;
 
   return {
     forGame,
+    byId,
     isSaved,
     deviceFull,
     online,

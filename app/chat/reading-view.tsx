@@ -14,7 +14,7 @@ import {
   saveReadingPos,
   scrollFromPosition,
 } from "@/lib/reading-pos.js";
-import { savedDateLabel } from "@/lib/saved-answers.js";
+import { loadSavedItems, savedDateLabel } from "@/lib/saved-answers.js";
 import { sourceHostname } from "@/lib/chat-message-ui.js";
 
 const SAVE_DEBOUNCE_MS = 300;
@@ -112,9 +112,12 @@ export function ReadingView({
     }
   }, [itemId, item, sections.length]);
 
-  // Item gone: forget its position.
+  // Item gone: forget its position, but only when the device store really lost it
+  // (not a transient empty render).
   useEffect(() => {
-    if (!item) clearReadingPos(itemId);
+    if (item) return;
+    const stillStored = loadSavedItems().some((row) => row.id === itemId && !row.deleted);
+    if (!stillStored) clearReadingPos(itemId);
   }, [item, itemId]);
 
   // Save position on scroll (debounced) and once more on close. Layout effect so the
@@ -233,7 +236,7 @@ export function ReadingView({
               type="button"
               className="reading-bar-btn reading-sections-btn"
               aria-expanded={sectionsOpen}
-              aria-controls="reading-sections"
+              aria-controls={sectionsOpen ? "reading-sections" : undefined}
               onClick={() => {
                 if (!sectionsOpen && scrollRef.current)
                   setCurrent(sectionAtLine(scrollRef.current, sections.length));
@@ -250,6 +253,17 @@ export function ReadingView({
                 role="group"
                 aria-label="Sections"
                 onKeyDown={onPopKey}
+                onBlur={(event) => {
+                  // Tabbing out of the list closes it (focus left both list and button).
+                  const next = event.relatedTarget as Node | null;
+                  if (
+                    next &&
+                    !popRef.current?.contains(next) &&
+                    !sectionsBtnRef.current?.contains(next)
+                  ) {
+                    setSectionsOpen(false);
+                  }
+                }}
               >
                 {sections.map((title, i) => (
                   <button
@@ -273,7 +287,7 @@ export function ReadingView({
         <button
           type="button"
           className="reading-bar-btn reading-close"
-          aria-label="Close"
+          aria-label="Close saved answers"
           onClick={onClose}
         >
           <IconX />

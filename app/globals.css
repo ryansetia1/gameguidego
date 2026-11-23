@@ -7949,6 +7949,16 @@ details.sources small {
     z-index: 30;
   }
 
+  .saved-pane .reading-close {
+    display: inline-flex;
+  }
+
+  /* Toasts centre on the viewport; keep them in the chat column, off the pane. */
+  .app-split.has-pane .snackbar {
+    left: calc((100vw - var(--pane-w)) / 2);
+    max-width: calc(100vw - var(--pane-w) - 32px);
+  }
+
   /* The FAB centres on the viewport; shift it into the chat column. */
   .app-split.has-pane .scroll-to-bottom-fab {
     right: calc(
@@ -8016,12 +8026,6 @@ details.sources small {
 /* Full screen has no X (back is the exit); the side panel shows it. */
 .reading-close {
   display: none;
-}
-
-@media (min-width: 900px), (orientation: landscape) and (min-width: 640px) and (max-height: 600px) {
-  .reading-close {
-    display: inline-flex;
-  }
 }
 
 .reading-sections {

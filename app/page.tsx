@@ -256,8 +256,11 @@ export default function Home() {
   const [savedOpen, setSavedOpen] = useState(false);
   // Saved answer open in the reading view (own history entry, so back returns to the list).
   const [savedReadingId, setSavedReadingId] = useState<string | null>(null);
-  // Close (X) pops both saved entries at once; tells popstate to close, not step back.
-  const closingSavedRef = useRef(false);
+  // Saved pane history: its entries are tagged { gggSaved: "list" | "read" }. The ref
+  // mirrors "pane open" for the popstate handler; ignorePops swallows popstates we
+  // caused ourselves (close via history.go, stepping over stale saved entries).
+  const savedOpenRef = useRef(false);
+  const ignorePopsRef = useRef(0);
   const [lastLibrary, setLastLibrary] = useState<"saved" | "steam">("saved");
   const {
     promptState,
@@ -472,18 +475,19 @@ export default function Home() {
 
   useEffect(() => {
     function onPopState() {
-      if (confirmFallbackModal) {
-        confirmFallbackModal.onCancel();
+      if (ignorePopsRef.current > 0) {
+        ignorePopsRef.current -= 1;
+        skipStaleSavedEntry();
         return;
       }
-      if (savedOpen) {
-        if (savedReadingId && !closingSavedRef.current) {
-          setSavedReadingId(null);
-          return;
-        }
-        closingSavedRef.current = false;
-        setSavedReadingId(null);
-        setSavedOpen(false);
+      consumeBackLayer();
+      skipStaleSavedEntry();
+    }
+
+    /** One back press closes the topmost layer. */
+    function consumeBackLayer() {
+      if (confirmFallbackModal) {
+        confirmFallbackModal.onCancel();
         return;
       }
       if (steamLibraryOpen) {
@@ -506,6 +510,13 @@ export default function Home() {
       }
       if (authOpen) {
         setAuthOpen(false);
+        return;
+      }
+      // The saved pane sits under the overlays above (at the split breakpoint it is
+      // non-modal, so the sidebar/libraries can open on top of it).
+      if (savedOpenRef.current) {
+        if (savedReadingId) setSavedReadingId(null);
+        else closeSavedState();
         return;
       }
       if (newGameOpen) {
@@ -1688,25 +1699,52 @@ export default function Home() {
     setToast(message);
   }
 
+  function savedHistoryTag() {
+    return (window.history.state as { gggSaved?: "list" | "read" } | null)?.gggSaved;
+  }
+
+  function pushSavedHistory(kind: "list" | "read") {
+    window.history.pushState({ gggOverlay: true, gggSaved: kind }, "");
+  }
+
+  function closeSavedState() {
+    savedOpenRef.current = false;
+    setSavedOpen(false);
+    setSavedReadingId(null);
+  }
+
+  /** Landed on a saved-pane entry while the pane is closed: step over it silently. */
+  function skipStaleSavedEntry() {
+    if (savedOpenRef.current || !savedHistoryTag()) return;
+    ignorePopsRef.current += 1;
+    window.history.back();
+  }
+
   function openSavedAnswers() {
     setMenuOpenId(null);
-    if (savedOpen) return;
+    if (savedOpenRef.current) return;
+    savedOpenRef.current = true;
     setSavedReadingId(null);
     setSavedOpen(true);
-    pushOverlayHistory();
+    pushSavedHistory("list");
   }
 
   function openSavedItem(id: string) {
     setSavedReadingId(id);
-    pushOverlayHistory();
+    pushSavedHistory("read");
   }
 
-  // ponytail: assumes the saved entries sit directly behind the current one (true for
-  // open → read → close). After a forward navigation into them this can close one
-  // layer early; upgrade path is tagging the entries and walking history by tag.
+  /**
+   * Close (X / Esc). Pops our own entries only when they are on top (a "read" entry
+   * always sits on its "list" entry). If another overlay is above, just close; the
+   * leftover saved entries are skipped when back reaches them.
+   */
   function closeSavedPane() {
-    closingSavedRef.current = true;
-    window.history.go(savedReadingId ? -2 : -1);
+    const tag = savedHistoryTag();
+    closeSavedState();
+    if (!tag) return;
+    ignorePopsRef.current += 1;
+    window.history.go(tag === "read" ? -2 : -1);
   }
 
   function removeSavedAnswer(item: SavedAnswer) {
@@ -2972,6 +3010,7 @@ export default function Home() {
         <SavedAnswersPanel
           game={game}
           items={savedAnswers.forGame(game)}
+          readingItem={savedReadingId ? savedAnswers.byId(savedReadingId) : undefined}
           signedIn={Boolean(user)}
           spoilerMajor={spoilerPrefs.major}
           deviceFull={savedAnswers.deviceFull}

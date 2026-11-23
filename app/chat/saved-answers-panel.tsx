@@ -21,7 +21,7 @@ const REMOVE_MS = 160;
  * globals.css); JS reads it only to pick the ARIA role and whether focus is trapped.
  * Keep in sync with the @media rule in globals.css.
  */
-// ponytail: the query string lives here and in two @media blocks; upgrade path is a
+// ponytail: the query string lives here and in one @media block; upgrade path is a
 // single CSS custom media / generated stylesheet if the breakpoint changes often.
 export const SPLIT_QUERY =
   "(min-width: 900px), (orientation: landscape) and (min-width: 640px) and (max-height: 600px)";
@@ -69,6 +69,7 @@ function trapTab(event: KeyboardEvent<HTMLElement>) {
 export function SavedAnswersPanel({
   game,
   items,
+  readingItem,
   signedIn,
   spoilerMajor,
   deviceFull,
@@ -83,6 +84,8 @@ export function SavedAnswersPanel({
 }: {
   game: string;
   items: SavedAnswer[];
+  /** The open item looked up by id across all games (survives a game change). */
+  readingItem: SavedAnswer | undefined;
   signedIn: boolean;
   /** Same gate as the chat: major-spoiler reveals render only when spoilers are on. */
   spoilerMajor: boolean;
@@ -144,8 +147,6 @@ export function SavedAnswersPanel({
     };
   }, []);
 
-  const readingItem = readingId ? items.find((item) => item.id === readingId) : undefined;
-
   function remove(item: SavedAnswer) {
     setMenuId(null);
     setRemovingId(item.id);
@@ -178,7 +179,7 @@ export function SavedAnswersPanel({
             key={readingId}
             itemId={readingId}
             item={readingItem}
-            game={game}
+            game={readingItem?.game || game}
             spoilerMajor={spoilerMajor}
             online={online}
             onBack={onBack}
