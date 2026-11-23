@@ -1,6 +1,8 @@
 "use client";
 
+import { adminModelName } from "@/lib/ai-models.js";
 import {
+  activityRowModels,
   ACTIVITY_TYPE_LABELS,
   formatActivityWhen,
   formatLatency,
@@ -93,7 +95,9 @@ function LlmCallPanel({
     <details className="llm-panel">
       <summary className="llm-panel-summary">
         <span className="llm-kind">{label}</span>
-        <span className="llm-model">{call.model}</span>
+        <span className="llm-model" title={call.model}>
+          {adminModelName(call.model)}
+        </span>
         <span className="llm-meta">
           {formatLatency(call.duration_ms)}
           {call.input_tokens != null ? ` · ${call.input_tokens} in` : ""}
@@ -370,7 +374,7 @@ export function ActivityCard({
             <strong>Service</strong> {row.service}
           </span>
           <span>
-            <strong>Model</strong> {row.provider}
+            <strong>Model</strong> {activityRowModels(row).map(adminModelName).join(" + ")}
           </span>
           <span>
             <strong>Latency</strong> {formatLatency(row.latencyMs)}

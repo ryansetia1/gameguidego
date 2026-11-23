@@ -2,15 +2,17 @@ import type { ApiSpendKey, ApiSpendSummary } from "./admin-api-spend.js";
 import type { TraceEventRow } from "./admin-traces";
 
 export const API_COST_RATES: {
-  readonly replicate_input_per_m: 0.3;
-  readonly replicate_output_per_m: 2.5;
   readonly sumopod_embed_per_m: 0.13;
 };
+
+export const REPLICATE_LLM_KINDS: string[];
 
 export type LlmCallCostInput = {
   kind: string;
   model?: string;
+  system_instruction?: string;
   prompt?: string;
+  response?: string;
   input_tokens?: number | null;
   output_tokens?: number | null;
 };
@@ -31,6 +33,10 @@ export type ApiCostSummary = {
 
 export function embedTokensFromLlmPrompt(prompt: string | undefined): number | null;
 export function formatTokenCount(tokens: number): string;
+export function llmCallTokens(
+  call: LlmCallCostInput,
+): { input: number; output: number; estimated: boolean } | null;
+export function llmCallCostUsd(call: LlmCallCostInput): number | null;
 export function formatUsd(amount: number | null): string;
 export function buildTraceApiCost(
   events: TraceEventRow[],

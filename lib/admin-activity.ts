@@ -1,5 +1,6 @@
 import type { GroupedTrace, TraceEventRow } from "@/lib/admin-traces";
 import { buildActivityPipeline, type ActivityPipeline } from "@/lib/admin-pipeline";
+import { REPLICATE_LLM_KINDS } from "@/lib/admin-api-cost";
 import {
   linkLlmCallsForIngest,
   linkLlmCallsForSolve,
@@ -38,6 +39,8 @@ export type ActivityRow = {
   game: string | null;
   platform: string | null;
   provider: string;
+  /** Distinct LLM model ids this trace's Replicate calls used, in call order. */
+  models?: string[];
   service: string;
   summary: string;
   question: string | null;
@@ -118,6 +121,21 @@ function pipelineService(pipeline: string | null | undefined): string {
     default:
       return pipeline || "Chat";
   }
+}
+
+export function answerModelsFromLlmCalls(calls: LlmCallRow[]): string[] {
+  return [
+    ...new Set(
+      calls
+        .filter((call) => call.model && REPLICATE_LLM_KINDS.includes(call.kind))
+        .map((call) => call.model),
+    ),
+  ];
+}
+
+/** Models a row is filtered/labelled by: its LLM models, else its provider. */
+export function activityRowModels(row: Pick<ActivityRow, "models" | "provider">): string[] {
+  return row.models?.length ? row.models : [row.provider];
 }
 
 export function providerFromLlmCalls(calls: LlmCallRow[]): string {
@@ -212,6 +230,7 @@ function enrichRow(
     ...row,
     traceId,
     provider,
+    models: answerModelsFromLlmCalls(llmCalls),
     llmCalls,
     traceEvents,
     pipeline: buildActivityPipeline(traceEvents, technical, llmCalls),
