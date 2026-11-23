@@ -64,6 +64,7 @@ import {
 } from "@/lib/spoiler-prefs.js";
 import { loadVisualAuto } from "@/lib/visual-search-prefs.js";
 import { consumeAnonSaveHint, isSavableReply } from "@/lib/saved-answers.js";
+import { chatBackPopsHistory, savedPopAction, type SavedEntry } from "@/lib/saved-history.js";
 import { groupChatsByRoom, isTopicColumnDbError, mergeChatsFromServer, normGameKey, syncRoomSharedMeta, syncSharedMetaToLocalGames, topicsForRoom, gameRoomKey, upsertChatInList } from "@/lib/game-room.js";
 import {
   displayTopicTitle,
@@ -144,6 +145,31 @@ async function deleteMessageImages(messages: Message[]) {
   } catch (caught) {
     console.error("Message image cleanup failed:", caught);
   }
+}
+
+
+/**
+ * Every app history entry carries `gggDepth` (one more than the entry it was pushed on),
+ * so popstate can tell back from forward. Module state: the page mounts once.
+ * Starts from history.state so a reload keeps the current entry's depth.
+ */
+let historyDepth =
+  typeof window === "undefined"
+    ? 0
+    : ((window.history.state as { gggDepth?: number } | null)?.gggDepth ?? 0);
+
+// The current entry's state (what a popstate "left") and the depth of the saved pane's
+// "list" entry; both feed savedPopAction (lib/saved-history.js).
+let currentEntry: SavedEntry =
+  typeof window === "undefined" ? null : (window.history.state as SavedEntry);
+let savedListDepth = 0;
+
+function pushAppHistory(state: Record<string, unknown>) {
+  const depth = ((window.history.state as { gggDepth?: number } | null)?.gggDepth ?? 0) + 1;
+  const next = { ...state, gggDepth: depth };
+  window.history.pushState(next, "");
+  historyDepth = depth;
+  currentEntry = next as SavedEntry;
 }
 
 
@@ -254,6 +280,15 @@ export default function Home() {
     run: () => void;
   } | null>(null);
   const [savedOpen, setSavedOpen] = useState(false);
+  // Saved answer open in the reading view (own history entry, so back returns to the list).
+  const [savedReadingId, setSavedReadingId] = useState<string | null>(null);
+  // Saved pane history: entries are tagged { gggSaved: "list" | "read", gggSavedId }.
+  // The popstate handler decides from the tag of the entry it lands on (see onPopState).
+  // The ref mirrors "pane open" for that handler.
+  const savedOpenRef = useRef(false);
+  // The game whose list the pane shows: the one it was opened for, or the open item's
+  // game, so a game change in the chat (or reading another game's item) keeps its list.
+  const [savedPaneGame, setSavedPaneGame] = useState("");
   const [lastLibrary, setLastLibrary] = useState<"saved" | "steam">("saved");
   const {
     promptState,
@@ -317,13 +352,13 @@ export default function Home() {
   const replacedCoverRef = useRef<string | null>(null);
   function pushOverlayHistory() {
     if (typeof window === "undefined") return;
-    window.history.pushState({ gggOverlay: true }, "");
+    pushAppHistory({ gggOverlay: true });
   }
 
   function pushTopicsHistory() {
     if (typeof window === "undefined") return;
     topicsHistoryPushed.current = true;
-    window.history.pushState({ gggTopics: true }, "");
+    pushAppHistory({ gggTopics: true });
   }
 
   /** Global loading/status only apply to the open thread; clear when leaving it. */
@@ -340,6 +375,7 @@ export default function Home() {
     const next = { ...state };
     delete next.gggOverlay;
     window.history.replaceState(next, "");
+    currentEntry = next as SavedEntry;
   }
 
   /** Strip overlay marker in-place (no popstate); safe before router.push. */
@@ -351,6 +387,7 @@ export default function Home() {
     delete next.gggOverlay;
     if (!next.gggHomeRoot) next.gggHomeRoot = true;
     window.history.replaceState(next, "");
+    currentEntry = next as SavedEntry;
   }
 
   function dismissOverlay() {
@@ -467,37 +504,59 @@ export default function Home() {
   }, [input, editSlotEl, composerExpanded]);
 
   useEffect(() => {
-    function onPopState() {
+    /** Pane-aware back/forward; the decision table lives in lib/saved-history.js. */
+    function onPopState(event: PopStateEvent) {
+      const state = event.state as (SavedEntry & { gggDepth?: number }) | null;
+      const depth = state?.gggDepth ?? 0;
+      const action = savedPopAction({
+        paneOpen: savedOpenRef.current,
+        readingId: savedReadingId,
+        depth,
+        prevDepth: historyDepth,
+        listDepth: savedListDepth,
+        left: currentEntry,
+        landing: state,
+      });
+      historyDepth = depth;
+      currentEntry = state;
+      if (action.type === "close") closeSavedState();
+      else if (action.type === "show") setSavedReadingId(action.readingId);
+      else if (action.type === "layer" && !closeTopOverlay()) consumeBackLayer();
+    }
+
+    /** Close the topmost overlay, if any. Returns whether one was closed. */
+    function closeTopOverlay() {
       if (confirmFallbackModal) {
         confirmFallbackModal.onCancel();
-        return;
-      }
-      if (savedOpen) {
-        setSavedOpen(false);
-        return;
+        return true;
       }
       if (steamLibraryOpen) {
         setSteamLibraryOpen(false);
-        return;
+        return true;
       }
       if (libraryOpen) {
         setLibraryOpen(false);
-        return;
+        return true;
       }
       if (sidebarOpen) {
         setSidebarOpen(false);
         setMenuOpenId(null);
-        return;
+        return true;
       }
       if (navMenuRef.current) {
         setNavMenu(null);
         navMenuHistoryPushed.current = false;
-        return;
+        return true;
       }
       if (authOpen) {
         setAuthOpen(false);
-        return;
+        return true;
       }
+      return false;
+    }
+
+    /** An ordinary back press with no overlay or saved pane open. */
+    function consumeBackLayer() {
       if (newGameOpen) {
         newGameHistoryPushed.current = false;
         setNewGameOpen(false);
@@ -543,7 +602,7 @@ export default function Home() {
 
       homeExitPromptAt.current = Date.now();
       setToast("Press back again to leave");
-      window.history.pushState({ gggHomeRoot: true }, "");
+      pushAppHistory({ gggHomeRoot: true });
     }
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -551,6 +610,7 @@ export default function Home() {
     authOpen,
     libraryOpen,
     savedOpen,
+    savedReadingId,
     sidebarOpen,
     steamLibraryOpen,
     confirmFallbackModal,
@@ -567,7 +627,7 @@ export default function Home() {
     const inThread = gameView === "thread";
     if (inThread && !chatHistoryPushed.current) {
       chatHistoryPushed.current = true;
-      window.history.pushState({ gggChat: true }, "");
+      pushAppHistory({ gggChat: true });
     } else if (gameView !== "thread") {
       chatHistoryPushed.current = false;
     }
@@ -608,7 +668,7 @@ export default function Home() {
       gggTopics?: boolean;
     } | null;
     if (top?.gggHomeRoot || top?.gggOverlay || top?.gggChat || top?.gggTopics) return;
-    window.history.pushState({ gggHomeRoot: true }, "");
+    pushAppHistory({ gggHomeRoot: true });
   }, [
     gameView,
     messages.length,
@@ -1337,7 +1397,8 @@ export default function Home() {
   function backToTopicList() {
     clearActiveTurnUi();
     setMenuOpenId(null);
-    if (typeof window !== "undefined" && chatHistoryPushed.current) {
+    // Pop only our own chat entry; saved-pane entries above it are left alone.
+    if (typeof window !== "undefined" && chatBackPopsHistory(chatHistoryPushed.current, window.history.state)) {
       window.history.back();
       return;
     }
@@ -1677,11 +1738,63 @@ export default function Home() {
     setToast(message);
   }
 
+  function savedHistoryTag() {
+    return (window.history.state as { gggSaved?: "list" | "read" } | null)?.gggSaved;
+  }
+
+  function pushSavedHistory(kind: "list" | "read", id?: string) {
+    pushAppHistory({ gggOverlay: true, gggSaved: kind, gggSavedId: id });
+  }
+
+  function closeSavedState() {
+    savedOpenRef.current = false;
+    setSavedOpen(false);
+    setSavedReadingId(null);
+  }
+
   function openSavedAnswers() {
     setMenuOpenId(null);
-    if (savedOpen) return;
+    if (savedOpenRef.current) return;
+    // From the toast's View: don't open under the sidebar/libraries (like openSavedLibrary).
+    setSidebarOpen(false);
+    setLibraryOpen(false);
+    setSteamLibraryOpen(false);
+    savedOpenRef.current = true;
+    setSavedPaneGame(game);
+    setSavedReadingId(null);
     setSavedOpen(true);
-    pushOverlayHistory();
+    pushSavedHistory("list");
+    savedListDepth = historyDepth;
+  }
+
+  /**
+   * Reading view Back arrow: pop our "read" entry when it is on top; if chat entries
+   * were pushed above it (split mode), go to the list directly instead.
+   */
+  function backToSavedList() {
+    if (currentEntry?.gggSaved === "read") window.history.back();
+    else setSavedReadingId(null);
+  }
+
+  function openSavedItem(id: string) {
+    setSavedReadingId(id);
+    pushSavedHistory("read", id);
+  }
+
+  /**
+   * Close (X / Esc): step back past our own entries ("read" always sits on its "list"
+   * entry); popstate lands below them and closes the pane. If that traversal never
+   * happens nothing is left half-closed: the pane just stays open. If our entry isn't
+   * on top (the pane is inert under overlays, so this is unlikely), close in place;
+   * the leftover entries are then no-ops when back/forward reaches them.
+   */
+  function closeSavedPane() {
+    const tag = savedHistoryTag();
+    if (!tag) {
+      closeSavedState();
+      return;
+    }
+    window.history.go(tag === "read" ? -2 : -1);
   }
 
   function removeSavedAnswer(item: SavedAnswer) {
@@ -1886,7 +1999,12 @@ export default function Home() {
   }
 
 
-  onSignedOutRef.current = newGame;
+  onSignedOutRef.current = () => {
+    // The signed-in user's saved answers are hidden once signed out; don't leave the
+    // pane showing "gone". Leftover pane history entries are no-ops.
+    if (savedOpenRef.current) closeSavedState();
+    newGame();
+  };
 
   function toggleRowMenu(id: string, event: MouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
@@ -2409,6 +2527,9 @@ export default function Home() {
   );
 
   return (
+    // Two-panel shell: the saved pane becomes a second grid column at the split
+    // breakpoint (CSS only); below it the pane is a fixed overlay and this is one column.
+    <div className={`app-split${savedOpen ? " has-pane" : ""}`}>
     <main>
       <nav className="nav" aria-label="Brand">
         <div className="nav-left">
@@ -2895,21 +3016,6 @@ export default function Home() {
         />
       )}
 
-      {savedOpen && (
-        <SavedAnswersPanel
-          game={game}
-          items={savedAnswers.forGame(game)}
-          signedIn={Boolean(user)}
-          spoilerMajor={spoilerPrefs.major}
-          deviceFull={savedAnswers.deviceFull}
-          online={savedAnswers.online}
-          syncFailed={savedAnswers.syncFailed}
-          syncAvailable={savedAnswers.syncAvailable}
-          onClose={dismissOverlay}
-          onRemove={removeSavedAnswer}
-        />
-      )}
-
       {toast && (
         <div
           className={`snackbar${toastOpensJournal ? " snackbar-action" : ""}${toastAction?.message === toast ? " snackbar-with-btn" : ""}`}
@@ -2955,5 +3061,34 @@ export default function Home() {
         </div>
       )}
     </main>
+      {savedOpen && (
+        <SavedAnswersPanel
+          game={savedPaneGame}
+          items={savedAnswers.forGame(savedPaneGame)}
+          inert={
+            sidebarOpen ||
+            libraryOpen ||
+            steamLibraryOpen ||
+            newGameOpen ||
+            authOpen ||
+            navMenu !== null ||
+            confirmState !== null ||
+            promptState !== null
+          }
+          readingItem={savedReadingId ? savedAnswers.byId(savedReadingId) : undefined}
+          signedIn={Boolean(user)}
+          spoilerMajor={spoilerPrefs.major}
+          deviceFull={savedAnswers.deviceFull}
+          online={savedAnswers.online}
+          syncFailed={savedAnswers.syncFailed}
+          syncAvailable={savedAnswers.syncAvailable}
+          readingId={savedReadingId}
+          onOpenItem={openSavedItem}
+          onBack={backToSavedList}
+          onClose={closeSavedPane}
+          onRemove={removeSavedAnswer}
+        />
+      )}
+    </div>
   );
 }

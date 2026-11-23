@@ -183,7 +183,8 @@ export function ProfileMenu({
     }
     if (!navHistoryPushed.current) {
       navHistoryPushed.current = true;
-      window.history.pushState({ gggOverlay: true }, "");
+      const depth = ((window.history.state as { gggDepth?: number } | null)?.gggDepth ?? 0) + 1;
+      window.history.pushState({ gggOverlay: true, gggDepth: depth }, "");
     }
   }, [controlled, internalMenu]);
 

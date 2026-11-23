@@ -417,6 +417,28 @@ do not sync to the cloud or use Storage uploads.
   removes of synced rows are tombstones until the server delete lands. Drawer opens from
   the game card kebab ("Saved answers (N)") or the toast's View action. `public/sw.js`
   falls back to the cached `/` shell for offline navigations so saved answers open offline.
+- `app/chat/reading-view.tsx` + `lib/reading-pos.js`: **Reading view** (#18) for a saved
+  answer: reading typography, Sections popover from `parseBlocks` headings (`sec-<n>` ids
+  via `AnswerBody sectionIds`), `[`/`]` jump, current section via IntersectionObserver,
+  remembered position per item in `gg:reading-pos` (`{ section, offset }`, device-only).
+  Layout: `page.tsx` wraps `<main>` in `.app-split`; at the split breakpoint (CSS @media,
+  mirrored as `SPLIT_QUERY` in `saved-answers-panel.tsx` for ARIA role/focus trap only) the
+  saved pane is a second grid column beside the chat (no backdrop, no trap); below it the
+  list is a drawer and the reading view is full-screen. **History:** the pane pushes
+  tagged entries (`{ gggSaved: "list" }`, then `{ gggSaved: "read", gggSavedId }` per opened
+  item), and every app entry carries `gggDepth` (`pushAppHistory`). In split mode the chat
+  stays usable, so chat entries (thread, topics, new-game form) and overlays can sit ABOVE
+  the pane's entries. `onPopState` delegates to `savedPopAction` (`lib/saved-history.js`,
+  covered by `npm run check`): back below the "list" entry closes the pane; back off the
+  "read" entry the pane shows goes to the list; back off anything else above the pane
+  (incl. a stale "read" entry the Back arrow skipped) is an ordinary back
+  (`closeTopOverlay` then `consumeBackLayer`); forward reopens a pane entry and never
+  closes the pane; with the pane closed, stepping off or forward onto a leftover pane entry
+  is a no-op. The reading Back arrow pops its "read" entry only when it is on top, else goes
+  to the list directly. Likewise in-app "Back to game" (`backToTopicList`) pops history only
+  when the chat entry is on top (`chatBackPopsHistory`), else resets to topics in place.
+  X/Esc calls `history.go(-1|-2)` and lets popstate close the pane. The pane is `inert`
+  while an overlay is open.
 - `lib/voice.js` + `app/voice-input.tsx`: composer mic via the free Web Speech API
   (**all users**). Buffered-until-stop dictation; platform-split capture (desktop
   `continuous` + rebuild finals, iOS `continuous: false` + `results[0]` + restart).

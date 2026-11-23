@@ -288,3 +288,11 @@ export function IconBookmark({ filled = false, ...props }: IconProps & { filled?
     </Svg>
   );
 }
+
+export function IconList(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path {...base} d="M9 6h11M9 12h11M9 18h11M4 6h1M4 12h1M4 18h1" />
+    </Svg>
+  );
+}
