@@ -12,6 +12,8 @@ import { GamesSidebar } from "./chat/games-sidebar";
 import { HomeSetup } from "./chat/home-setup";
 import { HomeTip } from "./chat/hero-marketing";
 import { MessageList } from "./chat/message-list";
+import { SavedAnswersPanel } from "./chat/saved-answers-panel";
+import { type SavedAnswer, useSavedAnswers } from "./chat/use-saved-answers";
 import { TopicList } from "./chat/topic-list";
 import { TopicTitleTypewriter } from "./chat/topic-title-typewriter";
 import { PromptDialog, usePromptDialog } from "./chat/use-prompt-dialog";
@@ -61,6 +63,7 @@ import {
   spoilerMajorFromUserMetadata,
 } from "@/lib/spoiler-prefs.js";
 import { loadVisualAuto } from "@/lib/visual-search-prefs.js";
+import { consumeAnonSaveHint } from "@/lib/saved-answers.js";
 import { groupChatsByRoom, isTopicColumnDbError, mergeChatsFromServer, normGameKey, syncRoomSharedMeta, syncSharedMetaToLocalGames, topicsForRoom, gameRoomKey, upsertChatInList } from "@/lib/game-room.js";
 import {
   displayTopicTitle,
@@ -243,6 +246,14 @@ export default function Home() {
   const { confirmState, askConfirm, askConfirmWithCheckbox, closeConfirm } = useConfirmDialog();
   const [toast, setToast] = useState("");
   const [toastOpensJournal, setToastOpensJournal] = useState(false);
+  // Optional action button on the toast ("View" / "Undo"); tied to its message so a
+  // later plain toast never inherits it.
+  const [toastAction, setToastAction] = useState<{
+    message: string;
+    label: string;
+    run: () => void;
+  } | null>(null);
+  const [savedOpen, setSavedOpen] = useState(false);
   const [lastLibrary, setLastLibrary] = useState<"saved" | "steam">("saved");
   const {
     promptState,
@@ -407,6 +418,7 @@ export default function Home() {
   });
 
   const coverEnabled = Boolean(user);
+  const savedAnswers = useSavedAnswers(user);
 
   const {
     guideMeta,
@@ -458,6 +470,10 @@ export default function Home() {
     function onPopState() {
       if (confirmFallbackModal) {
         confirmFallbackModal.onCancel();
+        return;
+      }
+      if (savedOpen) {
+        setSavedOpen(false);
         return;
       }
       if (steamLibraryOpen) {
@@ -534,6 +550,7 @@ export default function Home() {
   }, [
     authOpen,
     libraryOpen,
+    savedOpen,
     sidebarOpen,
     steamLibraryOpen,
     confirmFallbackModal,
@@ -836,14 +853,16 @@ export default function Home() {
   useEffect(() => {
     if (!toast) {
       setToastOpensJournal(false);
+      setToastAction(null);
       return;
     }
     const timer = setTimeout(() => {
       setToast("");
       setToastOpensJournal(false);
-    }, 3500);
+      setToastAction(null);
+    }, toastAction?.message === toast ? 5000 : 3500);
     return () => clearTimeout(timer);
-  }, [toast]);
+  }, [toast, toastAction]);
 
   const showJournalToast = useCallback((summary: string) => {
     setToast(summary);
@@ -861,6 +880,7 @@ export default function Home() {
     const EDGE = 24;
     const THRESHOLD = 60;
     const modalOpen =
+      savedOpen ||
       authOpen ||
       navMenu !== null ||
       confirmState !== null ||
@@ -920,6 +940,7 @@ export default function Home() {
     };
   }, [
     user,
+    savedOpen,
     sidebarOpen,
     libraryOpen,
     steamLibraryOpen,
@@ -1655,6 +1676,54 @@ export default function Home() {
     pushOverlayHistory();
   }
 
+  function showActionToast(message: string, label: string, run: () => void) {
+    setToastOpensJournal(false);
+    setToastAction({ message, label, run });
+    setToast(message);
+  }
+
+  function openSavedAnswers() {
+    setMenuOpenId(null);
+    if (savedOpen) return;
+    setSavedOpen(true);
+    pushOverlayHistory();
+  }
+
+  function removeSavedAnswer(item: SavedAnswer) {
+    if (!savedAnswers.remove(item)) {
+      setToast("Couldn't remove it on this device.");
+      return;
+    }
+    showActionToast("Removed from saved", "Undo", () => savedAnswers.restore(item));
+  }
+
+  function toggleSavedAnswer(index: number) {
+    const message = messages[index];
+    if (!message || message.role !== "assistant") return;
+    const question =
+      messages
+        .slice(0, index)
+        .reverse()
+        .find((row) => row.role === "user")?.content ?? "";
+    // The thread's own game, not a half-edited game field.
+    const savedGame = conversationGame.current || game;
+    if (!savedGame.trim()) return;
+    const result = savedAnswers.toggle({ game: savedGame, platform, question, message });
+    if (result.status === "saved") {
+      const text =
+        !user && consumeAnonSaveHint()
+          ? "Saved on this device. Sign in to keep it across devices."
+          : `Saved to ${savedGame}`;
+      showActionToast(text, "View", openSavedAnswers);
+    } else if (result.status === "removed") {
+      showActionToast("Removed from saved", "Undo", () => savedAnswers.restore(result.item));
+    } else if (result.status === "cap") {
+      setToast("Saved list is full. Remove one to add more.");
+    } else {
+      setToast("Couldn't save on this device.");
+    }
+  }
+
   function openSteamLibrary() {
     setSidebarOpen(false);
     setMenuOpenId(null);
@@ -2338,6 +2407,8 @@ export default function Home() {
       journeyExpanded={journeyExpanded}
       onJourneyExpandedChange={setJourneyExpanded}
       onJourneyToast={showJournalToast}
+      savedCount={savedAnswers.forGame(game).length}
+      onOpenSaved={game.trim() ? openSavedAnswers : undefined}
     />
   );
 
@@ -2650,6 +2721,8 @@ export default function Home() {
             dismissGuideNudge(game);
             setGuideNudgeDismissed(true);
           }}
+          isSaved={(index) => savedAnswers.isSaved(game, messages[index]?.content ?? "")}
+          onToggleSave={game.trim() ? toggleSavedAnswer : undefined}
         />
       ) : null}
 
@@ -2826,9 +2899,23 @@ export default function Home() {
         />
       )}
 
+      {savedOpen && (
+        <SavedAnswersPanel
+          game={game}
+          items={savedAnswers.forGame(game)}
+          signedIn={Boolean(user)}
+          spoilerMajor={spoilerPrefs.major}
+          deviceFull={savedAnswers.deviceFull}
+          online={savedAnswers.online}
+          syncFailed={savedAnswers.syncFailed}
+          onClose={dismissOverlay}
+          onRemove={removeSavedAnswer}
+        />
+      )}
+
       {toast && (
         <div
-          className={`snackbar${toastOpensJournal ? " snackbar-action" : ""}`}
+          className={`snackbar${toastOpensJournal ? " snackbar-action" : ""}${toastAction?.message === toast ? " snackbar-with-btn" : ""}`}
           role="status"
           aria-live="polite"
           tabIndex={toastOpensJournal ? 0 : undefined}
@@ -2854,6 +2941,20 @@ export default function Home() {
           }
         >
           {toast}
+          {toastAction?.message === toast && (
+            <button
+              type="button"
+              className="snackbar-btn"
+              onClick={() => {
+                const { run } = toastAction;
+                setToast("");
+                setToastAction(null);
+                run();
+              }}
+            >
+              {toastAction.label}
+            </button>
+          )}
         </div>
       )}
     </main>

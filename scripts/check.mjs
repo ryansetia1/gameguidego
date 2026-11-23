@@ -3481,4 +3481,53 @@ if (!canRunTsChecks) {
   }
 }
 
+// Saved answers (#17): caps, remove/undo, cross-device merge, previews.
+{
+  const sa = await import("../lib/saved-answers.js");
+  const msg = (content, extra = {}) => ({ content, highlights: [], sources: [{ title: "G", url: "https://x.test", extra: 1 }], ...extra });
+  const mk = (owner, game, content, t) => sa.buildSavedItem({ owner, game, question: "q", message: msg(content) }, new Date(t));
+  let items = [];
+  const a = mk(null, "Zelda: Link's Awakening", "**Hi** there", 1000);
+  items = sa.addItem(items, a).items;
+  assert.equal(sa.findSaved(items, null, "zelda links awakening", "**Hi** there")?.id, a.id, "game key normalizes");
+  assert.equal(sa.findSaved(items, "u1", "Zelda: Link's Awakening", "**Hi** there"), undefined, "owners are separate");
+  assert.deepEqual(a.sources, [{ title: "G", url: "https://x.test" }], "sources stored as links only");
+  for (let i = 1; i < sa.SAVED_PER_GAME_CAP; i++) items = sa.addItem(items, mk(null, "Zelda: Link's Awakening", `a${i}`, 1000 + i)).items;
+  assert.equal(sa.addItem(items, mk(null, "Zelda: Link's Awakening", "over", 9999)).error, "cap", "per-game cap blocks");
+  assert.ok(sa.addItem(items, mk(null, "Other", "ok", 9999)).items, "other game still saves");
+  assert.equal(sa.itemsForGame(items, null, "Zelda: Link's Awakening")[0].content, `a${sa.SAVED_PER_GAME_CAP - 1}`, "newest first");
+  // remove/undo: unsynced removes outright, synced tombstones, undo re-pushes.
+  let one = sa.removeItem([a], a.id);
+  assert.equal(one.length, 0, "unsynced remove drops");
+  const synced = { ...a, owner: "u1", synced: true };
+  one = sa.removeItem([synced], a.id);
+  assert.equal(one[0].deleted, true, "synced remove tombstones");
+  assert.equal(sa.visibleItems(one, "u1").length, 0, "tombstone hidden");
+  one = sa.restoreItem(one, synced);
+  assert.equal(one.length, 1);
+  assert.equal(one[0].synced, false, "undo re-pushes");
+  // claim + merge
+  const claimed = sa.claimAnon([a], "u1");
+  assert.equal(claimed[0].owner, "u1");
+  const remote = sa.toRow({ ...mk("u1", "Other", "from B", 5000) });
+  const goneElsewhere = { ...mk("u1", "Other", "gone", 4000), synced: true };
+  const tomb = { ...mk("u1", "Other", "tomb", 3000), synced: true, deleted: true };
+  const merged = sa.mergeRemote([...claimed, goneElsewhere, tomb], "u1", [remote, sa.toRow(tomb)], [a.id], []);
+  assert.ok(merged.find((r) => r.id === remote.id && r.synced), "remote row added");
+  assert.ok(merged.find((r) => r.id === a.id && r.synced), "pushed row marked synced");
+  assert.ok(!merged.find((r) => r.id === goneElsewhere.id), "synced row missing remotely is dropped");
+  assert.ok(merged.find((r) => r.id === tomb.id && r.deleted), "pending tombstone kept, not resurrected");
+  assert.ok(!sa.mergeRemote([tomb], "u1", [], [], [tomb.id]).length, "confirmed delete drops tombstone");
+  const undone = { ...tomb, deleted: false, synced: false };
+  assert.equal(sa.mergeRemote([undone], "u1", [], [], [tomb.id]).length, 1, "undo during sync survives the delete");
+  // preview + spoilers + dates
+  assert.equal(sa.savedPreview("## Step\n- **Go** north\n1. Then *east*"), "Step Go north Then east");
+  assert.ok(sa.savedPreview("x".repeat(300)).endsWith("…"));
+  assert.ok(sa.isSpoilerGated({ spoilers: [{ title: "t", detail: "d" }] }));
+  assert.ok(!sa.isSpoilerGated({ spoilers: [] }));
+  const now = new Date(2026, 10, 23, 12);
+  assert.equal(sa.savedDateLabel(new Date(2026, 10, 23, 1).toISOString(), now), "Today");
+  assert.equal(sa.savedDateLabel(new Date(2026, 10, 3).toISOString(), now), "3 Nov");
+}
+
 console.log("Self-check passed.");

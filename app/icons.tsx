@@ -279,3 +279,12 @@ export function IconClipboard(props: IconProps) {
     </Svg>
   );
 }
+
+/** Saved-answer toggle: outline when off, filled with currentColor when `filled`. */
+export function IconBookmark({ filled = false, ...props }: IconProps & { filled?: boolean }) {
+  return (
+    <Svg {...props}>
+      <path {...base} fill={filled ? "currentColor" : "none"} d="M6 4h12v16l-6-4-6 4z" />
+    </Svg>
+  );
+}

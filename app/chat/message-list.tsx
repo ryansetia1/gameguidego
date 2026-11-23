@@ -1,6 +1,7 @@
 import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import {
   IconArrowUpRight,
+  IconBookmark,
   IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
@@ -13,7 +14,7 @@ import {
 import { AnswerBody } from "./answer-body";
 import type { Message } from "./types";
 import { WRITING_ANSWER_PLACEHOLDER, messageShowsVariantNav } from "@/lib/chat-messages.js";
-import { KIND_LABELS, type Highlight } from "@/lib/highlights.js";
+import { KIND_LABELS, type Highlight, type SpoilerReveal } from "@/lib/highlights.js";
 import {
   answerModeInfo,
   enrichMessageSources,
@@ -168,6 +169,56 @@ function IllustrationInfo() {
   );
 }
 
+/** Tap-to-reveal major spoilers (shared by chat replies and saved answers). */
+export function SpoilerReveals({ spoilers }: { spoilers?: SpoilerReveal[] }) {
+  if (!spoilers || spoilers.length === 0) return null;
+  return (
+    <div className="spoiler-reveals">
+      {spoilers.map((item, i) => (
+        <details key={`spoiler-${i}`} className="spoiler-reveal">
+          <summary>
+            <span className="spoiler-reveal-tag">Major spoiler</span>
+            {item.title || "Tap to reveal"}
+          </summary>
+          <AnswerBody text={item.detail} />
+        </details>
+      ))}
+    </div>
+  );
+}
+
+/** Structured highlight sections under an answer. */
+export function HighlightGroups({ highlights }: { highlights?: Highlight[] }) {
+  if (!highlights || highlights.length === 0) return null;
+  return (
+    <div className="highlights">
+      {groupHighlightsByKind(highlights).map(({ kind, items }) => (
+        <section key={kind} className="highlight-group">
+          <h3 className="highlight-label">{KIND_LABELS[kind]}</h3>
+          <ul className="highlight-list">
+            {(items as Highlight[]).map((item, i) =>
+              item.detail ? (
+                <li key={`${kind}-${i}`}>
+                  <details className={`highlight highlight-${kind}`}>
+                    <summary>{item.title}</summary>
+                    <p>{item.detail}</p>
+                  </details>
+                </li>
+              ) : (
+                <li key={`${kind}-${i}`}>
+                  <div className={`highlight highlight-${kind} highlight-note`}>
+                    {item.title}
+                  </div>
+                </li>
+              ),
+            )}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 /**
  * The bar at the foot of every answer. Left: what the answer was built from,
  * Left: provenance label, "?", and sources chevron when cited (bar expands sources).
@@ -183,6 +234,8 @@ function AnswerFoot({
   onRetry,
   onAddGuide,
   onNavigateVariant,
+  saved,
+  onToggleSave,
 }: {
   message: Message;
   index: number;
@@ -193,6 +246,9 @@ function AnswerFoot({
   onRetry: () => void;
   onAddGuide?: () => void;
   onNavigateVariant: (msgIndex: number, variantIndex: number) => void;
+  /** Undefined hides the bookmark (reply still streaming). */
+  saved?: boolean;
+  onToggleSave?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const sources = enrichMessageSources(message.sources, guideMeta) as Message["sources"];
@@ -294,6 +350,17 @@ function AnswerFoot({
               </button>
             </div>
           )}
+          {onToggleSave && saved !== undefined && (
+            <button
+              type="button"
+              className={`turn-action turn-action-icon save-answer${saved ? " is-saved" : ""}`}
+              aria-label={saved ? "Remove from saved" : "Save answer"}
+              aria-pressed={saved}
+              onClick={onToggleSave}
+            >
+              <IconBookmark filled={saved} />
+            </button>
+          )}
           <button
             type="button"
             className="turn-action turn-action-icon"
@@ -378,6 +445,9 @@ export type MessageListProps = {
   guideUpsellDismissed?: boolean;
   onDismissGuideUpsell?: () => void;
   guideMeta?: Record<string, GuideMeta>;
+  /** Saved-answer state per assistant index; omit to hide the bookmark. */
+  isSaved?: (index: number) => boolean;
+  onToggleSave?: (index: number) => void;
 };
 
 export function MessageList({
@@ -405,6 +475,8 @@ export function MessageList({
   guideUpsellDismissed,
   onDismissGuideUpsell,
   guideMeta = {},
+  isSaved,
+  onToggleSave,
 }: MessageListProps) {
   const answerCount = messages.reduce(
     (count, message) => (message.role === "assistant" ? count + 1 : count),
@@ -508,46 +580,8 @@ export function MessageList({
                 ) : null}
               </figure>
             )}
-            {message.spoilers && spoilerMajor && message.spoilers.length > 0 && (
-              <div className="spoiler-reveals">
-                {message.spoilers.map((item, i) => (
-                  <details key={`spoiler-${i}`} className="spoiler-reveal">
-                    <summary>
-                      <span className="spoiler-reveal-tag">Major spoiler</span>
-                      {item.title || "Tap to reveal"}
-                    </summary>
-                    <AnswerBody text={item.detail} />
-                  </details>
-                ))}
-              </div>
-            )}
-            {message.highlights && message.highlights.length > 0 && (
-              <div className="highlights">
-                {groupHighlightsByKind(message.highlights).map(({ kind, items }) => (
-                  <section key={kind} className="highlight-group">
-                    <h3 className="highlight-label">{KIND_LABELS[kind]}</h3>
-                    <ul className="highlight-list">
-                      {(items as Highlight[]).map((item, i) =>
-                        item.detail ? (
-                          <li key={`${kind}-${i}`}>
-                            <details className={`highlight highlight-${kind}`}>
-                              <summary>{item.title}</summary>
-                              <p>{item.detail}</p>
-                            </details>
-                          </li>
-                        ) : (
-                          <li key={`${kind}-${i}`}>
-                            <div className={`highlight highlight-${kind} highlight-note`}>
-                              {item.title}
-                            </div>
-                          </li>
-                        ),
-                      )}
-                    </ul>
-                  </section>
-                ))}
-              </div>
-            )}
+            {spoilerMajor && <SpoilerReveals spoilers={message.spoilers} />}
+            <HighlightGroups highlights={message.highlights} />
             {onAddGuide &&
               index === lastGuideIndex &&
               preferredUrlCount === 0 &&
@@ -590,6 +624,12 @@ export function MessageList({
                 onRetry={() => void onRetry(index)}
                 onAddGuide={onAddGuide}
                 onNavigateVariant={onNavigateVariant}
+                saved={
+                  isSaved && !(loading && index === messages.length - 1)
+                    ? isSaved(index)
+                    : undefined
+                }
+                onToggleSave={onToggleSave ? () => onToggleSave(index) : undefined}
               />
             )}
           </article>

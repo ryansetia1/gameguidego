@@ -407,6 +407,15 @@ do not sync to the cloud or use Storage uploads.
   major twists; routine walkthrough stays in `answer`; when OFF the model may set
   `spoilerRisk` for a second-pass censor), `coerceSpoilerPrefs` at the API trust
   boundary. Covered by `npm run check`.
+- `lib/saved-answers.js` + `app/chat/use-saved-answers.tsx` + `app/chat/saved-answers-panel.tsx`:
+  **Saved answers** (#17). Bookmark in `AnswerFoot` snapshots the reply (question, text,
+  highlights, spoilers, own source links) per game (`normGameKey`) into `localStorage`
+  `gg:saved-answers` (cap 20/game, 200/device; quota errors toast, never toggle). Signed-in
+  users sync to `public.saved_answers` (`db/saved-answers.sql`, RLS own rows) on open, on
+  `online`, and after each change; anon saves are claimed by the next signed-in sync;
+  removes of synced rows are tombstones until the server delete lands. Drawer opens from
+  the game card kebab ("Saved answers (N)") or the toast's View action. `public/sw.js`
+  falls back to the cached `/` shell for offline navigations so saved answers open offline.
 - `lib/voice.js` + `app/voice-input.tsx`: composer mic via the free Web Speech API
   (**all users**). Buffered-until-stop dictation; platform-split capture (desktop
   `continuous` + rebuild finals, iOS `continuous: false` + `results[0]` + restart).
