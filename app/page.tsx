@@ -254,6 +254,10 @@ export default function Home() {
     run: () => void;
   } | null>(null);
   const [savedOpen, setSavedOpen] = useState(false);
+  // Saved answer open in the reading view (own history entry, so back returns to the list).
+  const [savedReadingId, setSavedReadingId] = useState<string | null>(null);
+  // Close (X) pops both saved entries at once; tells popstate to close, not step back.
+  const closingSavedRef = useRef(false);
   const [lastLibrary, setLastLibrary] = useState<"saved" | "steam">("saved");
   const {
     promptState,
@@ -473,6 +477,12 @@ export default function Home() {
         return;
       }
       if (savedOpen) {
+        if (savedReadingId && !closingSavedRef.current) {
+          setSavedReadingId(null);
+          return;
+        }
+        closingSavedRef.current = false;
+        setSavedReadingId(null);
         setSavedOpen(false);
         return;
       }
@@ -551,6 +561,7 @@ export default function Home() {
     authOpen,
     libraryOpen,
     savedOpen,
+    savedReadingId,
     sidebarOpen,
     steamLibraryOpen,
     confirmFallbackModal,
@@ -1685,8 +1696,22 @@ export default function Home() {
   function openSavedAnswers() {
     setMenuOpenId(null);
     if (savedOpen) return;
+    setSavedReadingId(null);
     setSavedOpen(true);
     pushOverlayHistory();
+  }
+
+  function openSavedItem(id: string) {
+    setSavedReadingId(id);
+    pushOverlayHistory();
+  }
+
+  // ponytail: assumes the saved entries sit directly behind the current one (true for
+  // open → read → close). After a forward navigation into them this can close one
+  // layer early; upgrade path is tagging the entries and walking history by tag.
+  function closeSavedPane() {
+    closingSavedRef.current = true;
+    window.history.go(savedReadingId ? -2 : -1);
   }
 
   function removeSavedAnswer(item: SavedAnswer) {
@@ -2413,6 +2438,9 @@ export default function Home() {
   );
 
   return (
+    // Two-panel shell: the saved pane becomes a second grid column at the split
+    // breakpoint (CSS only); below it the pane is a fixed overlay and this is one column.
+    <div className={`app-split${savedOpen ? " has-pane" : ""}`}>
     <main>
       <nav className="nav" aria-label="Brand">
         <div className="nav-left">
@@ -2899,20 +2927,6 @@ export default function Home() {
         />
       )}
 
-      {savedOpen && (
-        <SavedAnswersPanel
-          game={game}
-          items={savedAnswers.forGame(game)}
-          signedIn={Boolean(user)}
-          spoilerMajor={spoilerPrefs.major}
-          deviceFull={savedAnswers.deviceFull}
-          online={savedAnswers.online}
-          syncFailed={savedAnswers.syncFailed}
-          onClose={dismissOverlay}
-          onRemove={removeSavedAnswer}
-        />
-      )}
-
       {toast && (
         <div
           className={`snackbar${toastOpensJournal ? " snackbar-action" : ""}${toastAction?.message === toast ? " snackbar-with-btn" : ""}`}
@@ -2958,5 +2972,22 @@ export default function Home() {
         </div>
       )}
     </main>
+      {savedOpen && (
+        <SavedAnswersPanel
+          game={game}
+          items={savedAnswers.forGame(game)}
+          signedIn={Boolean(user)}
+          spoilerMajor={spoilerPrefs.major}
+          deviceFull={savedAnswers.deviceFull}
+          online={savedAnswers.online}
+          syncFailed={savedAnswers.syncFailed}
+          readingId={savedReadingId}
+          onOpenItem={openSavedItem}
+          onBack={dismissOverlay}
+          onClose={closeSavedPane}
+          onRemove={removeSavedAnswer}
+        />
+      )}
+    </div>
   );
 }

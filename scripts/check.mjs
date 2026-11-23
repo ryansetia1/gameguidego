@@ -3530,4 +3530,15 @@ if (!canRunTsChecks) {
   assert.equal(sa.savedDateLabel(new Date(2026, 10, 3).toISOString(), now), "3 Nov");
 }
 
+// Reading position (#18): scroll <-> { section, offset } round-trip and fallbacks.
+{
+  const rp = await import("../lib/reading-pos.js");
+  const tops = [100, 600, 1500];
+  assert.deepEqual(rp.positionFromScroll(40, tops), { section: -1, offset: 40 }, "before first heading");
+  assert.deepEqual(rp.positionFromScroll(700, tops), { section: 1, offset: 100 });
+  assert.equal(rp.scrollFromPosition({ section: 1, offset: 100 }, tops), 700, "round-trip");
+  assert.equal(rp.scrollFromPosition({ section: 1, offset: 100 }, [100, 800]), 900, "follows a moved heading");
+  assert.equal(rp.scrollFromPosition({ section: 3, offset: 0 }, tops), null, "missing section -> top");
+}
+
 console.log("Self-check passed.");

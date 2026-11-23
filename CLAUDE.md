@@ -416,6 +416,15 @@ do not sync to the cloud or use Storage uploads.
   removes of synced rows are tombstones until the server delete lands. Drawer opens from
   the game card kebab ("Saved answers (N)") or the toast's View action. `public/sw.js`
   falls back to the cached `/` shell for offline navigations so saved answers open offline.
+- `app/chat/reading-view.tsx` + `lib/reading-pos.js`: **Reading view** (#18) for a saved
+  answer: reading typography, Sections popover from `parseBlocks` headings (`sec-<n>` ids
+  via `AnswerBody sectionIds`), `[`/`]` jump, current section via IntersectionObserver,
+  remembered position per item in `gg:reading-pos` (`{ section, offset }`, device-only).
+  Layout: `page.tsx` wraps `<main>` in `.app-split`; at the split breakpoint (CSS @media,
+  mirrored as `SPLIT_QUERY` in `saved-answers-panel.tsx` for ARIA role/focus trap only) the
+  saved pane is a second grid column beside the chat (no backdrop, no trap); below it the
+  list is a drawer and the reading view is full-screen. Opening an item pushes a history
+  entry, so back returns to the list.
 - `lib/voice.js` + `app/voice-input.tsx`: composer mic via the free Web Speech API
   (**all users**). Buffered-until-stop dictation; platform-split capture (desktop
   `continuous` + rebuild finals, iOS `continuous: false` + `results[0]` + restart).

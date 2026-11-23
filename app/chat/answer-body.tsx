@@ -8,8 +8,12 @@ function renderInline(segments: { text: string; bold: boolean; italic: boolean }
   });
 }
 
-/** Light markdown answer body (paragraphs, lists, bold). */
-export function AnswerBody({ text }: { text: string }) {
+/**
+ * Light markdown answer body (paragraphs, lists, bold). `sectionIds` renders headings as
+ * real `<h2 id="sec-n">` so the reading view can navigate between them.
+ */
+export function AnswerBody({ text, sectionIds = false }: { text: string; sectionIds?: boolean }) {
+  let section = 0;
   return (
     <div className="answer">
       {parseBlocks(text).map((block, i) => {
@@ -32,6 +36,14 @@ export function AnswerBody({ text }: { text: string }) {
           );
         }
         if (block.type === "h") {
+          if (sectionIds) {
+            const id = `sec-${section++}`;
+            return (
+              <h2 key={i} id={id} className="reading-heading">
+                {renderInline(block.segments)}
+              </h2>
+            );
+          }
           return <h4 key={i}>{renderInline(block.segments)}</h4>;
         }
         return <p key={i}>{renderInline(block.segments)}</p>;
