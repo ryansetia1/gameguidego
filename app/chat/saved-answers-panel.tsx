@@ -123,8 +123,10 @@ export function SavedAnswersPanel({
     const trigger = document.activeElement as HTMLElement | null;
     closeRef.current?.focus();
     return () => {
+      // The kebab item that opened us unmounts in the same commit, so the captured
+      // trigger is often <body>; fall back to the game card kebab.
       const target =
-        trigger && document.contains(trigger)
+        trigger && trigger !== document.body && document.contains(trigger)
           ? trigger
           : document.querySelector<HTMLElement>(".game-card-menu .kebab");
       target?.focus();
