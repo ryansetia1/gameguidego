@@ -473,7 +473,11 @@ do not sync to the cloud or use Storage uploads.
   prompt-only (Pandemona returned 3 different confident wrong names across fresh
   chats); only self-consistency voting would surface it — not yet shipped.
   `playerName` only on the first turn — follow-ups get a no-greeting rule to stop
-  repeated "hello again" salutations),
+  repeated "hello again" salutations). Reply language: `lib/question-language.js`
+  (stopword vote, English/Indonesian, else "") appends "(Reply language: X)" to the
+  question in `buildPrompt`; the aku/kamu register rides only on the Indonesian hint.
+  Naming Indonesian words in the system prompt made Gemini 3 Flash answer English
+  questions in Indonesian (#31),
   plus `REWRITE_INSTRUCTION` + `buildRewritePrompt({ question, history })` for
   query rewriting. Covered by `npm run check`.
 - `lib/highlights.js`: `KINDS`/`KIND_LABELS`, `coerceHighlights(value)`, and

@@ -217,6 +217,7 @@ import {
   variantRowsFromPersistedAssistant,
 } from "../lib/chat-thread.js";
 import { buildModelInput, isAllowedModel, modelLabel } from "../lib/ai-models.js";
+import { questionLanguage } from "../lib/question-language.js";
 import {
   selectMessagesForServerMerge,
   tailTurnIndexFromMessages,
@@ -292,7 +293,7 @@ assert.match(SYSTEM_INSTRUCTION, /ignore anything that is not about/i);
 assert.match(SYSTEM_INSTRUCTION, /Be concrete/);
 assert.match(SYSTEM_INSTRUCTION, /"highlights"/);
 assert.match(SYSTEM_INSTRUCTION, /"answer"/);
-assert.match(SYSTEM_INSTRUCTION, /Prefer "aku" and "kamu"/);
+assert.match(SYSTEM_INSTRUCTION, /informal, friendly first- and second-person forms/);
 
 // Snippet cleaning strips link soup, CTAs, and Q&A vote/user noise while
 // keeping the real prose.
@@ -3676,6 +3677,22 @@ if (!canRunTsChecks) {
   );
   assert.equal(merged[1].model, "openai/gpt-5.6-sol");
   assert.equal(merged[1].variants[0].model, "google/gemini-3-flash");
+}
+
+// #31 reply language: named explicitly in the prompt; Indonesian register only for Indonesian.
+{
+  assert.equal(questionLanguage("How do I unlock Funky Kong?"), "English");
+  assert.equal(questionLanguage("Gimana cara unlock Funky Kong?"), "Indonesian");
+  assert.equal(questionLanguage("Kart apa yang paling bagus buat pemula?"), "Indonesian");
+  assert.equal(questionLanguage("poin 3"), "");
+  assert.equal(questionLanguage("poin 3", [{ role: "user", content: "gimana cara dapetin itu?" }]), "Indonesian");
+  assert.equal(questionLanguage("ノコノコ"), "");
+  const enPrompt = buildPrompt({ game: "G", platform: "P", question: "How do I beat this boss?", sources: [] });
+  assert.match(enPrompt, /Reply language: English\./);
+  assert.doesNotMatch(enPrompt, /aku|kamu/);
+  const idPrompt = buildPrompt({ game: "G", platform: "P", question: "Gimana cara ngalahin bos ini?", sources: [] });
+  assert.match(idPrompt, /Reply language: Indonesian\..*"aku"\/"kamu"/);
+  assert.doesNotMatch(summarizeSystemInstruction(true, false), /\b(aku|kamu|seperti)\b/);
 }
 
 console.log("Self-check passed.");
