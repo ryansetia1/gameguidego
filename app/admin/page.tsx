@@ -8,7 +8,9 @@ import { DateRangeSelect } from "@/app/admin/date-range-select";
 import { useAdminFx } from "@/app/admin/use-admin-fx";
 import { AdminShell } from "@/app/admin/admin-shell";
 import { useAdminAuth } from "@/app/admin/use-admin-auth";
+import { adminModelName } from "@/lib/ai-models.js";
 import {
+  activityRowModels,
   dateRangeForPreset,
   DEFAULT_ADMIN_DATE_PRESET,
   type ActivityType,
@@ -44,6 +46,7 @@ export default function AdminActivityPage() {
     setActivityLiveRange,
   } = useAdminData();
   const [typeFilter, setTypeFilter] = useState<"all" | ActivityType>("all");
+  const [modelFilter, setModelFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [datePreset, setDatePreset] = useState<AdminDateRangePreset>(DEFAULT_ADMIN_DATE_PRESET);
   const dateRange = useMemo(() => dateRangeForPreset(datePreset), [datePreset]);
@@ -65,14 +68,21 @@ export default function AdminActivityPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [typeFilter, search, datePreset]);
+  }, [typeFilter, modelFilter, search, datePreset]);
+
+  // Options come from the models present in the loaded rows.
+  const modelOptions = useMemo(
+    () => [...new Set(rows.flatMap((row) => activityRowModels(row)))].sort(),
+    [rows],
+  );
 
   const filtered = useMemo(() => {
     return rows.filter((row) => {
       if (typeFilter !== "all" && row.type !== typeFilter) return false;
+      if (modelFilter !== "all" && !activityRowModels(row).includes(modelFilter)) return false;
       return activityRowMatchesSearch(row, search);
     });
-  }, [rows, search, typeFilter]);
+  }, [rows, search, typeFilter, modelFilter]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -182,6 +192,19 @@ export default function AdminActivityPage() {
             {TYPE_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
                 {opt.label}
+              </option>
+            ))}
+          </select>
+          <select
+            className="activity-filter"
+            value={modelFilter}
+            onChange={(e) => setModelFilter(e.target.value)}
+            aria-label="Filter by model"
+          >
+            <option value="all">All models</option>
+            {modelOptions.map((model) => (
+              <option key={model} value={model}>
+                {adminModelName(model)}
               </option>
             ))}
           </select>

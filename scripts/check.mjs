@@ -80,7 +80,7 @@ import {
   countApiSpendFromLlm,
   countApiSpendFromTrace,
 } from "../lib/admin-api-spend.js";
-import { buildApiCost, buildTraceApiCost, formatUsd } from "../lib/admin-api-cost.js";
+import { buildApiCost, buildTraceApiCost, formatUsd, llmCallCostUsd, llmCallTokens } from "../lib/admin-api-cost.js";
 import { compactTraceEvents, isReplicateInProgress } from "../lib/admin-traces.ts";
 import {
   buildTraceEventCostMap,
@@ -3648,7 +3648,25 @@ if (!canRunTsChecks) {
   });
   assert.equal(buildModelInput("custom/model", call).system_instruction, "s");
   assert.equal(isAllowedModel("google/gemini-2.5-flash"), false);
-  assert.equal(modelLabel("openai/gpt-5.6-sol"), "GPT sol");
+  assert.equal(modelLabel("openai/gpt-5.6-sol"), "GPT-5.6 Sol");
+  // #27 per-model cost: each call at its own rate, unknown ids at the fallback rate,
+  // missing tokens estimated from text (~4 chars/token).
+  const gpt = { kind: "summarize", model: "openai/gpt-5.6-sol", input_tokens: 1_000_000, output_tokens: 1_000_000 };
+  const gem = { ...gpt, model: "google/gemini-3-flash" };
+  const old = { ...gpt, model: "google/gemini-2.5-flash" };
+  assert.equal(llmCallCostUsd(gpt), 17.5);
+  assert.equal(llmCallCostUsd(gem), 3.5);
+  assert.equal(llmCallCostUsd(old), 2.8);
+  assert.equal(llmCallCostUsd({ kind: "summarize", model: "openai/gpt-5.6-sol", input_tokens: null, output_tokens: null }), null);
+  assert.deepEqual(
+    llmCallTokens({ kind: "rewrite", system_instruction: "ab", prompt: "cdef", response: "12345678" }),
+    { input: 2, output: 2, estimated: true },
+  );
+  const mixed = buildApiCost(
+    { lines: [{ key: "replicate", label: "Replicate", count: 2 }], total: 2 },
+    [gpt, gem],
+  );
+  assert.equal(mixed.lines[0].costUsd, 21);
   assert.equal(modelLabel("custom/model"), "");
   assert.equal(modelLabel(undefined), "");
   const merged = mergeAssistantFieldsFromLegacy(

@@ -1,6 +1,8 @@
 import {
   API_COST_RATES,
   embedTokensFromLlmPrompt,
+  llmCallCostUsd,
+  REPLICATE_LLM_KINDS,
   type LlmCallCostInput,
 } from "./admin-api-cost.js";
 import type { TraceEventRow } from "./admin-traces";
@@ -13,25 +15,12 @@ function tokensFromUsd(tokens: number, perMillion: number): number {
   return roundUsd((tokens * perMillion) / 1_000_000);
 }
 
-function replicateCost(inputTokens: number, outputTokens: number): number {
-  return roundUsd(
-    tokensFromUsd(inputTokens, API_COST_RATES.replicate_input_per_m) +
-      tokensFromUsd(outputTokens, API_COST_RATES.replicate_output_per_m),
-  );
-}
-
 function sumopodEmbedCost(inputTokens: number): number {
   return tokensFromUsd(inputTokens, API_COST_RATES.sumopod_embed_per_m);
 }
 
 export function costFromSingleLlmCall(call: LlmCallCostInput): number | null {
-  if (["rewrite", "summarize", "censor", "visual_query", "memory_summarize", "journal_synthesize"].includes(call.kind)) {
-    const input = call.input_tokens;
-    const output = call.output_tokens;
-    if (input == null || output == null) return null;
-    if (input === 0 && output === 0) return 0;
-    return replicateCost(input, output);
-  }
+  if (REPLICATE_LLM_KINDS.includes(call.kind)) return llmCallCostUsd(call);
   if (call.kind === "embed_index" || call.kind === "embed_query") {
     const tokens = embedTokensFromLlmPrompt(call.prompt);
     if (tokens == null) return null;
