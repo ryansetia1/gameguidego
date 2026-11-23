@@ -34,7 +34,9 @@ Client mode → API via `guideRetrievalModeToApi("default" | "skip" | "supplemen
 | **skip** | No | Yes | `web_skip_guide` |
 | **supplement** | Yes | Yes | `rag_supplemented` |
 
-Persistence: `sessionStorage` `gg:guide-retrieval-mode`. Resets when guide removed.
+Persistence: per game in `localStorage` `gg:guide-retrieval-mode-by-game` (JSON map keyed by
+`normGameKey`; issue #16). Restored on game change, saved only on a user toggle. With no
+preferred guide URLs the effective mode is `default`; the saved mode comes back with the guide.
 
 ## Teardown
 

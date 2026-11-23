@@ -131,6 +131,8 @@ import {
   coerceGuideRetrievalMode,
   guideRetrievalModeToApi,
   toggleGuideRetrievalMode,
+  loadGuideRetrievalMode,
+  saveGuideRetrievalMode,
 } from "../lib/guide-retrieval-mode.js";
 import { isReplicateRateLimit, parsePositiveInt } from "../lib/replicate-retry.js";
 import {
@@ -1073,6 +1075,34 @@ assert.deepEqual(guideRetrievalModeToApi("knowledge"), {
   knowledgeOnly: true,
 });
 assert.equal(toggleGuideRetrievalMode("knowledge", "knowledge"), "default");
+// Per-game guide mode persistence (issue #16).
+{
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  };
+  saveGuideRetrievalMode("Assassin's Creed", "knowledge");
+  saveGuideRetrievalMode("Zelda", "supplement");
+  assert.equal(loadGuideRetrievalMode("Assassins Creed"), "knowledge");
+  assert.equal(loadGuideRetrievalMode("zelda"), "supplement");
+  assert.equal(loadGuideRetrievalMode("Metroid"), "default");
+  assert.equal(loadGuideRetrievalMode(""), "default");
+  saveGuideRetrievalMode("Zelda", "default");
+  assert.equal(loadGuideRetrievalMode("Zelda"), "default");
+  assert.equal(loadGuideRetrievalMode("Assassins Creed"), "knowledge");
+  store.set("gg:guide-retrieval-mode-by-game", "not json");
+  assert.equal(loadGuideRetrievalMode("Zelda"), "default");
+  globalThis.localStorage = {
+    getItem: () => { throw new Error("blocked"); },
+    setItem: () => { throw new Error("blocked"); },
+    removeItem: () => { throw new Error("blocked"); },
+  };
+  saveGuideRetrievalMode("Zelda", "skip");
+  assert.equal(loadGuideRetrievalMode("Zelda"), "default");
+  delete globalThis.localStorage;
+}
 assert.deepEqual(coerceGuideRetrievalFlags({ knowledgeOnly: true, alsoSearchWeb: true }), {
   skipPreferredGuide: true,
   alsoSearchWeb: false,
