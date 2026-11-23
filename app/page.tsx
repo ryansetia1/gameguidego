@@ -1061,35 +1061,30 @@ export default function Home() {
     }
   }, [spoilerPrefs.major, turnOffSpoilers, updateGameSpoiler]);
 
+  // Per-game mode (issue #16): restore on game change, save only on user toggles
+  // so a transient game/URL hydration can never overwrite a saved choice.
   useEffect(() => {
-    setGuideRetrievalMode(loadGuideRetrievalMode());
-  }, []);
+    setGuideRetrievalMode(loadGuideRetrievalMode(game));
+  }, [game]);
 
-  useEffect(() => {
-    saveGuideRetrievalMode(guideRetrievalMode);
-  }, [guideRetrievalMode]);
-
-  useEffect(() => {
-    if (preferredUrls.length === 0 && guideRetrievalMode !== "default") {
-      setGuideRetrievalMode("default");
-    }
-  }, [preferredUrls.length, guideRetrievalMode]);
+  // No preferred guide => behave as default, but keep the saved mode for when a guide returns.
+  const effectiveGuideRetrievalMode = preferredUrls.length > 0 ? guideRetrievalMode : "default";
 
   useEffect(() => {
     if (preferredUrls.length <= 1) setGuideSourceSelection(null);
   }, [preferredUrls.length]);
 
-  const toggleSkipGuide = useCallback(() => {
-    setGuideRetrievalMode((prev) => toggleGuideRetrievalMode(prev, "skip"));
-  }, []);
-
-  const toggleKnowledgeOnly = useCallback(() => {
-    setGuideRetrievalMode((prev) => toggleGuideRetrievalMode(prev, "knowledge"));
-  }, []);
-
-  const toggleSupplementGuide = useCallback(() => {
-    setGuideRetrievalMode((prev) => toggleGuideRetrievalMode(prev, "supplement"));
-  }, []);
+  const toggleGuideMode = useCallback(
+    (target: "skip" | "supplement" | "knowledge") => {
+      const next = toggleGuideRetrievalMode(guideRetrievalMode, target);
+      setGuideRetrievalMode(next);
+      saveGuideRetrievalMode(game, next);
+    },
+    [game, guideRetrievalMode],
+  );
+  const toggleSkipGuide = useCallback(() => toggleGuideMode("skip"), [toggleGuideMode]);
+  const toggleKnowledgeOnly = useCallback(() => toggleGuideMode("knowledge"), [toggleGuideMode]);
+  const toggleSupplementGuide = useCallback(() => toggleGuideMode("supplement"), [toggleGuideMode]);
 
   useEffect(() => {
     if (editingIndex === null) return;
@@ -2119,7 +2114,7 @@ export default function Home() {
     platform,
     catalogGameId,
     preferredUrls,
-    guideRetrievalMode,
+    guideRetrievalMode: effectiveGuideRetrievalMode,
     guideSourceSelection,
     setGuideSourceSelection,
     cover,
@@ -2716,7 +2711,7 @@ export default function Home() {
           onToggleTemporary={() => void toggleTemporary()}
           onToggleSpoiler={toggleEffectiveSpoiler}
           showGuideRetrievalToggles={preferredUrls.length > 0}
-          guideRetrievalMode={guideRetrievalMode}
+          guideRetrievalMode={effectiveGuideRetrievalMode}
           onToggleSkipGuide={toggleSkipGuide}
           onToggleSupplementGuide={toggleSupplementGuide}
           onToggleKnowledgeOnly={toggleKnowledgeOnly}

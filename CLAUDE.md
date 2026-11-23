@@ -868,7 +868,7 @@ large chat or persistence work:
 - [`docs/plan/guide-web-override.md`](docs/plan/guide-web-override.md): **Shipped**
   composer toggles when a preferred guide is attached — **Search web instead**
   (`skipPreferredGuide` / `web_skip_guide`) and **Guide + web search** (was "Also search web")
-  (`alsoSearchWeb` / `rag_supplemented`) and **Knowledge only** (`knowledgeOnly`: no guide, no web); default OFF; `lib/guide-retrieval-mode.js`.
+  (`alsoSearchWeb` / `rag_supplemented`) and **Knowledge only** (`knowledgeOnly`: no guide, no web); default OFF; `lib/guide-retrieval-mode.js`. Mode is remembered per game in `localStorage` (`gg:guide-retrieval-mode-by-game`, keyed by `normGameKey`).
 - [`docs/plan/guide-source-selector.md`](docs/plan/guide-source-selector.md): **Shipped**
   per-turn multi-select RAG source strip on the composer (Auto = all guides vs subset);
   `ragGuideUrls` on `POST /api/solve` + user message for retry/edit.
