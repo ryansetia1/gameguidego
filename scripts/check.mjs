@@ -4743,7 +4743,8 @@ if (!canRunTsChecks) {
     // Rapid repeat taps share one download; cancel aborts it for every waiter.
     const before = fetches;
     const taps = await Promise.all([bc.downloadMapOnce(other), bc.downloadMapOnce(other), bc.downloadMapOnce(other)]);
-    assert.deepEqual([fetches - before, taps[0] === taps[2], bc.isMapDownloading(other)], [1, true, false], "single flight");
+    assert.deepEqual([fetches - before, taps[0] === taps[2]], [1, true], "single flight");
+    assert.equal(bc.downloadMapOnce(other) === bc.downloadMapOnce(other), true, "same promise while running");
     const slow = bc.downloadMapOnce(bc.mapProxyUrl(`${img}y.png`, game));
     const slow2 = bc.downloadMapOnce(bc.mapProxyUrl(`${img}y.png`, game));
     bc.cancelMapDownload(bc.mapProxyUrl(`${img}y.png`, game));
@@ -4840,6 +4841,24 @@ if (!canRunTsChecks) {
   assert.deepEqual([server.rows.length, b.items.length], [0, 0], "remove synced");
   const { start, final } = await sm.syncSavedMaps(server.client, "u1", a);
   assert.deepEqual([start.length, final.length], [1, 0], "removed on the other device (hook drops its cached image)");
+  // Removed while its first push is in flight: tombstoned, deleted next pass, never comes back.
+  const d = device(sm.addSavedMap([], sm.buildSavedMap({ owner: "u1", game: "Final Fantasy", sourceUrl: game, map: link })).items);
+  const realUpsert = server.client.from;
+  server.client.from = (t) => {
+    const q = realUpsert(t);
+    const up = q.upsert;
+    q.upsert = async (...args) => {
+      const res = await up(...args);
+      d.write(sm.removeSavedMap(d.items, d.items[0].id));
+      return res;
+    };
+    return q;
+  };
+  await sm.syncSavedMaps(server.client, "u1", d);
+  server.client.from = realUpsert;
+  assert.deepEqual([d.items.length, d.items[0]?.deleted, server.rows.length], [1, true, 1], "tombstone for the row the push created");
+  await sm.syncSavedMaps(server.client, "u1", d);
+  assert.deepEqual([d.items.length, server.rows.length], [0, 0], "removed for good");
   // Missing table: throws an error isMissingTableError recognises (hook goes quiet).
   server.client.setMissing(true);
   const c = device(sm.addSavedMap([], sm.buildSavedMap({ owner: "u1", game: "FF", sourceUrl: game, map: link })).items);

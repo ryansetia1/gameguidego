@@ -116,7 +116,10 @@ function subscribeOnline(fn: () => void) {
   };
 }
 
-const proxyOf = (item: { imageUrl: string; sourceUrl: string }) => mapProxyUrl(item.imageUrl, item.sourceUrl);
+/** What locates a map image: the VGMaps image URL and its Atlas game URL. */
+export type MapRef = { imageUrl: string; sourceUrl: string };
+
+const proxyOf = (item: MapRef) => mapProxyUrl(item.imageUrl, item.sourceUrl);
 
 /** Drop cached images no live item points at any more (removed here or on another device). */
 function dropOrphanedImages(before: SavedMap[], after: SavedMap[]) {
@@ -144,7 +147,8 @@ export function useSavedMaps(user: User | null) {
   const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
   const [syncFailed, setSyncFailed] = useState(false);
   const [syncAvailable, setSyncAvailable] = useState(() => !serverTableMissing);
-  const [downloading, setDownloading] = useState<Record<string, boolean>>({});
+  // Callers waiting per proxy URL (a save and an open can share one download).
+  const [downloading, setDownloading] = useState<Record<string, number>>({});
   const syncing = useRef(false);
   const rerun = useRef(false);
   const viewportTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -192,23 +196,23 @@ export function useSavedMaps(user: User | null) {
     if (owner && online) void sync();
   }, [owner, online, sync]);
 
-  // Unmount: stop the pending viewport sync and running downloads.
+  // Unmount: drop the pending viewport sync (the next open/online sync sends it). Running
+  // downloads are shared with other hook instances, so only cancelDownload stops one.
   useEffect(
     () => () => {
       if (viewportTimer.current) clearTimeout(viewportTimer.current);
-      cancelMapDownload();
     },
     [],
   );
 
   const track = useCallback(async <T,>(proxyUrl: string, run: () => Promise<T>): Promise<T> => {
-    setDownloading((prev) => ({ ...prev, [proxyUrl]: true }));
+    setDownloading((prev) => ({ ...prev, [proxyUrl]: (prev[proxyUrl] ?? 0) + 1 }));
     try {
       return await run();
     } finally {
       setDownloading((prev) => {
-        const next = { ...prev };
-        delete next[proxyUrl];
+        const next = { ...prev, [proxyUrl]: (prev[proxyUrl] ?? 1) - 1 };
+        if (next[proxyUrl] <= 0) delete next[proxyUrl];
         return next;
       });
     }
@@ -267,7 +271,7 @@ export function useSavedMaps(user: User | null) {
    * close or map switch. `signal` only cancels the not-saved fetch.
    */
   const openMap = useCallback(
-    async (map: { imageUrl: string; sourceUrl: string }, signal?: AbortSignal): Promise<OpenMapResult> => {
+    async (map: MapRef, signal?: AbortSignal): Promise<OpenMapResult> => {
       const proxyUrl = proxyOf(map);
       try {
         const hit = await readCachedMapBlob(proxyUrl);
@@ -284,7 +288,7 @@ export function useSavedMaps(user: User | null) {
   );
 
   /** Stop a running download (closing the panel or viewer). */
-  const cancelDownload = useCallback((map: { imageUrl: string; sourceUrl: string }) => {
+  const cancelDownload = useCallback((map: MapRef) => {
     cancelMapDownload(proxyOf(map));
   }, []);
 
@@ -334,7 +338,7 @@ export function useSavedMaps(user: User | null) {
     [items, owner],
   );
   const isDownloading = useCallback(
-    (map: { imageUrl: string; sourceUrl: string }) => Boolean(downloading[proxyOf(map)]),
+    (map: MapRef) => Boolean(downloading[proxyOf(map)]),
     [downloading],
   );
 

@@ -7,6 +7,9 @@
 // path: a versioned precache list from the build manifest.
 const CACHE = "gg-runtime-v2";
 const SHELL = "/";
+// Saved map images (lib/map-blob-cache.js). The app owns this cache: never evicted
+// here, and map image requests skip the runtime cache (up to 30 MB each).
+const MAPS_CACHE = "gg-maps-v1";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -19,12 +22,12 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  // Evict stale bundles: drop every cache that isn't the current one, so a
-  // deploy can't be masked by a previously-cached JS chunk.
+  // Evict stale bundles: drop every cache that isn't the current one (or the
+  // saved maps), so a deploy can't be masked by a previously-cached JS chunk.
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE && k !== MAPS_CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });
@@ -32,6 +35,7 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.method !== "GET") return;
+  if (new URL(request.url).pathname.startsWith("/api/maps/image")) return;
 
   event.respondWith(
     fetch(request)
