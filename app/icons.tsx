@@ -296,19 +296,3 @@ export function IconList(props: IconProps) {
     </Svg>
   );
 }
-
-/** Folded three-panel map outline (24x24, 1.8 stroke, round caps, no fill or marker). */
-export function IconMap(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.8}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M3 6.5L9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20V6.5zM9 4v13.5M15 6.5V20"
-      />
-    </Svg>
-  );
-}

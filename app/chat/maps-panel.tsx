@@ -13,28 +13,59 @@ import {
 import { ClearButton } from "../clear-button";
 import { IconArrowLeft, IconDotsVertical, IconX } from "../icons";
 import { SPLIT_QUERY } from "./saved-answers-panel";
-import type {
-  MapDownloadProgress,
-  MapRef,
-  SaveMapResult,
-  SavedMap,
-} from "./use-saved-maps";
+import type { MapDownloadProgress, MapRef, SavedMap } from "./use-saved-maps";
 import { hasCachedMap, mapProxyUrl } from "@/lib/map-blob-cache.js";
 import {
-  type MapsTab,
+  MAPS_TIMEOUT_MS,
   defaultMapsQuery,
-  defaultMapsTab,
   downloadProgressRatio,
-  formatDownloadProgressText,
+  filterMapsSections,
   formatFindMapMeta,
   formatSavedMapMeta,
+  formatSavingText,
   isMapOverLimit,
+  mapsChoiceKey,
+  mapsLoadStage,
   parseMapsSearchQuery,
+  resolveMapsGame,
 } from "@/lib/maps-panel.js";
 import type { VGMapsGameEntry, VGMapsMapLink } from "@/lib/vgmaps-parser.js";
 
-// Remember the user's last explicit tab switch in memory only (never persisted across reloads).
-let lastUsedMapsTab: MapsTab | null = null;
+// Filter text for the open game, kept for this session only (never persisted).
+let rememberedFilter: { key: string; query: string } | null = null;
+
+// The "Which game?" / "Wrong game?" choice, remembered per game + platform on this device.
+const CHOICE_STORE = "gg:maps-game-choice";
+
+function readChoice(game: string, platform: string): VGMapsGameEntry | null {
+  try {
+    const all = JSON.parse(localStorage.getItem(CHOICE_STORE) ?? "{}") as Record<string, unknown>;
+    const hit = all?.[mapsChoiceKey(game, platform)] as Partial<VGMapsGameEntry> | undefined;
+    if (
+      hit &&
+      typeof hit.title === "string" &&
+      typeof hit.platform === "string" &&
+      typeof hit.url === "string" &&
+      hit.url.startsWith("https://")
+    ) {
+      return { title: hit.title, platform: hit.platform, url: hit.url };
+    }
+  } catch {
+    // Private mode or bad JSON: no remembered choice.
+  }
+  return null;
+}
+
+function writeChoice(game: string, platform: string, entry: VGMapsGameEntry) {
+  try {
+    const all = JSON.parse(localStorage.getItem(CHOICE_STORE) ?? "{}") as Record<string, unknown>;
+    const next = all && typeof all === "object" ? all : {};
+    next[mapsChoiceKey(game, platform)] = { title: entry.title, platform: entry.platform, url: entry.url };
+    localStorage.setItem(CHOICE_STORE, JSON.stringify(next));
+  } catch {
+    // Quota / private mode: the choice just isn't remembered.
+  }
+}
 
 function subscribeSplit(fn: () => void) {
   const mq = window.matchMedia(SPLIT_QUERY);
@@ -48,6 +79,13 @@ function useSplitLayout() {
     () => window.matchMedia(SPLIT_QUERY).matches,
     () => false,
   );
+}
+
+/** Lowercase letters/digits only, so "(Super NES)" and "SuperNES" compare equal. */
+const squash = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+function prefersReducedMotion() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 /** Keep Tab inside the narrow drawer dialog (includes text/search inputs). */
@@ -70,6 +108,30 @@ function trapTab(event: KeyboardEvent<HTMLElement>) {
   }
 }
 
+async function fetchJson<T>(url: string, signal: AbortSignal): Promise<T> {
+  const res = await fetch(url, { signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = (await res.json()) as T & { available?: boolean };
+  if (data.available === false) throw new Error("VGMaps unavailable");
+  return data;
+}
+
+/** State of the "On VGMaps" section. Loading follows the real calls (search, then list). */
+type VgState =
+  | { kind: "idle" }
+  | { kind: "loading"; stage: "search" | "list"; entry?: VGMapsGameEntry; since: number }
+  | { kind: "pick"; options: VGMapsGameEntry[] }
+  | { kind: "notfound"; query: string }
+  | { kind: "error"; canceled: boolean }
+  | { kind: "done"; entry: VGMapsGameEntry; maps: VGMapsMapLink[] };
+
+type PickerState = {
+  status: "idle" | "loading" | "done" | "error";
+  query: string;
+  submitted: string;
+  results: VGMapsGameEntry[];
+};
+
 export type MapsPanelProps = {
   game: string;
   platform: string;
@@ -85,32 +147,24 @@ export type MapsPanelProps = {
   syncFailed: boolean;
   syncAvailable: boolean;
   findSaved: (game: string, imageUrl: string) => SavedMap | undefined;
-  isDownloading: (map: MapRef) => boolean;
-  onSaveMap: (input: {
-    game: string;
-    platform?: string;
-    gameEntry: Pick<VGMapsGameEntry, "url">;
-    mapLink: VGMapsMapLink;
-    onProgress?: (progress: MapDownloadProgress) => void;
-  }) => Promise<SaveMapResult>;
-  onCancelDownload: (map: MapRef) => void;
+  /** Running saves (page-level, they outlive the panel and viewer), keyed by image URL. */
+  saveProgress: Record<string, MapDownloadProgress>;
+  onCancelSave: (map: MapRef) => void;
+  /** The "Wrong game?" picker is an in-panel view with its own history entry. */
+  pickerOpen: boolean;
+  onOpenPicker: () => void;
+  onClosePicker: () => void;
   onOpenSavedMap: (item: SavedMap) => void;
-  onOpenFindMap: (
-    gameEntry: VGMapsGameEntry,
-    mapLink: VGMapsMapLink,
-    saved?: SavedMap,
-  ) => void;
+  onOpenFindMap: (gameEntry: VGMapsGameEntry, mapLink: VGMapsMapLink, saved?: SavedMap) => void;
   onRemoveSavedMap: (item: SavedMap) => void;
-  onToast: (message: string) => void;
   onClose: () => void;
 };
 
-type FetchStatus = "idle" | "loading" | "done" | "error";
-
 /**
- * Per-game Maps side column / drawer (#39). Mirrors SavedAnswersPanel's shell: wide
- * viewports & landscape handhelds show a right column beside chat; narrow viewports show
- * a right drawer with backdrop, focus trap, and Esc close.
+ * Per-game Maps side column / drawer / full-screen sheet (#39, #56). One scroller: saved
+ * maps first, then the VGMaps maps for the active game (auto-resolved, "Wrong game?" to
+ * change it). Wide viewports & landscape handhelds show a column beside chat; 601–899px a
+ * right drawer; ≤600px a full-screen sheet with a focus trap.
  */
 export function MapsPanel({
   game,
@@ -124,121 +178,194 @@ export function MapsPanel({
   syncFailed,
   syncAvailable,
   findSaved,
-  isDownloading,
-  onSaveMap,
-  onCancelDownload,
+  saveProgress,
+  onCancelSave,
+  pickerOpen,
+  onOpenPicker,
+  onClosePicker,
   onOpenSavedMap,
   onOpenFindMap,
   onRemoveSavedMap,
-  onToast,
   onClose,
 }: MapsPanelProps) {
   const split = useSplitLayout();
+  const gameKey = `${game}\n${platform}`;
   const paneRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
-  const backBtnRef = useRef<HTMLButtonElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const gameRowRefs = useRef(new Map<string, HTMLButtonElement>());
-  const mountedRef = useRef(true);
-  const gameKey = `${game}\n${platform}`;
-  const currentGameKeyRef = useRef(gameKey);
-  currentGameKeyRef.current = gameKey;
-  const savedTabRef = useRef<HTMLButtonElement>(null);
-  const findTabRef = useRef<HTMLButtonElement>(null);
-  const scrollBodyRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const wrongGameRef = useRef<HTMLButtonElement>(null);
+  const pickerBackRef = useRef<HTMLButtonElement>(null);
 
-  const [activeTab, setActiveTab] = useState<MapsTab>(() =>
-    defaultMapsTab(savedItems.length, lastUsedMapsTab),
-  );
   const [menuId, setMenuId] = useState<string | null>(null);
   const [offlineNoticeId, setOfflineNoticeId] = useState<string | null>(null);
   const [cachedByProxy, setCachedByProxy] = useState<Record<string, boolean>>({});
+  const [filter, setFilter] = useState(() =>
+    rememberedFilter?.key === gameKey ? rememberedFilter.query : "",
+  );
+  const [vg, setVg] = useState<VgState>({ kind: "idle" });
+  const [now, setNow] = useState(0);
+  const [notFoundQuery, setNotFoundQuery] = useState("");
+  const [picker, setPicker] = useState<PickerState>({
+    status: "idle",
+    query: "",
+    submitted: "",
+    results: [],
+  });
+  // Row the viewer was opened from; outlined once the viewer closes.
+  const [returnedKey, setReturnedKey] = useState<string | null>(null);
 
-  // Find tab state (Step 1: VGMaps games, Step 2: selected game's maps).
-  const [query, setQuery] = useState(() => defaultMapsQuery(game, platform));
-  const [submittedQuery, setSubmittedQuery] = useState("");
-  const [searchStatus, setSearchStatus] = useState<FetchStatus>("idle");
-  const [gameResults, setGameResults] = useState<VGMapsGameEntry[]>([]);
-  const [selectedGame, setSelectedGame] = useState<VGMapsGameEntry | null>(null);
-  const [listStatus, setListStatus] = useState<FetchStatus>("idle");
-  const [mapLinks, setMapLinks] = useState<VGMapsMapLink[]>([]);
+  const vgRef = useRef(vg);
+  vgRef.current = vg;
+  const abortRef = useRef<AbortController | null>(null);
+  const genRef = useRef(0);
+  const lastEntryRef = useRef<VGMapsGameEntry | null>(null);
+  const autoKeyRef = useRef<string | null>(null);
+  const prevGameKeyRef = useRef(gameKey);
+  const pickerAbortRef = useRef<AbortController | null>(null);
+  const listScrollTopRef = useRef(0);
+  const openedRowRef = useRef<string | null>(null);
 
-  // Per-map download progress and error/limit status (keyed by imageUrl).
-  const [progressByUrl, setProgressByUrl] = useState<Record<string, MapDownloadProgress>>({});
-  const [failedByUrl, setFailedByUrl] = useState<Record<string, boolean>>({});
-  const [tooLargeByUrl, setTooLargeByUrl] = useState<Record<string, boolean>>({});
-  const [downloadAnnouncement, setDownloadAnnouncement] = useState("");
-
-  const userEditedQueryRef = useRef(false);
-  const autoSearchedGameRef = useRef<string | null>(null);
-  const step1ScrollTopRef = useRef(0);
-  const searchAbortRef = useRef<AbortController | null>(null);
-  const searchGenRef = useRef(0);
-  const listAbortRef = useRef<AbortController | null>(null);
-  const listGenRef = useRef(0);
-  const prevGameKeyRef = useRef(`${game}\n${platform}`);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
+  const stopLoading = useCallback((canceled: boolean) => {
+    genRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setVg({ kind: "error", canceled });
   }, []);
 
-  const selectTab = useCallback((next: MapsTab, focus = false) => {
-    lastUsedMapsTab = next;
-    setActiveTab(next);
+  /** Run the VGMaps calls: search (unless the game entry is known), then the map list. */
+  const startVgmaps = useCallback(
+    (opts: { entry?: VGMapsGameEntry; query?: string } = {}) => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const gen = ++genRef.current;
+      const current = () => gen === genRef.current;
+
+      void (async () => {
+        try {
+          let entry = opts.entry;
+          if (!entry) {
+            const raw = opts.query?.trim() || defaultMapsQuery(game, platform);
+            const parsed = opts.query
+              ? parseMapsSearchQuery(raw, game, platform)
+              : { game: game.trim(), platform: platform.trim() };
+            setVg({ kind: "loading", stage: "search", since: Date.now() });
+            const params = new URLSearchParams({ game: parsed.game });
+            if (parsed.platform) params.set("platform", parsed.platform);
+            const data = await fetchJson<{ games?: VGMapsGameEntry[] }>(
+              `/api/maps/search?${params.toString()}`,
+              controller.signal,
+            );
+            if (!current()) return;
+            const decision = resolveMapsGame(
+              parsed.game,
+              parsed.platform,
+              Array.isArray(data.games) ? data.games : [],
+            );
+            if (decision.type === "none") {
+              // Show what was actually searched: the typed text, or the game name alone.
+              const shown = opts.query ? raw : parsed.game;
+              setNotFoundQuery(shown);
+              setVg({ kind: "notfound", query: shown });
+              return;
+            }
+            if (decision.type === "pick") {
+              setVg({ kind: "pick", options: decision.options });
+              return;
+            }
+            entry = decision.entry;
+          }
+          lastEntryRef.current = entry;
+          setVg({ kind: "loading", stage: "list", entry, since: Date.now() });
+          const params = new URLSearchParams({ url: entry.url });
+          const data = await fetchJson<{ maps?: VGMapsMapLink[] }>(
+            `/api/maps/list?${params.toString()}`,
+            controller.signal,
+          );
+          if (!current()) return;
+          setVg({ kind: "done", entry, maps: Array.isArray(data.maps) ? data.maps : [] });
+        } catch {
+          // A newer run, Cancel or the timeout already set the state (and aborted this one).
+          if (!current()) return;
+          setVg({ kind: "error", canceled: false });
+        } finally {
+          if (abortRef.current === controller) abortRef.current = null;
+        }
+      })();
+    },
+    [game, platform],
+  );
+
+  const chooseGame = useCallback(
+    (entry: VGMapsGameEntry) => {
+      writeChoice(game, platform, entry);
+      startVgmaps({ entry });
+    },
+    [game, platform, startVgmaps],
+  );
+
+  // Game switched while the panel is open (split mode): fresh list, filter cleared,
+  // in-flight requests aborted.
+  useEffect(() => {
+    if (prevGameKeyRef.current === gameKey) return;
+    prevGameKeyRef.current = gameKey;
+    genRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    pickerAbortRef.current?.abort();
+    lastEntryRef.current = null;
+    autoKeyRef.current = null;
+    rememberedFilter = null;
+    setFilter("");
+    setVg({ kind: "idle" });
     setMenuId(null);
-    if (focus) {
-      requestAnimationFrame(() => {
-        (next === "saved" ? savedTabRef : findTabRef).current?.focus();
-      });
-    }
-  }, []);
-
-  // Reset Find state cleanly if the active game changes while the panel stays open (split mode).
-  useEffect(() => {
-    const key = `${game}\n${platform}`;
-    if (prevGameKeyRef.current === key) return;
-    prevGameKeyRef.current = key;
-    searchAbortRef.current?.abort();
-    listAbortRef.current?.abort();
-    searchGenRef.current += 1;
-    listGenRef.current += 1;
-    userEditedQueryRef.current = false;
-    autoSearchedGameRef.current = null;
-    step1ScrollTopRef.current = 0;
-    setQuery(defaultMapsQuery(game, platform));
-    setSubmittedQuery("");
-    setSearchStatus("idle");
-    setGameResults([]);
-    setSelectedGame(null);
-    setListStatus("idle");
-    setMapLinks([]);
-    setProgressByUrl({});
-    setFailedByUrl({});
-    setTooLargeByUrl({});
     setOfflineNoticeId(null);
-    setMenuId(null);
-  }, [game, platform]);
+    setReturnedKey(null);
+    if (pickerOpen) onClosePicker();
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [gameKey, pickerOpen, onClosePicker]);
 
-  // Abort any in-flight search/list requests on unmount. If a search was aborted while still
-  // in flight (e.g. React Strict Mode remount), clear autoSearchedGameRef so remount retries.
+  // Load the VGMaps list on open, on game change and when the connection comes back.
   useEffect(() => {
-    return () => {
-      if (searchAbortRef.current) {
-        searchAbortRef.current.abort();
-        searchAbortRef.current = null;
-        autoSearchedGameRef.current = null;
-      }
-      if (listAbortRef.current) {
-        listAbortRef.current.abort();
-        listAbortRef.current = null;
-      }
-    };
-  }, []);
+    if (!online || !game.trim()) return;
+    const kind = vgRef.current.kind;
+    if (autoKeyRef.current === gameKey && kind !== "idle" && kind !== "error") return;
+    // Retry automatically after an offline error, never after an explicit Cancel.
+    if (autoKeyRef.current === gameKey && kind === "error" && (vgRef.current as { canceled: boolean }).canceled) {
+      return;
+    }
+    autoKeyRef.current = gameKey;
+    const remembered = readChoice(game, platform);
+    startVgmaps(remembered ? { entry: remembered } : {});
+  }, [gameKey, game, platform, online, startVgmaps]);
 
-  // Focus close button on open and restore focus to trigger on close.
+  // Abort everything on unmount (closing the panel never stops a map save, those are page-level).
+  useEffect(
+    () => () => {
+      genRef.current += 1;
+      abortRef.current?.abort();
+      pickerAbortRef.current?.abort();
+      autoKeyRef.current = null;
+    },
+    [],
+  );
+
+  // Slow notice after 6s without progress, give up at 20s.
+  const loadingSince = vg.kind === "loading" ? vg.since : null;
+  useEffect(() => {
+    if (loadingSince === null) return;
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    const timeout = setTimeout(
+      () => stopLoading(false),
+      Math.max(0, loadingSince + MAPS_TIMEOUT_MS - Date.now()),
+    );
+    return () => {
+      clearInterval(tick);
+      clearTimeout(timeout);
+    };
+  }, [loadingSince, stopLoading]);
+
+  // Focus close button on open and restore focus to the invoking control on close.
   useEffect(() => {
     const trigger = document.activeElement as HTMLElement | null;
     closeRef.current?.focus();
@@ -247,7 +374,7 @@ export function MapsPanel({
         trigger && trigger !== document.body && document.contains(trigger)
           ? trigger
           : (document.querySelector<HTMLElement>(".game-card-maps") ??
-            document.querySelector<HTMLElement>(".game-card-menu .kebab"));
+            document.querySelector<HTMLElement>(".composer-extras"));
       target?.focus();
     };
   }, []);
@@ -262,7 +389,7 @@ export function MapsPanel({
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [menuId]);
 
-  // Esc: close row menu first, else close panel (split mode only when focus is inside).
+  // Esc: close row menu first, else close the whole panel (split: only when focus is inside).
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented || viewerOpen || inert) return;
@@ -274,7 +401,7 @@ export function MapsPanel({
     return () => document.removeEventListener("keydown", onKey);
   }, [split, menuId, viewerOpen, inert, onClose]);
 
-  // Refresh Cache API presence for every saved map in the current game without leaking blobs.
+  // Cache API presence for every saved map in the current game.
   useEffect(() => {
     let cancelled = false;
     if (savedItems.length === 0) {
@@ -295,259 +422,423 @@ export function MapsPanel({
     };
   }, [savedItems, cacheVersion, online]);
 
-  // Clear stale offline notice once back online.
   useEffect(() => {
     if (online) setOfflineNoticeId(null);
   }, [online]);
 
-  const runSearch = useCallback(
-    async (rawQuery: string) => {
-      const trimmed = rawQuery.trim();
-      if (!trimmed || !online) return;
-      searchAbortRef.current?.abort();
+  // Back from the viewer: focus the row it was opened from and outline it briefly
+  // (reduced motion: a steady left rule until the next interaction).
+  const prevViewerOpenRef = useRef(viewerOpen);
+  useEffect(() => {
+    const was = prevViewerOpenRef.current;
+    prevViewerOpenRef.current = viewerOpen;
+    const key = openedRowRef.current;
+    if (!was || viewerOpen || !key) return;
+    const row = paneRef.current?.querySelector<HTMLElement>(`[data-row-key="${CSS.escape(key)}"]`);
+    row?.focus();
+    setReturnedKey(key);
+    if (prefersReducedMotion()) return;
+    const timer = setTimeout(() => setReturnedKey(null), 1200);
+    return () => clearTimeout(timer);
+  }, [viewerOpen]);
+
+  useEffect(() => {
+    if (!returnedKey || !prefersReducedMotion()) return;
+    const pane = paneRef.current;
+    if (!pane) return;
+    let armed = false;
+    // Skip the focus/keyup that brought us back; the next real interaction clears it.
+    const arm = setTimeout(() => {
+      armed = true;
+    }, 300);
+    const clear = (event: Event) => {
+      // Autofill and automation send keydown "Unidentified"; that isn't the player.
+      if ((event as globalThis.KeyboardEvent).key === "Unidentified") return;
+      if (armed) setReturnedKey(null);
+    };
+    pane.addEventListener("pointerdown", clear);
+    pane.addEventListener("keydown", clear);
+    return () => {
+      clearTimeout(arm);
+      pane.removeEventListener("pointerdown", clear);
+      pane.removeEventListener("keydown", clear);
+    };
+  }, [returnedKey]);
+
+  // Picker view: search prefilled with "game platform" when it opens; list scroll restored
+  // and focus back on "Wrong game?" when it closes.
+  const runPickerSearch = useCallback(
+    async (raw: string) => {
+      const trimmed = raw.trim();
+      if (!trimmed) return;
+      pickerAbortRef.current?.abort();
       const controller = new AbortController();
-      searchAbortRef.current = controller;
-      const gen = ++searchGenRef.current;
-
-      const parsed = parseMapsSearchQuery(trimmed, game, platform);
-      setSubmittedQuery(trimmed);
-      setSelectedGame(null);
-      setSearchStatus("loading");
-
+      pickerAbortRef.current = controller;
+      setPicker((prev) => ({ ...prev, status: "loading", submitted: trimmed }));
       try {
+        const parsed = parseMapsSearchQuery(trimmed, game, platform);
         const params = new URLSearchParams({ game: parsed.game });
         if (parsed.platform) params.set("platform", parsed.platform);
-        const res = await fetch(`/api/maps/search?${params.toString()}`, {
-          signal: controller.signal,
-        });
-        if (gen !== searchGenRef.current) return;
-        if (!res.ok) {
-          setGameResults([]);
-          setSearchStatus("error");
-          return;
+        const timeout = setTimeout(() => controller.abort(), MAPS_TIMEOUT_MS);
+        try {
+          const data = await fetchJson<{ games?: VGMapsGameEntry[] }>(
+            `/api/maps/search?${params.toString()}`,
+            controller.signal,
+          );
+          if (pickerAbortRef.current !== controller) return;
+          setPicker((prev) => ({
+            ...prev,
+            status: "done",
+            results: Array.isArray(data.games) ? data.games : [],
+          }));
+        } finally {
+          clearTimeout(timeout);
         }
-        const data = (await res.json()) as {
-          games?: VGMapsGameEntry[];
-          available?: boolean;
-        };
-        if (gen !== searchGenRef.current) return;
-        if (data.available === false) {
-          setGameResults([]);
-          setSearchStatus("error");
-          return;
-        }
-        setGameResults(Array.isArray(data.games) ? data.games : []);
-        setSearchStatus("done");
-      } catch (err) {
-        if (gen !== searchGenRef.current) return;
-        if ((err as { name?: string })?.name === "AbortError") return;
-        setGameResults([]);
-        setSearchStatus("error");
-      } finally {
-        if (searchAbortRef.current === controller) searchAbortRef.current = null;
+      } catch {
+        if (pickerAbortRef.current !== controller) return;
+        setPicker((prev) => ({ ...prev, status: "error", results: [] }));
       }
     },
-    [game, platform, online],
+    [game, platform],
   );
 
-  // Auto-search once on first open of the Find tab per game (never if the user edited the query).
+  const prevPickerOpenRef = useRef(pickerOpen);
   useEffect(() => {
-    if (activeTab !== "find" || !online || !game.trim()) return;
-    if (userEditedQueryRef.current) return;
-    if (autoSearchedGameRef.current === game) return;
-    autoSearchedGameRef.current = game;
-    void runSearch(defaultMapsQuery(game, platform));
-  }, [activeTab, online, game, platform, runSearch]);
-
-  const fetchGameMaps = useCallback(
-    async (entry: VGMapsGameEntry) => {
-      if (!online) return;
-      listAbortRef.current?.abort();
-      const controller = new AbortController();
-      listAbortRef.current = controller;
-      const gen = ++listGenRef.current;
-
-      setListStatus("loading");
-      setMapLinks([]);
-
-      try {
-        const params = new URLSearchParams({ url: entry.url });
-        const res = await fetch(`/api/maps/list?${params.toString()}`, {
-          signal: controller.signal,
-        });
-        if (gen !== listGenRef.current) return;
-        if (!res.ok) {
-          setMapLinks([]);
-          setListStatus("error");
-          return;
-        }
-        const data = (await res.json()) as {
-          maps?: VGMapsMapLink[];
-          available?: boolean;
-        };
-        if (gen !== listGenRef.current) return;
-        if (data.available === false) {
-          setMapLinks([]);
-          setListStatus("error");
-          return;
-        }
-        setMapLinks(Array.isArray(data.maps) ? data.maps : []);
-        setListStatus("done");
-      } catch (err) {
-        if (gen !== listGenRef.current) return;
-        if ((err as { name?: string })?.name === "AbortError") return;
-        setMapLinks([]);
-        setListStatus("error");
-      } finally {
-        if (listAbortRef.current === controller) listAbortRef.current = null;
-      }
-    },
-    [online],
-  );
-
-  function handleOpenGameEntry(entry: VGMapsGameEntry) {
-    step1ScrollTopRef.current = scrollBodyRef.current?.scrollTop ?? 0;
-    setSelectedGame(entry);
-    requestAnimationFrame(() => (backBtnRef.current ?? closeRef.current)?.focus());
-    if (scrollBodyRef.current) scrollBodyRef.current.scrollTop = 0;
-    void fetchGameMaps(entry);
-  }
-
-  function handleBackToResults() {
-    listAbortRef.current?.abort();
-    listGenRef.current += 1;
-    setSelectedGame(null);
-    setListStatus("idle");
-    requestAnimationFrame(() => {
-      (gameRowRefs.current.get(selectedGame?.url ?? "") ??
-        searchInputRef.current ??
-        closeRef.current)?.focus();
-    });
-    requestAnimationFrame(() => {
-      if (scrollBodyRef.current) {
-        scrollBodyRef.current.scrollTop = step1ScrollTopRef.current;
-      }
-    });
-  }
-
-  function handleSearchSubmit(event: FormEvent) {
-    event.preventDefault();
-    if (!query.trim() || !online) return;
-    autoSearchedGameRef.current = game;
-    void runSearch(query);
-  }
-
-  function handleTabKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      event.preventDefault();
-      selectTab(activeTab === "saved" ? "find" : "saved", true);
-    } else if (event.key === "Home") {
-      event.preventDefault();
-      selectTab("saved", true);
-    } else if (event.key === "End") {
-      event.preventDefault();
-      selectTab("find", true);
+    const was = prevPickerOpenRef.current;
+    prevPickerOpenRef.current = pickerOpen;
+    if (pickerOpen && !was) {
+      const query = defaultMapsQuery(game, platform);
+      setPicker({ status: "idle", query, submitted: "", results: [] });
+      if (online) void runPickerSearch(query);
+      requestAnimationFrame(() => pickerBackRef.current?.focus());
+    } else if (!pickerOpen && was) {
+      pickerAbortRef.current?.abort();
+      pickerAbortRef.current = null;
+      requestAnimationFrame(() => {
+        if (scrollRef.current) scrollRef.current.scrollTop = listScrollTopRef.current;
+        (wrongGameRef.current ?? closeRef.current)?.focus();
+      });
     }
+  }, [pickerOpen, game, platform, online, runPickerSearch]);
+
+  function openPicker() {
+    listScrollTopRef.current = scrollRef.current?.scrollTop ?? 0;
+    setMenuId(null);
+    onOpenPicker();
+  }
+
+  function pickFromPicker(entry: VGMapsGameEntry) {
+    chooseGame(entry);
+    onClosePicker();
+  }
+
+  function retryVgmaps() {
+    const entry = lastEntryRef.current;
+    startVgmaps(entry ? { entry } : {});
+  }
+
+  function updateFilter(next: string) {
+    setFilter(next);
+    rememberedFilter = { key: gameKey, query: next };
   }
 
   function handleOpenSavedRow(item: SavedMap) {
     setMenuId(null);
     const proxyUrl = mapProxyUrl(item.imageUrl, item.sourceUrl);
+    const open = () => {
+      setOfflineNoticeId(null);
+      openedRowRef.current = `saved:${item.id}`;
+      onOpenSavedMap(item);
+    };
     if (!online && !(cachedByProxy[proxyUrl] ?? false)) {
       if (!(proxyUrl in cachedByProxy)) {
         void hasCachedMap(proxyUrl).then((cached) => {
           if (!cached) setOfflineNoticeId(item.id);
-          else onOpenSavedMap(item);
+          else open();
         });
         return;
       }
       setOfflineNoticeId(item.id);
       return;
     }
-    setOfflineNoticeId(null);
-    onOpenSavedMap(item);
+    open();
   }
 
-  async function handleSaveMap(mapLink: VGMapsMapLink) {
-    if (!selectedGame || !online) return;
-    const url = mapLink.imageUrl;
-    const saveGameKey = gameKey;
-    const canUpdate = () =>
-      mountedRef.current && currentGameKeyRef.current === saveGameKey;
-    let lastProgressAt = 0;
-    let lastProgressText = "";
-    setDownloadAnnouncement(`Downloading ${mapLink.mapName}…`);
-    setFailedByUrl((prev) => {
-      if (!prev[url]) return prev;
-      const next = { ...prev };
-      delete next[url];
-      return next;
-    });
-    setProgressByUrl((prev) => ({ ...prev, [url]: { loaded: 0, total: mapLink.fileSizeBytes ?? null } }));
-
-    const result = await onSaveMap({
-      game,
-      platform,
-      gameEntry: selectedGame,
-      mapLink,
-      onProgress: (progress) => {
-        if (!canUpdate()) return;
-        const now = Date.now();
-        const formatted = formatDownloadProgressText(progress);
-        if (formatted !== lastProgressText || now - lastProgressAt >= 120) {
-          lastProgressAt = now;
-          lastProgressText = formatted;
-          setProgressByUrl((prev) => ({ ...prev, [url]: progress }));
-        }
-      },
-    });
-
-    if (!canUpdate()) return;
-
-    setProgressByUrl((prev) => {
-      const next = { ...prev };
-      delete next[url];
-      return next;
-    });
-
-    if (result.status === "saved") {
-      const proxyUrl = mapProxyUrl(mapLink.imageUrl, selectedGame.url);
-      setCachedByProxy((prev) => ({ ...prev, [proxyUrl]: true }));
-      setDownloadAnnouncement(`${mapLink.mapName} saved offline.`);
-      return;
-    }
-    if (result.status === "aborted") {
-      setDownloadAnnouncement("Download canceled.");
-      return;
-    }
-    if (result.status === "too_large") {
-      setTooLargeByUrl((prev) => ({ ...prev, [url]: true }));
-      setDownloadAnnouncement(`Couldn't save ${mapLink.mapName}.`);
-      return;
-    }
-    if (result.status === "quota") {
-      setDownloadAnnouncement(`Couldn't save ${mapLink.mapName}.`);
-      onToast("Not enough space on this device. Remove a saved map and try again.");
-      return;
-    }
-    if (result.status === "cap") {
-      setDownloadAnnouncement(`Couldn't save ${mapLink.mapName}.`);
-      onToast("Saved maps are full. Remove one to add more.");
-      return;
-    }
-    setFailedByUrl((prev) => ({ ...prev, [url]: true }));
-    setDownloadAnnouncement(`Couldn't save ${mapLink.mapName}.`);
+  function handleOpenFindRow(entry: VGMapsGameEntry, mapLink: VGMapsMapLink) {
+    openedRowRef.current = `vg:${mapLink.imageUrl}`;
+    onOpenFindMap(entry, mapLink, findSaved(game, mapLink.imageUrl));
   }
 
-  const inFindStep2 = activeTab === "find" && selectedGame !== null;
-  const idleHelperQuery = defaultMapsQuery(game, platform) || "this game";
+  function handleNotFoundSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!notFoundQuery.trim() || !online) return;
+    startVgmaps({ query: notFoundQuery });
+  }
+
+  function handlePickerSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!online) return;
+    void runPickerSearch(picker.query);
+  }
+
+  const vgMaps = vg.kind === "done" ? vg.maps : [];
+  const filtered = filterMapsSections({ saved: savedItems, vgmaps: vgMaps, query: filter });
+  const headerSub = [game, platform].filter(Boolean).join(" · ");
+
+  function renderStage(state: Extract<VgState, { kind: "loading" }>) {
+    const stage = mapsLoadStage(state.stage, {
+      gameTitle: state.entry?.title,
+      elapsedMs: Math.max(0, now - state.since),
+    });
+    return (
+      <div className="maps-stage" role="status" aria-live="polite">
+        <div className="maps-stage-track" aria-hidden="true">
+          <div className="maps-stage-fill" style={{ transform: `scaleX(${stage.ratio})` }} />
+        </div>
+        <p className="maps-stage-text">{stage.text}</p>
+        {stage.slow && (
+          <div className="maps-stage-slow">
+            <p className="maps-state-text">VGMaps is slow right now. Still trying…</p>
+            <button type="button" className="maps-text-btn" onClick={() => stopLoading(true)}>
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderGameOptions(options: VGMapsGameEntry[], onPick: (entry: VGMapsGameEntry) => void) {
+    return (
+      <ul className="maps-list">
+        {options.map((entry) => (
+          <li key={entry.url}>
+            <button type="button" className="maps-row-open maps-game-row" onClick={() => onPick(entry)}>
+              <strong className="saved-row-title">{entry.title}</strong>
+              <span className="map-meta">{entry.platform}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  function renderVgBody() {
+    if (!online) {
+      return (
+        <div className="maps-state-block" role="status">
+          <p className="maps-state-text">Offline. VGMaps search needs a connection.</p>
+        </div>
+      );
+    }
+    switch (vg.kind) {
+      case "idle":
+        return null;
+      case "loading":
+        return renderStage(vg);
+      case "error":
+        return (
+          <div className="maps-state-block" role="status">
+            {vg.canceled ? (
+              <p className="maps-state-text">Search canceled.</p>
+            ) : (
+              <p className="maps-state-error">Couldn&apos;t reach VGMaps.</p>
+            )}
+            <button type="button" className="maps-btn-secondary" onClick={retryVgmaps}>
+              Try again
+            </button>
+          </div>
+        );
+      case "pick":
+        return (
+          <div className="maps-pick">
+            <p className="maps-state-text maps-pick-head">Which game?</p>
+            {renderGameOptions(vg.options, chooseGame)}
+          </div>
+        );
+      case "notfound":
+        return (
+          <div className="maps-state-block" role="status">
+            <p className="maps-state-text">
+              No game found on VGMaps for &ldquo;{vg.query}&rdquo;.
+            </p>
+            <form className="maps-search-form" onSubmit={handleNotFoundSubmit}>
+              <div className="field-clear-wrap maps-search-field">
+                <input
+                  type="search"
+                  className="maps-input"
+                  aria-label="Game title on VGMaps"
+                  value={notFoundQuery}
+                  onChange={(event) => setNotFoundQuery(event.target.value)}
+                />
+                <ClearButton
+                  show={Boolean(notFoundQuery)}
+                  label="Clear search"
+                  onClear={() => setNotFoundQuery("")}
+                />
+              </div>
+              <button type="submit" className="maps-btn-secondary" disabled={!notFoundQuery.trim()}>
+                Search again
+              </button>
+            </form>
+          </div>
+        );
+      case "done":
+        return (
+          <>
+            <p className="meta-text maps-context">
+              Game on VGMaps: <strong>{vg.entry.title}</strong>
+              {vg.entry.platform && !squash(vg.entry.title).includes(squash(vg.entry.platform))
+                ? ` (${vg.entry.platform})`
+                : ""}
+              .{" "}
+              <button
+                ref={wrongGameRef}
+                type="button"
+                className="maps-link-btn"
+                onClick={openPicker}
+              >
+                Wrong game?
+              </button>
+            </p>
+            {vg.maps.length === 0 ? (
+              <div className="maps-state-block" role="status">
+                <p className="maps-state-text">VGMaps lists this game but no maps.</p>
+              </div>
+            ) : (
+              <ul className="maps-list">
+                {filtered.vgmaps.map((mapLink) => renderFindRow(vg.entry, mapLink))}
+              </ul>
+            )}
+          </>
+        );
+    }
+  }
+
+  function renderFindRow(entry: VGMapsGameEntry, mapLink: VGMapsMapLink) {
+    const saved = findSaved(game, mapLink.imageUrl);
+    const rowKey = `vg:${mapLink.imageUrl}`;
+    const progress = saveProgress[mapLink.imageUrl] ?? null;
+    const ref: MapRef = { imageUrl: mapLink.imageUrl, sourceUrl: entry.url };
+    const overLimit = isMapOverLimit(mapLink);
+    return (
+      <li
+        key={mapLink.imageUrl}
+        className={`maps-row${returnedKey === rowKey ? " is-returned" : ""}`}
+      >
+        <button
+          type="button"
+          className="maps-row-open"
+          data-row-key={rowKey}
+          onClick={() => handleOpenFindRow(entry, mapLink)}
+        >
+          <strong className="saved-row-title">{mapLink.mapName}</strong>
+          <span className="map-meta">
+            {progress ? formatSavingText(progress) : formatFindMapMeta(mapLink, { saved: Boolean(saved) })}
+          </span>
+          {overLimit ? (
+            <span className="maps-row-error">Over 30 MB. Too large to open here.</span>
+          ) : mapLink.isLarge && !saved ? (
+            <span className="map-meta-warn">
+              Large file, {mapLink.fileSize || "over 6 MB"}. May take a while on mobile data.
+            </span>
+          ) : null}
+        </button>
+        {progress && (
+          <div className="maps-row-progress">
+            <div className="maps-progress-track" aria-hidden="true">
+              <div
+                className="maps-progress-fill"
+                style={{ transform: `scaleX(${downloadProgressRatio(progress)})` }}
+              />
+            </div>
+            <button
+              type="button"
+              className="maps-text-btn"
+              aria-label={`Cancel saving ${mapLink.mapName}`}
+              onClick={() => onCancelSave(ref)}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      </li>
+    );
+  }
+
+  function renderSavedRow(item: SavedMap) {
+    const proxyUrl = mapProxyUrl(item.imageUrl, item.sourceUrl);
+    const cached = proxyUrl in cachedByProxy ? cachedByProxy[proxyUrl] : null;
+    const meta = formatSavedMapMeta(item, { cached, signedIn, syncAvailable, syncFailed });
+    const rowKey = `saved:${item.id}`;
+    return (
+      <li
+        key={item.id}
+        className={`maps-row maps-row--saved${returnedKey === rowKey ? " is-returned" : ""}`}
+      >
+        <button
+          type="button"
+          className="maps-row-open"
+          data-row-key={rowKey}
+          onClick={() => handleOpenSavedRow(item)}
+        >
+          <strong className="saved-row-title">{item.title}</strong>
+          {meta ? <span className="map-meta">{meta}</span> : null}
+          {offlineNoticeId === item.id && (
+            <span className="maps-row-inline-msg" role="status">
+              Offline. Open it once online to keep it on this device.
+            </span>
+          )}
+        </button>
+        <div className="row-menu saved-row-menu">
+          <button
+            type="button"
+            className="kebab"
+            aria-label={`Options for ${item.title}`}
+            aria-haspopup="menu"
+            aria-expanded={menuId === item.id}
+            onClick={() => setMenuId((id) => (id === item.id ? null : item.id))}
+          >
+            <IconDotsVertical />
+          </button>
+          {menuId === item.id && (
+            <div className="row-menu-pop" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                className="row-menu-item"
+                onClick={() => handleOpenSavedRow(item)}
+              >
+                Open
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="row-menu-item row-menu-delete"
+                onClick={() => {
+                  setMenuId(null);
+                  onRemoveSavedMap(item);
+                  requestAnimationFrame(() => closeRef.current?.focus());
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          )}
+        </div>
+      </li>
+    );
+  }
+
+  const noMatches = filtered.filtering && filtered.shown === 0 && filtered.total > 0;
 
   return (
     <>
       <button
         type="button"
-        className="library-backdrop open saved-backdrop"
+        className="library-backdrop open saved-backdrop maps-backdrop"
         aria-label="Close maps"
+        tabIndex={-1}
         onClick={onClose}
       />
       <section
@@ -559,35 +850,15 @@ export function MapsPanel({
         onKeyDown={split ? undefined : trapTab}
         inert={inert}
       >
-        <div className="visually-hidden" role="status" aria-live="polite">
-          {downloadAnnouncement}
-        </div>
-        <div className="library-head maps-head">
-          {inFindStep2 ? (
-            <div className="maps-head-step2">
-              <button
-                ref={backBtnRef}
-                type="button"
-                className="maps-back-btn"
-                onClick={handleBackToResults}
-              >
-                <IconArrowLeft size={18} />
-                <span>Back to results</span>
-              </button>
-              <span className="maps-head-selected" title={selectedGame.title}>
-                {selectedGame.title}
-              </span>
-            </div>
-          ) : (
-            <span className="saved-head-title">
-              Maps
-              <small className="saved-head-game">{game}</small>
-            </span>
-          )}
+        <div className="maps-head">
+          <span className="maps-head-title">
+            Maps
+            {headerSub && <small className="maps-head-game">{headerSub}</small>}
+          </span>
           <button
             ref={closeRef}
             type="button"
-            className="sidebar-close"
+            className="sidebar-close maps-close"
             aria-label="Close maps"
             onClick={onClose}
           >
@@ -595,394 +866,126 @@ export function MapsPanel({
           </button>
         </div>
 
-        <div
-          className="maps-tabs"
-          role="tablist"
-          aria-label="Maps sections"
-          onKeyDown={handleTabKeyDown}
-        >
-          <button
-            ref={savedTabRef}
-            id="maps-tab-saved"
-            type="button"
-            role="tab"
-            className={`maps-tab${activeTab === "saved" ? " is-active" : ""}`}
-            aria-selected={activeTab === "saved"}
-            aria-controls="maps-tabpanel-saved"
-            tabIndex={activeTab === "saved" ? 0 : -1}
-            onClick={() => selectTab("saved")}
-          >
-            Saved ({savedItems.length})
-          </button>
-          <button
-            ref={findTabRef}
-            id="maps-tab-find"
-            type="button"
-            role="tab"
-            className={`maps-tab${activeTab === "find" ? " is-active" : ""}`}
-            aria-selected={activeTab === "find"}
-            aria-controls="maps-tabpanel-find"
-            tabIndex={activeTab === "find" ? 0 : -1}
-            onClick={() => selectTab("find")}
-          >
-            Find on VGMaps
-          </button>
-        </div>
-
-        {activeTab === "saved" ? (
-          <div
-            id="maps-tabpanel-saved"
-            role="tabpanel"
-            aria-labelledby="maps-tab-saved"
-            className="maps-body"
-          >
-            {!online && (
-              <p className="saved-offline">Offline, showing what&apos;s on this device</p>
-            )}
-            {savedItems.length === 0 ? (
-              <div className="maps-empty">
-                <p className="saved-empty-title">No maps saved for this game yet.</p>
-                <p className="saved-empty-sub">
-                  Find one on VGMaps and tap Save to keep it offline.
-                </p>
+        {pickerOpen ? (
+          <div className="maps-scroll maps-picker">
+            <button
+              ref={pickerBackRef}
+              type="button"
+              className="maps-back-btn"
+              onClick={onClosePicker}
+            >
+              <IconArrowLeft size={18} />
+              <span>Back to maps</span>
+            </button>
+            <form className="maps-search-form" onSubmit={handlePickerSubmit}>
+              <div className="field-clear-wrap maps-search-field">
+                <input
+                  type="search"
+                  className="maps-input"
+                  aria-label="Search VGMaps"
+                  placeholder="Game title"
+                  value={picker.query}
+                  disabled={!online}
+                  onChange={(event) => setPicker((prev) => ({ ...prev, query: event.target.value }))}
+                />
+                <ClearButton
+                  show={Boolean(picker.query)}
+                  disabled={!online}
+                  label="Clear search"
+                  onClear={() => setPicker((prev) => ({ ...prev, query: "" }))}
+                />
+              </div>
+              <button
+                type="submit"
+                className="maps-btn-secondary"
+                disabled={!online || !picker.query.trim() || picker.status === "loading"}
+              >
+                Search
+              </button>
+            </form>
+            {!online ? (
+              <div className="maps-state-block" role="status">
+                <p className="maps-state-text">Offline. VGMaps search needs a connection.</p>
+              </div>
+            ) : picker.status === "loading" ? (
+              <div className="maps-state-block" role="status">
+                <p className="maps-state-text">Searching VGMaps…</p>
+              </div>
+            ) : picker.status === "error" ? (
+              <div className="maps-state-block" role="status">
+                <p className="maps-state-error">Couldn&apos;t reach VGMaps.</p>
                 <button
                   type="button"
-                  className="maps-btn-secondary maps-empty-cta"
-                  onClick={() => selectTab("find")}
+                  className="maps-btn-secondary"
+                  onClick={() => void runPickerSearch(picker.query)}
                 >
-                  Find on VGMaps
+                  Try again
                 </button>
               </div>
-            ) : (
-              <ul className="saved-list">
-                {savedItems.map((item) => {
-                  const proxyUrl = mapProxyUrl(item.imageUrl, item.sourceUrl);
-                  const cached =
-                    proxyUrl in cachedByProxy ? cachedByProxy[proxyUrl] : null;
-                  const meta = formatSavedMapMeta(item, {
-                    cached,
-                    signedIn,
-                    syncAvailable,
-                    syncFailed,
-                  });
-                  return (
-                    <li key={item.id} className="saved-row maps-saved-row">
-                      <button
-                        type="button"
-                        className="saved-row-open"
-                        onClick={() => handleOpenSavedRow(item)}
-                      >
-                        <strong className="saved-row-title">{item.title}</strong>
-                        {meta ? <span className="map-meta">{meta}</span> : null}
-                        {offlineNoticeId === item.id && (
-                          <span className="maps-row-inline-msg" role="status">
-                            Offline. Open it once online to keep it on this device.
-                          </span>
-                        )}
-                      </button>
-                      <div className="row-menu saved-row-menu">
-                        <button
-                          type="button"
-                          className="kebab"
-                          aria-label={`Options for ${item.title}`}
-                          aria-haspopup="menu"
-                          aria-expanded={menuId === item.id}
-                          onClick={() =>
-                            setMenuId((id) => (id === item.id ? null : item.id))
-                          }
-                        >
-                          <IconDotsVertical />
-                        </button>
-                        {menuId === item.id && (
-                          <div className="row-menu-pop" role="menu">
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="row-menu-item"
-                              onClick={() => handleOpenSavedRow(item)}
-                            >
-                              Open
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="row-menu-item row-menu-delete"
-                              onClick={() => {
-                                setMenuId(null);
-                                onRemoveSavedMap(item);
-                                requestAnimationFrame(() => closeRef.current?.focus());
-                              }}
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+            ) : picker.status === "done" && picker.results.length === 0 ? (
+              <div className="maps-state-block" role="status">
+                <p className="maps-state-text">
+                  No game found on VGMaps for &ldquo;{picker.submitted}&rdquo;.
+                </p>
+              </div>
+            ) : picker.status === "done" ? (
+              renderGameOptions(picker.results, pickFromPicker)
+            ) : null}
           </div>
         ) : (
-          <div
-            id="maps-tabpanel-find"
-            role="tabpanel"
-            aria-labelledby="maps-tab-find"
-            className="maps-body"
-          >
-            {!inFindStep2 && (
-              <form className="maps-search-form" onSubmit={handleSearchSubmit}>
-                <div className="field-clear-wrap maps-search-field">
-                  <input
-                    ref={searchInputRef}
-                    type="search"
-                    className="maps-search-input"
-                    aria-label="Search VGMaps"
-                    placeholder="Game title"
-                    value={query}
-                    disabled={!online}
-                    onChange={(event) => {
-                      userEditedQueryRef.current = true;
-                      setQuery(event.target.value);
-                    }}
-                  />
-                  <ClearButton
-                    show={Boolean(query)}
-                    disabled={!online}
-                    label="Clear search"
-                    onClear={() => {
-                      userEditedQueryRef.current = true;
-                      setQuery("");
-                    }}
-                  />
-                </div>
-                <button
-                  type="submit"
-                  className="maps-search-btn"
-                  disabled={!online || !query.trim() || searchStatus === "loading"}
-                >
-                  Search
-                </button>
-              </form>
-            )}
+          <>
+            <div className="maps-filter">
+              <div className="field-clear-wrap maps-search-field">
+                <input
+                  type="search"
+                  className="maps-input"
+                  aria-label="Filter maps"
+                  placeholder="Filter maps"
+                  value={filter}
+                  onChange={(event) => updateFilter(event.target.value)}
+                />
+                <ClearButton
+                  show={Boolean(filter)}
+                  label="Clear filter"
+                  onClear={() => updateFilter("")}
+                />
+              </div>
+              <p className="maps-filter-count" role="status" aria-live="polite">
+                {filtered.countText}
+              </p>
+            </div>
 
-            <div ref={scrollBodyRef} className="maps-scroll">
-              {!online ? (
+            <div ref={scrollRef} className="maps-scroll">
+              {!online && savedItems.length > 0 && (
+                <p className="saved-offline">Offline, showing what&apos;s on this device</p>
+              )}
+
+              {filtered.saved.length > 0 && (
+                <section className="maps-section" aria-labelledby="maps-saved-head">
+                  <h3 id="maps-saved-head" className="maps-section-head">
+                    Saved on this device · {filtered.saved.length}
+                  </h3>
+                  <ul className="maps-list">{filtered.saved.map(renderSavedRow)}</ul>
+                </section>
+              )}
+
+              {noMatches ? (
                 <div className="maps-state-block" role="status">
-                  <p className="maps-state-text">
-                    You&apos;re offline. Saved maps still work.
-                  </p>
-                </div>
-              ) : inFindStep2 ? (
-                listStatus === "loading" ? (
-                  <ul
-                    className="maps-skeleton-list"
-                    aria-busy="true"
-                    aria-label="Loading maps"
-                  >
-                    <li className="maps-skeleton-row" />
-                    <li className="maps-skeleton-row" />
-                    <li className="maps-skeleton-row" />
-                    <li className="maps-skeleton-row" />
-                  </ul>
-                ) : listStatus === "error" ? (
-                  <div className="maps-state-block" role="status">
-                    <p className="maps-state-error">Couldn&apos;t reach VGMaps.</p>
-                    <button
-                      type="button"
-                      className="maps-btn-secondary"
-                      onClick={() => void fetchGameMaps(selectedGame)}
-                    >
-                      Try again
-                    </button>
-                  </div>
-                ) : listStatus === "done" && mapLinks.length === 0 ? (
-                  <div className="maps-state-block" role="status">
-                    <p className="maps-state-text">
-                      VGMaps lists this game but no maps.
-                    </p>
-                  </div>
-                ) : (
-                  <ul className="maps-list">
-                    {mapLinks.map((mapLink) => {
-                      const savedRecord = findSaved(game, mapLink.imageUrl);
-                      const overLimit =
-                        isMapOverLimit(mapLink) ||
-                        Boolean(tooLargeByUrl[mapLink.imageUrl]);
-                      const ref: MapRef = {
-                        imageUrl: mapLink.imageUrl,
-                        sourceUrl: selectedGame.url,
-                      };
-                      const rowProgress = progressByUrl[mapLink.imageUrl] ?? null;
-                      const downloading =
-                        rowProgress !== null || isDownloading(ref);
-                      const failed =
-                        Boolean(failedByUrl[mapLink.imageUrl]) &&
-                        !downloading &&
-                        !overLimit &&
-                        !savedRecord;
-                      const meta = formatFindMapMeta(mapLink);
-
-                      return (
-                        <li key={mapLink.imageUrl} className="maps-map-row">
-                          <div className="maps-map-info">
-                            <strong className="saved-row-title">
-                              {mapLink.mapName}
-                            </strong>
-                            {meta ? <p className="map-meta">{meta}</p> : null}
-                            {overLimit ? (
-                              <p className="maps-row-error" role="status">
-                                Too large to download here (over 30 MB). Save is off for
-                                this map.
-                              </p>
-                            ) : mapLink.isLarge ? (
-                              <p className="map-meta-warn">
-                                Large file, {mapLink.fileSize || "over 6 MB"}. May take a
-                                while on mobile data.
-                              </p>
-                            ) : null}
-                          </div>
-
-                          {downloading && (
-                            <div className="maps-progress-block">
-                              <div className="maps-progress-head">
-                                <p className="maps-progress-text">
-                                  {formatDownloadProgressText(rowProgress)}
-                                </p>
-                                <button
-                                  type="button"
-                                  className="maps-btn-secondary maps-btn-cancel"
-                                  onClick={() => {
-                                    setDownloadAnnouncement("Download canceled.");
-                                    onCancelDownload(ref);
-                                  }}
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                              <div className="maps-progress-track" aria-hidden="true">
-                                <div
-                                  className="maps-progress-fill"
-                                  style={{
-                                    transform: `scaleX(${downloadProgressRatio(rowProgress)})`,
-                                  }}
-                                />
-                              </div>
-                            </div>
-                          )}
-
-                          {failed && (
-                            <div className="maps-row-failed" role="status">
-                              <p className="maps-row-error">
-                                Couldn&apos;t save. Check your connection.
-                              </p>
-                              <button
-                                type="button"
-                                className="maps-btn-secondary"
-                                onClick={() => void handleSaveMap(mapLink)}
-                              >
-                                Try again
-                              </button>
-                            </div>
-                          )}
-
-                          <div className="maps-row-actions">
-                            <button
-                              type="button"
-                              className="maps-btn-secondary"
-                              aria-label={`Open ${mapLink.mapName}`}
-                              disabled={overLimit || (!online && !savedRecord)}
-                              onClick={() =>
-                                onOpenFindMap(selectedGame, mapLink, savedRecord)
-                              }
-                            >
-                              Open
-                            </button>
-                            {savedRecord ? (
-                              <button
-                                type="button"
-                                className="maps-btn-saved"
-                                disabled
-                              >
-                                Saved
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                className="maps-btn-primary"
-                                aria-label={`Save ${mapLink.mapName}`}
-                                disabled={overLimit || downloading || !online}
-                                onClick={() => void handleSaveMap(mapLink)}
-                              >
-                                Save
-                              </button>
-                            )}
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )
-              ) : searchStatus === "idle" ? (
-                <div className="maps-state-block">
-                  <p className="maps-state-text">
-                    We search VGMaps for {idleHelperQuery}.
-                  </p>
-                </div>
-              ) : searchStatus === "loading" ? (
-                <ul
-                  className="maps-skeleton-list"
-                  aria-busy="true"
-                  aria-label="Searching VGMaps"
-                >
-                  <li className="maps-skeleton-row" />
-                  <li className="maps-skeleton-row" />
-                  <li className="maps-skeleton-row" />
-                  <li className="maps-skeleton-row" />
-                </ul>
-              ) : searchStatus === "error" ? (
-                <div className="maps-state-block" role="status">
-                  <p className="maps-state-error">Couldn&apos;t reach VGMaps.</p>
-                  <button
-                    type="button"
-                    className="maps-btn-secondary"
-                    onClick={() => void runSearch(query || defaultMapsQuery(game, platform))}
-                  >
-                    Try again
+                  <p className="maps-state-text">No maps match &ldquo;{filter.trim()}&rdquo;.</p>
+                  <button type="button" className="maps-link-btn" onClick={() => updateFilter("")}>
+                    Clear filter
                   </button>
                 </div>
-              ) : gameResults.length === 0 ? (
-                <div className="maps-state-block" role="status">
-                  <p className="maps-state-text">
-                    No VGMaps game found for &ldquo;{submittedQuery}&rdquo;. Try a
-                    shorter or alternate title.
-                  </p>
-                </div>
-              ) : (
-                <ul className="maps-list">
-                  {gameResults.map((entry) => (
-                    <li key={entry.url} className="maps-game-item">
-                      <button
-                        type="button"
-                        className="maps-game-row"
-                        ref={(element) => {
-                          if (element) gameRowRefs.current.set(entry.url, element);
-                          else gameRowRefs.current.delete(entry.url);
-                        }}
-                        onClick={() => handleOpenGameEntry(entry)}
-                      >
-                        <strong className="saved-row-title">{entry.title}</strong>
-                        <span className="map-meta maps-game-platform">
-                          {entry.platform}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              ) : null}
+
+              <section className="maps-section" aria-labelledby="maps-vg-head">
+                <h3 id="maps-vg-head" className="maps-section-head">
+                  On VGMaps{online && vg.kind === "done" ? ` · ${filtered.vgmaps.length}` : ""}
+                </h3>
+                {renderVgBody()}
+              </section>
             </div>
-          </div>
+          </>
         )}
       </section>
     </>
