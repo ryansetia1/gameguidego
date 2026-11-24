@@ -8262,3 +8262,415 @@ details.sources small {
     animation: none;
   }
 }
+
+/* --- High-res map viewer (#38) --- */
+@keyframes map-viewer-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.map-viewer-dialog {
+  --mv-canvas-bg: #0e1112;
+  --mv-on-canvas: #f3f0e7;
+  --mv-track: #4c5753;
+  --mv-bar-h: 48px;
+  --mv-ctrl-min: 44px;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: var(--mv-canvas-bg);
+  color: var(--ink);
+  overflow: hidden;
+  animation: map-viewer-fade 120ms ease-out;
+}
+
+.map-viewer-dialog::backdrop {
+  background: #0e1112;
+}
+
+.map-viewer-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.map-viewer-canvas.is-dragging {
+  cursor: grabbing;
+}
+
+.map-viewer-canvas:focus-visible {
+  outline: 3px solid var(--signal-dark);
+  outline-offset: -3px;
+}
+
+.map-viewer-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: calc(var(--mv-bar-h) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0
+    max(4px, env(safe-area-inset-left));
+  background: var(--paper-strong);
+  color: var(--ink);
+  border-bottom: 1.5px solid var(--ink);
+}
+
+.map-viewer-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--mv-ctrl-min);
+  min-height: var(--mv-ctrl-min);
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.map-viewer-close:hover {
+  background: var(--paper);
+}
+
+.map-viewer-title-block {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 2px 4px;
+}
+
+.map-viewer-title {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-viewer-meta {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 500;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-viewer-save-slot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+.map-viewer-save {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: var(--signal);
+  color: var(--on-signal);
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.map-viewer-save:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.map-viewer-save.is-saving,
+.map-viewer-save:disabled {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: default;
+}
+
+.map-viewer-saved {
+  padding: 0 8px;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.map-viewer-zoom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  background: var(--paper-strong);
+  color: var(--ink);
+  border-top: 1.5px solid var(--ink);
+}
+
+.map-viewer-zoom-btn,
+.map-viewer-readout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--mv-ctrl-min);
+  border-radius: 0;
+  white-space: nowrap;
+}
+
+.map-viewer-zoom-btn {
+  flex: 1 1 var(--mv-ctrl-min);
+  min-width: var(--mv-ctrl-min);
+  padding: 0 10px;
+  border: none;
+  border-right: 1.5px solid var(--ink);
+  background: var(--paper-strong);
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.map-viewer-zoom-btn:last-child {
+  border-right: none;
+}
+
+.map-viewer-zoom-btn:hover:not(:disabled) {
+  background: var(--paper);
+}
+
+.map-viewer-zoom-btn:disabled {
+  color: var(--muted);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.map-viewer-zoom-btn:focus-visible,
+.map-viewer-close:focus-visible,
+.map-viewer-save:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 3px solid var(--signal-dark);
+  outline-offset: -3px;
+}
+
+.map-viewer-readout {
+  flex: 0 0 auto;
+  min-width: 4ch;
+  padding: 0 10px;
+  border-right: 1.5px solid var(--ink);
+  background: var(--paper-strong);
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.map-viewer-pixel.is-active {
+  background: var(--ink);
+  color: var(--paper);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 2px;
+}
+
+.map-viewer-pixel.is-active:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.map-viewer-status {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  padding: calc(var(--mv-bar-h) + env(safe-area-inset-top) + 16px) 20px
+    calc(var(--mv-bar-h) + env(safe-area-inset-bottom) + 16px);
+  pointer-events: none;
+}
+
+.map-viewer-status-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: min(360px, 100%);
+  text-align: center;
+  pointer-events: auto;
+}
+
+.map-viewer-status-title {
+  margin: 0;
+  color: var(--mv-on-canvas);
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.map-viewer-status-text {
+  margin: 0;
+  color: var(--mv-on-canvas);
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+.map-viewer-progress {
+  width: min(240px, 72vw);
+  height: 4px;
+  background: var(--mv-track);
+  border-radius: 0;
+  overflow: hidden;
+}
+
+.map-viewer-progress-fill {
+  height: 100%;
+  background: var(--mv-on-canvas);
+  border-radius: 0;
+}
+
+.map-viewer-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.map-viewer-status-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 92px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1.5px solid var(--mv-on-canvas);
+  border-radius: 0;
+  background: transparent;
+  color: var(--mv-on-canvas);
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.map-viewer-status-btn:hover {
+  background: rgba(243, 240, 231, 0.12);
+}
+
+.map-viewer-status-btn:focus-visible {
+  outline: 3px solid var(--signal);
+  outline-offset: 2px;
+}
+
+.map-viewer-toast {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--mv-bar-h) + env(safe-area-inset-bottom) + 16px);
+  z-index: 3;
+  cursor: pointer;
+}
+
+/* Narrow phones (<=420px): allow segmented strip to wrap cleanly onto 2 rows only if needed. */
+@media (max-width: 420px) {
+  .map-viewer-zoom-btn {
+    padding: 0 6px;
+    font-size: 0.82rem;
+  }
+
+  .map-viewer-readout {
+    padding: 0 6px;
+    font-size: 0.8rem;
+  }
+}
+
+/* Landscape handhelds (1280x800, 800x360) and desktop >=900px:
+   top bar 44px on handheld heights, compact bottom-left segmented strip. */
+@media (min-width: 900px), (orientation: landscape) and (min-width: 640px) and (max-height: 820px) {
+  .map-viewer-zoom {
+    left: max(12px, env(safe-area-inset-left));
+    right: auto;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    flex-wrap: nowrap;
+    padding: 0;
+    border: 1.5px solid var(--ink);
+  }
+
+  .map-viewer-zoom-btn {
+    flex: 0 0 auto;
+    padding: 0 12px;
+  }
+
+  .map-viewer-toast {
+    bottom: max(16px, env(safe-area-inset-bottom));
+  }
+}
+
+@media (orientation: landscape) and (max-height: 820px) {
+  .map-viewer-dialog {
+    --mv-bar-h: 44px;
+  }
+}
+
+@media (max-height: 420px) {
+  .map-viewer-dialog {
+    --mv-bar-h: 40px;
+    --mv-ctrl-min: 40px;
+  }
+
+  .map-viewer-save {
+    min-height: 32px;
+    padding: 0 10px;
+  }
+
+  .map-viewer-zoom {
+    left: max(8px, env(safe-area-inset-left));
+    bottom: max(8px, env(safe-area-inset-bottom));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-viewer-dialog,
+  .map-viewer-toast {
+    animation: none;
+  }
+}

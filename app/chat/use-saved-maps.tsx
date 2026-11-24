@@ -4,6 +4,7 @@ import type { User } from "@supabase/supabase-js";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import {
+  MAP_TOO_LARGE_STATUS,
   MAP_UNLISTED_STATUS,
   MapFetchError,
   cancelMapDownload,
@@ -56,9 +57,13 @@ export type SavedMap = {
 
 export type MapViewport = { lastZoom?: number; lastOffsetX?: number; lastOffsetY?: number };
 
+export type MapDownloadProgress = { loaded: number; total: number | null };
+
 export type SaveMapResult =
   | { status: "saved"; item: SavedMap }
   | { status: "cap" }
+  | { status: "quota" }
+  | { status: "too_large" }
   /** The game's VGMaps page no longer lists this map, so the proxy won't serve it. */
   | { status: "unlisted" }
   | { status: "aborted" }
@@ -66,6 +71,8 @@ export type SaveMapResult =
 
 export type OpenMapResult =
   | { status: "ok"; blob: Blob; objectUrl: string; fromCache: boolean }
+  | { status: "offline" }
+  | { status: "too_large" }
   /** Not in the device cache and no longer on the game's VGMaps list. */
   | { status: "unlisted" }
   | { status: "aborted" }
@@ -130,9 +137,23 @@ setMapLiveCheck(isLive);
 // whose select may have run with no session and returned []) stops without writing.
 let signOuts = 0;
 
-function failure(err: unknown): { status: "unlisted" | "aborted" | "error" } {
+function isQuotaError(err: unknown): boolean {
+  const name = (err as { name?: string })?.name;
+  return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED";
+}
+
+function saveFailure(err: unknown): { status: "unlisted" | "too_large" | "quota" | "aborted" | "error" } {
   if ((err as { name?: string })?.name === "AbortError") return { status: "aborted" };
   if (err instanceof MapFetchError && err.status === MAP_UNLISTED_STATUS) return { status: "unlisted" };
+  if (err instanceof MapFetchError && err.status === MAP_TOO_LARGE_STATUS) return { status: "too_large" };
+  if (isQuotaError(err)) return { status: "quota" };
+  return { status: "error" };
+}
+
+function openFailure(err: unknown): { status: "unlisted" | "too_large" | "aborted" | "error" } {
+  if ((err as { name?: string })?.name === "AbortError") return { status: "aborted" };
+  if (err instanceof MapFetchError && err.status === MAP_UNLISTED_STATUS) return { status: "unlisted" };
+  if (err instanceof MapFetchError && err.status === MAP_TOO_LARGE_STATUS) return { status: "too_large" };
   return { status: "error" };
 }
 
@@ -249,6 +270,7 @@ export function useSavedMaps(user: User | null) {
       platform?: string;
       gameEntry: Pick<VGMapsGameEntry, "url">;
       mapLink: VGMapsMapLink;
+      onProgress?: (progress: MapDownloadProgress) => void;
     }): Promise<SaveMapResult> => {
       const item = buildSavedMap({
         owner,
@@ -276,6 +298,7 @@ export function useSavedMaps(user: User | null) {
               const saved = findSavedMap(added.items, owner, input.game, item.imageUrl) as SavedMap;
               return { saved: true, out: { status: "saved", item: saved } };
             },
+            { onProgress: input.onProgress },
           ),
         );
         if (result.saved) {
@@ -285,7 +308,7 @@ export function useSavedMaps(user: User | null) {
         }
         return result.out;
       } catch (err) {
-        return failure(err);
+        return saveFailure(err);
       }
     },
     [owner, sync, track],
@@ -298,17 +321,28 @@ export function useSavedMaps(user: User | null) {
    * close or map switch. `signal` only cancels the not-saved fetch.
    */
   const openMap = useCallback(
-    async (map: MapRef, signal?: AbortSignal): Promise<OpenMapResult> => {
+    async (
+      map: MapRef,
+      signal?: AbortSignal,
+      onProgress?: (progress: MapDownloadProgress) => void,
+    ): Promise<OpenMapResult> => {
       const proxyUrl = proxyOf(map);
       try {
         const hit = await readCachedMapBlob(proxyUrl);
+        if (!hit && typeof navigator !== "undefined" && !navigator.onLine) {
+          return { status: "offline" };
+        }
         const saved = load().some((row) => !row.deleted && proxyOf(row) === proxyUrl);
         const blob =
           hit ??
-          (await track(proxyUrl, () => (saved ? downloadMapOnce(proxyUrl) : fetchMapBlob(proxyUrl, { signal }))));
+          (await track(proxyUrl, () =>
+            saved
+              ? downloadMapOnce(proxyUrl, { onProgress })
+              : fetchMapBlob(proxyUrl, { signal, onProgress }),
+          ));
         return { status: "ok", blob, fromCache: Boolean(hit), objectUrl: URL.createObjectURL(blob) };
       } catch (err) {
-        return failure(err);
+        return openFailure(err);
       }
     },
     [track],

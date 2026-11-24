@@ -256,9 +256,10 @@ flowchart LR
      - 2-finger focal-point pinch-to-zoom (`computeFocalZoomTransform`).
      - Mouse wheel / trackpad `ctrlKey` pinch focal-point zoom.
      - Double-tap / double-click toggles between `scale = 1` (Fit) and `max(2.5, min(maxZoom, 1 / fitScale))` (1:1 pixel zoom!).
-   - **Minimal Toggleable HUD:**
-     - Top bar: Back/Close, Map Title + `width × height` + zoom %, **Pixel** crisp toggle (`image-rendering` / `imageSmoothingEnabled = false`), **Fit / 1:1** button, **Save Offline** toggle button.
-     - Persists `(lastZoom, lastOffsetX, lastOffsetY)` via `onViewportChange` if viewing a saved map.
+   - **~~Minimal Toggleable HUD:~~ Persistent HUD (as built #38, Option A):**
+     - Top bar (`.map-viewer-top`): `IconX` close, map title (1-line ellipsis) + `W × H` meta, and square **Save offline** text button (`Save offline` → `Saving N%` → `Saved`; hidden when unsaved + offline).
+     - Bottom zoom rail (`.map-viewer-zoom`): segmented square strip (`−`, `%` readout updated on gesture end, `+`, `Fit`, `1:1`, `Pixel` toggle remembered per session); full-width on mobile, compact bottom-left strip on ≥900px / landscape handheld. Canvas lies full-bleed beneath both bars while fit scale & pan bounds account for bar insets.
+     - Persists `(lastZoom, lastOffsetX, lastOffsetY)` via `onViewportChange` (`saveViewport`) on gesture end for saved maps; silently restores saved viewport on open.
 
 4. **Wiring into Existing App (`app/icons.tsx`, `app/chat/active-game-card.tsx`, `app/page.tsx`, `app/globals.css`):**
    - `app/icons.tsx`: Add `IconMap` matching existing pixel-crisp 24×24 stroke style.

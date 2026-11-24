@@ -4970,4 +4970,169 @@ if (!canRunTsChecks) {
   assert.equal(c.items.length, 1, "device copy kept when the table is missing");
 }
 
+// VGMaps phase 4 (#38): inset-aware canvas draw rect, overscroll resistance, zoom helpers,
+// restored viewport clamping, save toasts, and blob download progress / 413 handling.
+{
+  const mv = await import("../lib/map-viewport.js");
+  const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-6, `${msg}: ${a} vs ${b}`);
+
+  // Inset-aware canvas rect: 390x844 mobile viewport with 48px top + 48px bottom HUD bars.
+  // Fit centres inside unobstructed 390x748 area (y = 48..796); top edge lands inside visible box.
+  const fitInset = mv.computeCanvasDrawRect({
+    naturalW: 4000,
+    naturalH: 4000,
+    canvasW: 390,
+    canvasH: 844,
+    visibleW: 390,
+    visibleH: 748,
+    insetTop: 48,
+    scale: 1,
+    offset: { x: 0, y: 0 },
+  });
+  near(fitInset.dx, 0, "fit inset dx");
+  near(fitInset.dw, 390, "fit inset dw");
+  near(fitInset.dh, 390, "fit inset dh");
+  near(fitInset.dy, 48 + (748 - 390) / 2, "fit inset centred between bars");
+  // When zoomed 4x and panned to +maxPanY, the map's top edge (sy=0) lands at y = insetTop (48).
+  const insetBounds = mv.calculateMapPanBounds(4000, 4000, 390, 748, 4);
+  const topEdge = mv.computeCanvasDrawRect({
+    naturalW: 4000,
+    naturalH: 4000,
+    canvasW: 390,
+    canvasH: 844,
+    visibleW: 390,
+    visibleH: 748,
+    insetTop: 48,
+    scale: 4,
+    offset: { x: 0, y: insetBounds.maxPanY },
+  });
+  near(topEdge.dy, 48, "panned top edge clears top bar");
+  near(topEdge.sy, 0, "top source pixel visible");
+  // Centred at 4x zoom, the map bleeds underneath both top and bottom bars (dy=0, dh=844).
+  const fullBleed = mv.computeCanvasDrawRect({
+    naturalW: 4000,
+    naturalH: 4000,
+    canvasW: 390,
+    canvasH: 844,
+    visibleW: 390,
+    visibleH: 748,
+    insetTop: 48,
+    scale: 4,
+    offset: { x: 0, y: 0 },
+  });
+  assert.deepEqual([fullBleed.dy, fullBleed.dh], [0, 844], "zoomed map bleeds under bars");
+  assert.equal(
+    mv.computeCanvasDrawRect({ naturalW: 0, naturalH: 100, canvasW: 400, canvasH: 400, visibleW: 400, visibleH: 400, scale: 1, offset: { x: 0, y: 0 } }).sw,
+    0,
+    "invalid size returns empty rect",
+  );
+
+  // Overscroll resistance: <=24px elastic past bounds, hard-clamped under reduced motion.
+  assert.equal(mv.applyOverscrollResistance(50, 100, 24, false), 50, "within bounds untouched");
+  const over = mv.applyOverscrollResistance(1000, 100, 24, false);
+  assert.ok(over > 100 && over <= 124, `overscroll damped within 24px: ${over}`);
+  const overNeg = mv.applyOverscrollResistance(-1000, 100, 24, false);
+  assert.ok(overNeg < -100 && overNeg >= -124, `negative overscroll damped: ${overNeg}`);
+  assert.equal(mv.applyOverscrollResistance(1000, 100, 24, true), 100, "reduced motion has no overscroll");
+
+  // 1:1 actual size, double-tap toggle, zoom readout percent, wheel zoom factor.
+  const fitLarge = mv.calculateFitScale(4096, 3072, 1280, 700);
+  const maxLarge = mv.calculateMapMaxZoom(4096, 3072, 1280, 700);
+  const actualLarge = mv.actualSizeScale(4096, 3072, 1280, 700, maxLarge);
+  assert.equal(mv.formatZoomPercent(fitLarge, actualLarge), 100, "1:1 renders as 100%");
+  near(mv.doubleTapTargetScale(1, 4096, 3072, 1280, 700, maxLarge), actualLarge, "double-tap from Fit goes to 1:1");
+  assert.equal(mv.doubleTapTargetScale(2, 4096, 3072, 1280, 700, maxLarge), 1, "double-tap when zoomed goes to Fit");
+  assert.equal(mv.doubleTapTargetScale(1, 200, 200, 800, 800, 4), 2.5, "small map double-tap zooms to 2.5x");
+  near(mv.wheelZoomFactor(-100, 0, false), 1.1, "notch wheel up ~10%");
+  near(mv.wheelZoomFactor(100, 0, false), 1 / 1.1, "notch wheel down ~10%");
+  assert.ok(mv.wheelZoomFactor(-20, 0, true) > 1 && mv.wheelZoomFactor(-20, 0, true) <= 1.35, "trackpad ctrl+wheel smooth zoom");
+  assert.equal(mv.wheelZoomFactor(0, 0, false), 1);
+
+  // Restored viewport clamps stale zoom & offset to current viewport bounds.
+  const restored = mv.clampRestoredViewport({
+    lastZoom: 999,
+    lastOffsetX: 99999,
+    lastOffsetY: Number.NaN,
+    naturalW: 4000,
+    naturalH: 4000,
+    visibleW: 400,
+    visibleH: 400,
+    maxZoom: 40,
+  });
+  assert.equal(restored.scale, 40);
+  assert.equal(restored.offset.x, mv.calculateMapPanBounds(4000, 4000, 400, 400, 40).maxPanX);
+  assert.equal(restored.offset.y, 0);
+
+  // Formatting & save toast copy.
+  assert.equal(mv.formatMegabytes(3.1 * 1024 * 1024), "3.1");
+  assert.equal(mv.formatDimensionsLabel(4096, 3072), "4096 × 3072");
+  assert.equal(mv.formatDimensionsLabel(null, null, "4096 x 3072"), "4096 × 3072");
+  assert.match(mv.mapSaveToastMessage("quota") ?? "", /Not enough space/);
+  assert.match(mv.mapSaveToastMessage("cap") ?? "", /Saved maps are full/);
+  assert.match(mv.mapSaveToastMessage("error") ?? "", /Couldn't save/);
+  assert.equal(mv.mapSaveToastMessage("saved"), null);
+
+  // Blob download progress streaming + 413 too-large guard in lib/map-blob-cache.js.
+  const bc = await import("../lib/map-blob-cache.js");
+  const realFetch = globalThis.fetch;
+  const hadCaches = "caches" in globalThis;
+  const cacheStore = new Map();
+  globalThis.caches = {
+    async open() {
+      return {
+        async put(key, res) { cacheStore.set(key, await res.blob()); },
+        async match(key) { return cacheStore.has(key) ? new Response(cacheStore.get(key)) : undefined; },
+        async keys() { return []; },
+        async delete(key) { return cacheStore.delete(key); },
+      };
+    },
+  };
+  try {
+    const pUrl = bc.mapProxyUrl(
+      "https://www.vgmaps.com/Atlas/SNES/ChronoTrigger-World.png",
+      "https://www.vgmaps.com/Atlas/SNES/index.htm#ChronoTrigger",
+    );
+    globalThis.fetch = async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+            controller.enqueue(new Uint8Array([5, 6, 7, 8]));
+            controller.close();
+          },
+        }),
+        { headers: { "content-type": "image/png", "content-length": "8" } },
+      );
+    const seen = [];
+    const blob = await bc.fetchMapBlob(pUrl, { onProgress: (p) => seen.push(p) });
+    assert.equal(blob.size, 8);
+    assert.deepEqual(seen[seen.length - 1], { loaded: 8, total: 8 }, "streaming progress reported");
+
+    // Shared downloadMapOnce forwards progress to all waiters.
+    const w1 = [];
+    const w2 = [];
+    await Promise.all([
+      bc.downloadMapOnce(pUrl, { onProgress: (p) => w1.push(p) }),
+      bc.downloadMapOnce(pUrl, { onProgress: (p) => w2.push(p) }),
+    ]);
+    assert.equal(w1[w1.length - 1].loaded, 8, "first waiter gets progress");
+    assert.equal(w2[w2.length - 1].loaded, 8, "second waiter gets progress");
+
+    // Proxy 413 and declared >30 MB content-length both surface MAP_TOO_LARGE_STATUS (413).
+    globalThis.fetch = async () => Response.json({ error: "Map is over 30 MB." }, { status: 413 });
+    const status413 = await bc.fetchMapBlob(pUrl).then(() => 200, (e) => (e instanceof bc.MapFetchError ? e.status : -1));
+    assert.equal(status413, bc.MAP_TOO_LARGE_STATUS, "proxy 413 maps to MAP_TOO_LARGE_STATUS");
+
+    globalThis.fetch = async () =>
+      new Response(new Uint8Array([1]), {
+        headers: { "content-type": "image/png", "content-length": String(bc.MAX_MAP_BLOB_BYTES + 1) },
+      });
+    const declaredBig = await bc.fetchMapBlob(pUrl).then(() => 200, (e) => (e instanceof bc.MapFetchError ? e.status : -1));
+    assert.equal(declaredBig, bc.MAP_TOO_LARGE_STATUS, "declared >30 MB rejected as 413");
+  } finally {
+    globalThis.fetch = realFetch;
+    if (!hadCaches) delete globalThis.caches;
+  }
+}
+
 console.log("Self-check passed.");
