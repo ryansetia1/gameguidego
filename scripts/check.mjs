@@ -4374,6 +4374,15 @@ if (!canRunTsChecks) {
     <tr><td><a name="H"></a>H</td></tr><tr><td><a href="h1.png">H1</a></td></tr></table>`;
   const gMaps = vg.extractVGMapsLinks(idPage, "https://www.vgmaps.com/Atlas/NES/index.htm#G");
   assert.deepEqual(gMaps.map((m) => m.imageUrl), ["https://www.vgmaps.com/Atlas/NES/g1.png"]);
+  // Data attributes are not HTML link or game-anchor attributes.
+  const dataAttributes = `<table><tr><td><a name="G"></a>G</td></tr>
+    <tr><td><a data-name="H" data-href="decoy.png">Decoy</a><a href="real.png">Real</a></td></tr>
+    <tr><td><a name="H"></a>H</td></tr><tr><td><a href="h.png">H</a></td></tr></table>`;
+  assert.deepEqual(
+    vg.extractVGMapsLinks(dataAttributes, "https://www.vgmaps.com/Atlas/NES/index.htm#G").map((m) => m.mapName),
+    ["Real"],
+    "data-name must not split games and data-href must not be treated as a link",
+  );
   // Anchor outside any <tr> (just before the game's table): that table only, not the previous game's.
   const outside = `<table><tr><td><a href="prev.png">Prev</a></td></tr></table>
     <a name="Solo"></a><h3>Solo</h3><table><tr><td><a href="solo1.png">S1</a></td></tr>

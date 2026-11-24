@@ -499,7 +499,9 @@ do not sync to the cloud or use Storage uploads.
   loop); Supabase table `public.llm_calls`
   (`db/llm-calls.sql`, patch `db/llm-calls-embed.sql` on older installs) when
   `NEXT_PUBLIC_SUPABASE_*` are set (`LLM_DB_LOG=0` disables). Insert-only RLS — no client reads.
-- **VGMaps maps (in progress, #35/#36/#37):** pure helpers `lib/vgmaps-parser.js`,
+- **VGMaps Maps (shipped, #35–#40):** users can search the VGMaps Atlas, view a game's
+  listed maps in the Maps pane, open them in a high-resolution canvas viewer, and save
+  maps offline without signing in. Pure helpers `lib/vgmaps-parser.js`,
   `lib/map-viewport.js`, `lib/saved-maps.js`; server `lib/vgmaps-cache.ts` (7-day cache in
   `public.vgmaps_cache`, memory L1/fallback, writes via service role only, 16 MiB page cap
   before parsing, manual redirects re-validated per hop) behind `GET /api/maps/search`,
@@ -507,8 +509,8 @@ do not sync to the cloud or use Storage uploads.
   30 MB cap, CDN-cached; query must be exactly `?url=<listed map>&game=<atlas game url>`
   via `URLSearchParams` so cache keys can't be busted). 60s upstream backoff after a
   VGMaps network error/5xx; Supabase cache reads time out at 3s. No login.
-  **Offline maps (#37, not wired into the UI yet):** `lib/map-blob-cache.js` keeps saved map
-  images in the Cache API `gg-maps-v1` keyed by `mapProxyUrl` (one shared download per URL via
+  `lib/map-blob-cache.js` keeps saved map images in the Cache API `gg-maps-v1` keyed by
+  `mapProxyUrl` (one shared download per URL via
   `downloadMapOnce`; viewing an unsaved map uses `fetchMapBlob` and stores nothing).
   `public/sw.js` never evicts `gg-maps-v1` and skips `/api/maps/image` in its runtime cache.
   `app/chat/use-saved-maps.tsx` (`useSavedMaps`) saves metadata to `gg:saved-maps` only after
@@ -517,7 +519,12 @@ do not sync to the cloud or use Storage uploads.
   (merge before push, upsert on `user_id,game_key,image_url`; quiet when the table is
   missing). `openMap` returns `unlisted` when a map is neither cached nor on its game's list;
   `isMapListed` flags saved maps missing from the current list. Binaries never go to Supabase.
-  Plan: [`docs/plan/vgmaps-map-viewer.md`](docs/plan/vgmaps-map-viewer.md).
+  `app/chat/maps-panel.tsx` and `app/chat/map-viewer.tsx` implement the mutually exclusive
+  side pane and modal dual-layer canvas viewer. Viewer assets and object URLs are released
+  on map change/close; saved image binaries remain device-local. The Maps pane works signed
+  out; signed-in users sync metadata only, and a missing `saved_maps` table degrades quietly.
+  Parser regression fixtures live in `scripts/check.mjs`. Plan:
+  [`docs/plan/vgmaps-map-viewer.md`](docs/plan/vgmaps-map-viewer.md).
 - `lib/supabase-server.ts`: shared server-side Supabase client
   (`getServerClient()`, anon key, no session). All server modules — caches
   (`search-cache`, `embed-cache`, `hltb-cache`), logs
