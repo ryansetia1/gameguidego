@@ -504,7 +504,9 @@ do not sync to the cloud or use Storage uploads.
   `public.vgmaps_cache`, memory L1/fallback, writes via service role only, 16 MiB page cap
   before parsing, manual redirects re-validated per hop) behind `GET /api/maps/search`,
   `/api/maps/list` (Atlas-index game URLs only) and `/api/maps/image` (raster-only proxy,
-  30 MB cap). `public.saved_maps` (`db/saved-maps.sql`) is for the phase 3 sync. No login.
+  30 MB cap, CDN-cached; query must be exactly `?url=<listed map>&game=<atlas game url>`
+  via `URLSearchParams` so cache keys can't be busted). 60s upstream backoff after a
+  VGMaps network error/5xx; Supabase cache reads time out at 3s. `public.saved_maps` (`db/saved-maps.sql`) is for the phase 3 sync. No login.
   Plan: [`docs/plan/vgmaps-map-viewer.md`](docs/plan/vgmaps-map-viewer.md).
 - `lib/supabase-server.ts`: shared server-side Supabase client
   (`getServerClient()`, anon key, no session). All server modules — caches

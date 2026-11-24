@@ -1,28 +1,22 @@
 import { NextResponse } from "next/server";
 
-import { VGMapsError, fetchVGMapsImage } from "@/lib/vgmaps-cache";
-import { canonicalVGMapsUrl, isAllowedVGMapsImageUrl } from "@/lib/vgmaps-parser.js";
+import { VGMapsError, fetchVGMapsImage, resolveMapImageRequest } from "@/lib/vgmaps-cache";
 
 export const runtime = "nodejs";
+// Covers the 120s upstream image timeout in lib/vgmaps-cache.ts.
+export const maxDuration = 130;
 
 // Same-origin proxy for a VGMaps map image (no canvas tainting, cacheable offline).
-// Only VGMaps hosts + image extensions, every redirect hop re-checked, raster types only,
-// 30 MB cap. No login.
+// GET ?url=<imageUrl>&game=<atlas game url>, exactly that: the image must be one the game's
+// VGMaps page lists, so every CDN cache key is a real map. Every redirect hop re-checked,
+// raster types only, 30 MB cap. No login.
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const imageUrl = searchParams.get("url");
-  if (!isAllowedVGMapsImageUrl(imageUrl)) {
-    return NextResponse.json({ error: "Not a VGMaps map image." }, { status: 400 });
-  }
-  const rawReferer = searchParams.get("referer");
-  const referer = rawReferer ? canonicalVGMapsUrl(rawReferer) : "https://www.vgmaps.com/";
-  if (!referer) return NextResponse.json({ error: "Not a VGMaps page." }, { status: 400 });
-
   try {
-    const image = await fetchVGMapsImage(imageUrl as string, referer.replace(/#.*$/, ""));
+    const { imageUrl, referer } = await resolveMapImageRequest(new URL(request.url).search);
+    const image = await fetchVGMapsImage(imageUrl, referer);
     const headers: Record<string, string> = {
       "Content-Type": image.contentType,
-      "Cache-Control": "public, max-age=2592000, stale-while-revalidate=86400",
+      "Cache-Control": "public, max-age=2592000, s-maxage=2592000, stale-while-revalidate=86400",
       "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy": "default-src 'none'; sandbox",
     };

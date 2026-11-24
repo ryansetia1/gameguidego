@@ -39,7 +39,7 @@ flowchart LR
     LR -->|"Cache by platform path (strip #fragment)"| VC
     LR -->|"extractVGMapsLinks(#fragment)"| VGM
     UI -->|"Open / Save Offline"| HOOK["useSavedMaps Hook<br/>(localStorage + Supabase metadata)"]
-    HOOK -->|"GET /api/maps/image?url=&referer="| IR["/api/maps/image Proxy<br/>(Referer header + 30MB cap)"]
+    HOOK -->|"GET /api/maps/image?url=&game="| IR["/api/maps/image Proxy<br/>(Referer header + 30MB cap)"]
     HOOK -->|"Store binary response"| CACHE[("Browser Cache API<br/>gg-maps-v1")]
     HOOK -->|"Sync metadata (if signed in)"| SM[("public.saved_maps")]
     CACHE --> VIEW["MapViewer Dialog<br/>(Dual-Layer Canvas + Focal Pinch/Pan)"]
@@ -112,7 +112,7 @@ flowchart LR
 4. **`lib/map-blob-cache.js`** *(new, browser-safe helper with feature check)*
    - Uses browser Cache API (`const CACHE_NAME = "gg-maps-v1"`).
    - Functions:
-     - `mapProxyUrl(imageUrl, sourceUrl = "")` → `/api/maps/image?url=...&referer=...`
+     - `mapProxyUrl(imageUrl, sourceUrl)` → `` `/api/maps/image?${new URLSearchParams({ url: imageUrl, game: sourceUrl })}` `` (as built #36: exactly these two params in this order and encoding, `sourceUrl` = the Atlas game URL with `#fragment`; anything else is 400)
      - `fetchAndCacheMapBlob(proxyUrl, { signal } = {})` → fetches same-origin proxy response (`res.ok` check), clones into `cache.put(proxyUrl, res.clone())` if `'caches' in window`, returns `{ blob, objectUrl, fromCache }`.
      - `loadMapObjectUrl(proxyUrl, { signal } = {})` → checks `caches.match(proxyUrl)` first (instant offline hit!), falls back to `fetchAndCacheMapBlob`.
      - `hasCachedMap(proxyUrl)` → boolean.
@@ -130,7 +130,7 @@ flowchart LR
 
 ### B. Database SQL & Migrations (`db/` + `supabase/migrations/`)
 
-1. **`db/vgmaps-cache.sql`**:
+1. **`db/vgmaps-cache.sql`**: *(superseded by "As built (#36)" in 3A.5: only the read policy ships; writes use the service-role key, so the anon insert/update policies below are NOT created)*
    ```sql
    create table if not exists public.vgmaps_cache (
      cache_key text primary key,
@@ -202,12 +202,12 @@ flowchart LR
    - Returns `{ pageUrl: canonicalUrl, maps, available: true }`.
 
 3. **`app/api/maps/image/route.ts`** (`export const runtime = "nodejs";`)
-   - `GET ?url=<imageUrl>&referer=<optionalPageUrl>`
+   - `GET ?url=<imageUrl>&game=<atlasGameUrl>` *(as built #36, replaces `referer`)*: the query must be exactly `new URLSearchParams({ url, game })`, `game` must be in the Atlas index and `url` one of its listed maps, so every CDN cache key is a real map (no `?x=N` busting). The Referer sent upstream is the game page, derived server-side.
    - Validates `isAllowedVGMapsImageUrl(url)` (strict SSRF guard, 400 if invalid).
-   - Validates optional `referer` via `canonicalVGMapsUrl` (defaults to `https://www.vgmaps.com/`).
+   - ~~Validates optional `referer`~~ (dropped in #36, see above). `maxDuration = 130` to cover the 120s upstream timeout.
    - Streams binary with `Referer`, `User-Agent`, `Accept: image/*`, `AbortSignal.timeout(25_000)`.
    - Verifies `Content-Type` starts with `image/`, enforces `MAX_MAP_BYTES = 30 * 1024 * 1024` (checks `Content-Length` header if present + streams/buffers safely, returning 413 if exceeded).
-   - Returns binary with `"Content-Type"`, `"Content-Length"`, and `"Cache-Control": "public, max-age=2592000, stale-while-revalidate=86400"`.
+   - Returns binary with `"Content-Type"`, `"Content-Length"`, and `"Cache-Control": "public, max-age=2592000, s-maxage=2592000, stale-while-revalidate=86400"` (as built #36: `s-maxage` so the Vercel CDN caches it).
 
 ---
 
@@ -290,7 +290,7 @@ flowchart LR
    - VGMaps uses decades-old HTML tables (sometimes unclosed tags, uppercase attributes like `HREF` or `NAME`, `&nbsp;`, and nested `<table>` inside `<td>`). Never rely on strict XML parsing; write defensive case-insensitive regex/DOM-like helpers and test against nasty HTML fixtures in `scripts/check.mjs`.
    - Anchor fragments may contain URL-encoded spaces (`%20`) or mixed casing; compare both raw and `decodeURIComponent` normalized strings case-insensitively.
 2. **CORS / Canvas Tainting:**
-   - Drawing a cross-origin `<img src="https://www.vgmaps.com/...">` onto `<canvas>` will taint the canvas and break pixel operations / caching. Always route image loads through `/api/maps/image?url=...&referer=...`.
+   - Drawing a cross-origin `<img src="https://www.vgmaps.com/...">` onto `<canvas>` will taint the canvas and break pixel operations / caching. Always route image loads through `/api/maps/image?url=...&game=...` (`mapProxyUrl`).
 3. **iOS Safari / Mobile WebView Canvas Memory Limits:**
    - Never create a DOM `<canvas>` or offscreen overview `<canvas>` sized to `naturalWidth × naturalHeight` when opening a `12000 × 9000` map (Safari enforces ~16.7 MP–256 MB limits and will silently blank or crash the tab). Keep the display `<canvas>` sized strictly to `viewportWidth * dpr × viewportHeight * dpr` and cap the overview canvas via `computeOverviewDimensions(..., 2048)`.
 4. **Preventing Cache API Memory Leaks:**

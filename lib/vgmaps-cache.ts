@@ -23,6 +23,9 @@ const PAGE_TIMEOUT_MS = 15_000;
 // The timeout covers the body too: 2 min keeps a slow 30 MB map (~250 KB/s) from being cut.
 const IMAGE_TIMEOUT_MS = 120_000;
 const UA = "GameGuideGo/1.0 (+https://gameguidego.vercel.app)";
+/** After a network error or 5xx, skip VGMaps for this long (stale cache still serves). */
+const BACKOFF_MS = 60_000;
+const SUPABASE_TIMEOUT_MS = 3_000;
 /** Raster types only: an image/svg+xml body could run script on our origin. */
 const IMAGE_TYPES = new Set(["image/png", "image/gif", "image/jpeg", "image/webp", "image/bmp", "image/x-ms-bmp"]);
 
@@ -40,6 +43,8 @@ type HopGuard = (url: string) => string | null;
 
 const imageGuard: HopGuard = (url) => (isAllowedVGMapsImageUrl(url) ? canonicalVGMapsUrl(url) : null);
 
+let downUntil = 0;
+
 /**
  * GET a VGMaps URL with `redirect: "manual"`, re-validating every hop with `guard`.
  * @throws VGMapsError 400 for a blocked start URL, 502 for a blocked/looping redirect.
@@ -53,12 +58,21 @@ export async function fetchVGMaps(
   let url: string = start;
   const signal = AbortSignal.timeout(timeoutMs);
   for (let hop = 0; ; hop++) {
-    const res: Response = await fetch(url.replace(/#.*$/, ""), {
-      headers: { "User-Agent": UA, Accept: accept, ...(referer ? { Referer: referer } : {}) },
-      redirect: "manual",
-      cache: "no-store",
-      signal,
-    });
+    // ponytail: per-instance backoff, so each cold instance still tries once.
+    if (Date.now() < downUntil) throw new VGMapsError("VGMaps is down. Try again in a minute.", 502);
+    let res: Response;
+    try {
+      res = await fetch(url.replace(/#.*$/, ""), {
+        headers: { "User-Agent": UA, Accept: accept, ...(referer ? { Referer: referer } : {}) },
+        redirect: "manual",
+        cache: "no-store",
+        signal,
+      });
+    } catch (err) {
+      downUntil = Date.now() + BACKOFF_MS;
+      throw err;
+    }
+    if (res.status >= 500) downUntil = Date.now() + BACKOFF_MS;
     if (res.status < 300 || res.status > 399) return res;
     await res.body?.cancel();
     const location: string | null = res.headers.get("location");
@@ -192,6 +206,7 @@ async function readRow<T>(key: string): Promise<Cached<T> | null> {
       .from("vgmaps_cache")
       .select("data, fetched_at")
       .eq("cache_key", key)
+      .abortSignal(AbortSignal.timeout(SUPABASE_TIMEOUT_MS))
       .maybeSingle();
     if (error || !data) return null;
     return { data: data.data as T, fetchedAt: Date.parse(data.fetched_at) || 0 };
@@ -207,7 +222,8 @@ async function writeRow(key: string, data: unknown, fetchedAt: number) {
   try {
     await supabase
       .from("vgmaps_cache")
-      .upsert({ cache_key: key, data, fetched_at: new Date(fetchedAt).toISOString() });
+      .upsert({ cache_key: key, data, fetched_at: new Date(fetchedAt).toISOString() })
+      .abortSignal(AbortSignal.timeout(SUPABASE_TIMEOUT_MS));
   } catch {
     // Best-effort: the response still returns when the cache write fails.
   }
@@ -288,15 +304,43 @@ export async function getCachedVGMapsMaps(gameUrl: string): Promise<VGMapsMapLin
   const canonical = canonicalVGMapsUrl(gameUrl);
   if (!canonical) throw new VGMapsError("Not a VGMaps URL.", 400);
   const { origin, pathname } = new URL(canonical);
-  const maps = await readThrough(
-    `maps:${canonical}`,
-    async () => {
-      const links = extractVGMapsLinks(await pageHtml(origin + pathname), canonical);
-      // Same as the index: an empty parse likely means changed markup, don't keep it a week.
-      if (!links.length) throw new VGMapsError("No maps found on VGMaps.", 502);
-      return links;
-    },
-    isMapList,
-  );
+  let maps: VGMapsMapLink[];
+  try {
+    maps = await readThrough(
+      `maps:${canonical}`,
+      async () => {
+        const links = extractVGMapsLinks(await pageHtml(origin + pathname), canonical);
+        // Not stored: an empty parse may be changed markup, so don't keep it for a week.
+        // The page html stays in memory, so asking again doesn't refetch it.
+        if (!links.length) throw new VGMapsError("No maps for this game.", 404);
+        return links;
+      },
+      isMapList,
+    );
+  } catch (err) {
+    if (err instanceof VGMapsError && err.status === 404) return [];
+    throw err;
+  }
   return maps.filter((map) => isAllowedVGMapsImageUrl(map.imageUrl));
+}
+
+/**
+ * Validate an image proxy query: exactly `?url=<image>&game=<atlas game url>` in that
+ * encoding, where the game is in the Atlas index and the image is one of its listed maps.
+ * The CDN keys on the full query string, so this keeps every cacheable key a real VGMaps
+ * map: no `?x=N` cache busting, no case/host/encoding variants, no free-form referer.
+ * @throws VGMapsError 400 for anything else; upstream errors from the index/list lookups.
+ */
+export async function resolveMapImageRequest(search: string) {
+  const params = new URLSearchParams(search);
+  const imageUrl = params.get("url") ?? "";
+  const game = params.get("game") ?? "";
+  const exact = `?${new URLSearchParams({ url: imageUrl, game })}`;
+  const bad = new VGMapsError("Not a VGMaps map image.", 400);
+  if (search !== exact || !isAllowedVGMapsImageUrl(imageUrl) || canonicalVGMapsUrl(game) !== game) throw bad;
+  const entries = await getCachedVGMapsDirectory();
+  if (!entries.some((entry) => entry.url === game)) throw bad;
+  const maps = await getCachedVGMapsMaps(game);
+  if (!maps.some((map) => map.imageUrl === imageUrl)) throw bad;
+  return { imageUrl, referer: game.replace(/#.*$/, "") };
 }

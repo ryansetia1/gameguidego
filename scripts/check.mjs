@@ -4644,8 +4644,43 @@ if (!canRunTsChecks) {
       assert.equal(await status(vc.getCachedVGMapsMaps("https://evil.example/Atlas/NES/index.htm#FF")), 400);
       const noMaps = '<table><tr><td><a name="EE">Empty</a></td></tr></table>';
       stub(() => new Response(noMaps, { headers: { "content-type": "text/html" } }));
-      assert.equal(await status(vc.getCachedVGMapsMaps("https://www.vgmaps.com/Atlas/GB/index.htm#EE")), 502, "empty map list not cached");
+      assert.deepEqual(await vc.getCachedVGMapsMaps("https://www.vgmaps.com/Atlas/GB/index.htm#EE"), [], "a game with no maps is an empty list");
+      await vc.getCachedVGMapsMaps("https://www.vgmaps.com/Atlas/GB/index.htm#EE");
+      assert.equal(calls.length, 1, "empty list not stored, but the page html is reused");
+
+      // Image proxy query (Sentinel #46): only ?url=<listed image>&game=<atlas game>, exact encoding,
+      // so the CDN cache key can't be busted with extra params or URL variants.
+      const ffGame = "https://www.vgmaps.com/Atlas/NES/index.htm#FF";
+      const ffImg = "https://www.vgmaps.com/Atlas/NES/ff1.png";
+      const q = (url, game) => `?${new URLSearchParams({ url, game })}`;
+      stub(() => {
+        throw new Error("lookups must come from cache");
+      });
+      assert.deepEqual(await vc.resolveMapImageRequest(q(ffImg, ffGame)), { imageUrl: ffImg, referer: "https://www.vgmaps.com/Atlas/NES/index.htm" }, "referer derived server-side");
+      for (const [search, why] of [
+        [`${q(ffImg, ffGame)}&x=1`, "extra param"],
+        [`?${new URLSearchParams({ game: ffGame, url: ffImg })}`, "reordered params"],
+        [q(`${ffImg}?x=1`, ffGame), "query on the image url"],
+        [q("https://vgmaps.com/Atlas/NES/ff1.png", ffGame), "host variant"],
+        [q("https://www.vgmaps.com/atlas/nes/FF1.PNG", ffGame), "case variant"],
+        [q("https://www.vgmaps.com/Atlas/NES/z1.png", ffGame), "image not listed for this game"],
+        [q(ffImg, "https://www.vgmaps.com/Atlas/NES/index.htm#ZZ"), "game not in the atlas"],
+        [q(ffImg, "https://www.vgmaps.com/Atlas/NES/index.htm"), "no game anchor"],
+        [`?url=${ffImg}&game=${ffGame}`, "unencoded"],
+        ["?url=https%3A%2F%2Fevil.example%2Fx.png&game=x", "off-site"],
+        ["", "empty"],
+      ]) {
+        assert.equal(await status(vc.resolveMapImageRequest(search)), 400, why);
+      }
+      assert.equal(calls.length, 0, "validation never fetches");
     }
+    // Backoff (last: it leaves the module in backoff). A network error skips VGMaps for a while.
+    stub(() => {
+      throw new TypeError("fetch failed");
+    });
+    assert.equal(await status(vc.fetchVGMapsText("https://www.vgmaps.com/Atlas/NES/index.htm")), "threw TypeError: fetch failed");
+    assert.equal(await status(vc.fetchVGMapsText("https://www.vgmaps.com/Atlas/NES/index.htm")), 502, "backed off");
+    assert.equal(calls.length, 1, "no second upstream try during backoff");
   } finally {
     globalThis.fetch = realFetch;
   }

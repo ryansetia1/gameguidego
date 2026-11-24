@@ -19,7 +19,8 @@ export async function GET(request: Request) {
     const maps = await getCachedVGMapsMaps(url);
     return NextResponse.json(
       { pageUrl: url, maps, available: true },
-      { headers: { "Cache-Control": "public, max-age=3600" } },
+      // A game with no maps yet is rechecked sooner.
+      { headers: { "Cache-Control": `public, max-age=${maps.length ? 3600 : 300}` } },
     );
   } catch (err) {
     console.error("VGMaps list failed:", err);
