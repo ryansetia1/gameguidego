@@ -331,6 +331,7 @@ export default function Home() {
   // Running map saves keyed by image URL. Page-level so Back / closing the panel or the
   // viewer never stops one; the row and the viewer both read it.
   const [mapSaves, setMapSaves] = useState<Record<string, MapDownloadProgress>>({});
+  const mapSavesStartedRef = useRef(new Set<string>());
   type ViewingMapState = {
     item: MapViewerItem;
     game: string;
@@ -2056,11 +2057,13 @@ export default function Home() {
    * Back or closing the panel, the row and the viewer show "Saving N%", and the result
    * toasts wherever the player is (inside the viewer while it is open).
    */
-  async function saveMapFromViewer(target: ViewingMapState) {
+  async function saveMapFromViewer(target: ViewingMapState, blob: Blob | null) {
     const { gameEntry, mapLink } = target;
     if (!gameEntry || !mapLink) return;
     const url = mapLink.imageUrl;
-    if (mapSaves[url]) return;
+    // A ref, not `mapSaves`: a double tap lands before the state re-renders.
+    if (mapSavesStartedRef.current.has(url)) return;
+    mapSavesStartedRef.current.add(url);
     let lastText = "";
     setMapSaves((prev) => ({ ...prev, [url]: { loaded: 0, total: mapLink.fileSizeBytes ?? null } }));
     const result = await savedMaps.saveMap({
@@ -2068,6 +2071,7 @@ export default function Home() {
       platform: target.platform,
       gameEntry,
       mapLink,
+      blob,
       onProgress: (progress) => {
         const text = formatSavingText(progress);
         if (text === lastText) return;
@@ -2075,6 +2079,7 @@ export default function Home() {
         setMapSaves((prev) => (prev[url] ? { ...prev, [url]: progress } : prev));
       },
     });
+    mapSavesStartedRef.current.delete(url);
     setMapSaves((prev) => {
       const next = { ...prev };
       delete next[url];
@@ -2877,6 +2882,7 @@ export default function Home() {
     messages.length > 0 ||
     Boolean(activeChatId && game.trim()) ||
     editingGame;
+  const savedMapsCount = savedMaps.forGame(game).length;
   unsavedSetupRef.current = { started, editingGame, preferredUrls, game, platform, cover, user };
 
   const handlePreferredUrlsChange = useCallback(
@@ -3057,7 +3063,7 @@ export default function Home() {
       onJourneyToast={showJournalToast}
       savedCount={savedAnswers.forGame(game).length}
       onOpenSaved={game.trim() ? openSavedAnswers : undefined}
-      savedMapsCount={savedMaps.forGame(game).length}
+      savedMapsCount={savedMapsCount}
       onOpenMaps={game.trim() ? openMapsPanel : undefined}
     />
   );
@@ -3332,11 +3338,7 @@ export default function Home() {
             <button
               type="button"
               className="sticky-maps"
-              aria-label={
-                savedMaps.forGame(game).length > 0
-                  ? `Maps, ${savedMaps.forGame(game).length} saved`
-                  : "Maps"
-              }
+              aria-label={savedMapsCount > 0 ? `Maps, ${savedMapsCount} saved` : "Maps"}
               onClick={(event) => {
                 event.stopPropagation();
                 openMapsPanel();
@@ -3502,7 +3504,7 @@ export default function Home() {
         <ComposerShell
           started={started}
           onOpenMaps={started && game.trim() && !editingGame ? openMapsPanel : undefined}
-          mapsCount={savedMaps.forGame(game).length}
+          mapsCount={savedMapsCount}
           temporary={temporary}
           spoilerMajor={spoilerPrefs.major}
           inlineEdit={editingIndex !== null}
@@ -3700,7 +3702,7 @@ export default function Home() {
         saveProgress={viewingMap ? (mapSaves[viewingMap.item.imageUrl] ?? null) : null}
         onSave={
           viewingMap?.gameEntry && viewingMap?.mapLink
-            ? () => void saveMapFromViewer(viewingMap)
+            ? (blob) => void saveMapFromViewer(viewingMap, blob)
             : undefined
         }
         onViewportChange={savedMaps.saveViewport}

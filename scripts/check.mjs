@@ -5334,8 +5334,8 @@ if (!canRunTsChecks) {
     );
     assert.deepEqual(
       mp.resolveMapsGame("Zelda", "SNES", [zelda1, zelda2, alttpSnes]),
-      { type: "resolved", entry: alttpSnes },
-      "the only fuzzy match on the active platform resolves",
+      { type: "pick", options: [zelda1, zelda2, alttpSnes] },
+      "a lone fuzzy match on the active platform still asks (only exact/unique resolves)",
     );
     assert.deepEqual(
       mp.resolveMapsGame("Zelda Adventure", "NES", [zelda2]),

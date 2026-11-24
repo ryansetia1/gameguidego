@@ -58,8 +58,8 @@ export type MapViewerProps = {
   cancelDownload?: (map: MapRef) => void;
   /** Progress of this map's save; the save itself runs page-level and survives closing. */
   saveProgress?: MapDownloadProgress | null;
-  /** Start saving (absent when the map can't be saved from here). */
-  onSave?: () => void;
+  /** Start saving with the image already on screen (absent when it can't be saved from here). */
+  onSave?: (blob: Blob | null) => void;
   onViewportChange?: (savedId: string, state: MapViewport) => void;
   onClose: () => void;
   /** Rendered inside the dialog's top layer (the page toast while the viewer is open). */
@@ -105,6 +105,7 @@ const CANVAS_BG = "#0e1112";
 
 // Unsaved maps keep their zoom/offset for this session (saved maps persist on the record).
 const sessionViewports = new Map<string, MapViewport>();
+const SESSION_VIEWPORTS_MAX = 50;
 
 // Session fallback when sessionStorage is unavailable (e.g. strict private browsing).
 let memoryPixelCrisp = false;
@@ -313,6 +314,8 @@ export function MapViewer({
   const wheelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const loadGenRef = useRef(0);
+  // The downloaded image of the open map, handed to Save so it isn't fetched twice.
+  const blobRef = useRef<Blob | null>(null);
 
   // Keep latest callbacks/props readable from imperative event handlers without re-binding.
   const mapRef = useRef(map);
@@ -391,7 +394,12 @@ export function MapViewer({
     if (isSavedRef.current && currentMap.savedId && onViewportChangeRef.current) {
       onViewportChangeRef.current(currentMap.savedId, state);
     } else {
+      sessionViewports.delete(currentMap.imageUrl);
       sessionViewports.set(currentMap.imageUrl, state);
+      // Oldest first (insertion order): keep the session memory bounded.
+      if (sessionViewports.size > SESSION_VIEWPORTS_MAX) {
+        sessionViewports.delete(sessionViewports.keys().next().value as string);
+      }
     }
   }, []);
 
@@ -633,6 +641,7 @@ export function MapViewer({
       abortRef.current?.abort();
       disposeAsset(assetRef.current);
       assetRef.current = null;
+      blobRef.current = null;
     };
   }, [cancelAnimation]);
 
@@ -663,6 +672,7 @@ export function MapViewer({
     abortRef.current = null;
     disposeAsset(assetRef.current);
     assetRef.current = null;
+    blobRef.current = null;
 
     if (!mapImageUrl || !mapSourceUrl || !currentMap) {
       if (canvasRef.current) {
@@ -753,6 +763,7 @@ export function MapViewer({
 
         decoding = true;
         const asset = await decodeMapAsset(res.blob, openedUrl);
+        if (loadGenRef.current === gen && !res.fromCache) blobRef.current = res.blob;
         openedUrl = null; // Asset owns or already revoked it.
 
         if (!active || loadGenRef.current !== gen) {
@@ -1296,9 +1307,9 @@ export function MapViewer({
     );
   } else if (viewerState.kind === "too_large") {
     saveSlot = <span className="map-viewer-save-reason">Over 30 MB</span>;
-  } else if (online && onSave && (viewerState.kind === "ready" || viewerState.kind === "loading")) {
+  } else if ((online || blobRef.current) && onSave && viewerState.kind === "ready") {
     saveSlot = (
-      <button type="button" className="map-viewer-save" onClick={onSave}>
+      <button type="button" className="map-viewer-save" onClick={() => onSave(blobRef.current)}>
         <span className="map-viewer-save-long">Save offline</span>
         <span className="map-viewer-save-short" aria-hidden="true">
           Save

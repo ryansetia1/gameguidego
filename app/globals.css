@@ -3327,6 +3327,7 @@ details.sources small {
 
 /* Sticky mini-header "Maps": reach maps mid-chat without scrolling up. */
 .sticky-maps {
+  position: relative;
   flex-shrink: 0;
   margin-left: auto;
   height: 34px;
@@ -3341,6 +3342,13 @@ details.sources small {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   cursor: pointer;
+}
+
+/* 44px tap target without growing the 34px bar button. */
+.sticky-maps::after {
+  content: "";
+  position: absolute;
+  inset: -5px -2px;
 }
 
 .sticky-maps:hover {
