@@ -174,7 +174,7 @@ export function JourneyPanel({
           ) : null}
         </span>
         {isUpdating ? (
-          <span className="guide-status-chip is-pending" aria-live="polite">
+          <span className="meta-text" aria-live="polite">
             Updating…
           </span>
         ) : null}

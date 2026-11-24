@@ -4227,6 +4227,12 @@ if (!canRunTsChecks) {
   assert.ok(statusSrc.includes("ensureSumopodHealth"));
   assert.ok(chipSrc.includes('state === "limited"') && chipSrc.includes('state === "refreshing"') && chipSrc.includes('state === "paused"'));
   assert.equal((cssSrc.match(/--warn:/g) || []).length, 3, "light + explicit dark + media dark warn tokens");
+  // #41: player-UI status is plain text, no chips/badges/dots.
+  assert.ok(chipSrc.includes("meta-text") && !/Icon(Check|Clock|Alert)/.test(chipSrc), "guide status is plain words");
+  for (const dead of ["saved-chip", "live-badge", "source-badge", "guide-status-chip", "player-memory-chip", "player-memory-edited-badge", "topic-row-spoiler-chip", "guide-chip-pulse"]) {
+    assert.ok(!cssSrc.includes(dead), `dead chip CSS removed: ${dead}`);
+  }
+  assert.ok(/\.meta-text--error \{\s*font-weight: 700;\s*color: var\(--danger\);/.test(cssSrc));
 }
 
 // VGMaps map viewer phase 1 (#35): parser, viewport math, saved-maps model. Offline fixtures only.

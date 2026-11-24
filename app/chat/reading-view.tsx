@@ -302,7 +302,7 @@ export function ReadingView({
         </button>
       </div>
       {!online && <p className="saved-offline">Offline, showing what&apos;s on this device</p>}
-      {chip && <p className="reading-chip">Continued where you left off</p>}
+      {chip && <p className="reading-note">Continued where you left off</p>}
       <div
         ref={scrollRef}
         className="reading-scroll"

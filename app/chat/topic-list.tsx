@@ -3,7 +3,6 @@ import type { Chat } from "@/lib/supabase";
 import {
   loadTopicSpoilerPrefs,
   SPOILER_MODE_ON_LABEL,
-  TOPIC_SPOILER_CHIP_LABEL,
 } from "@/lib/spoiler-prefs.js";
 import { displayTopicTitle, resolvedTopicTitle, topicPreviewFromMessages } from "@/lib/topic-title.js";
 import { IconDotsVertical, IconPlus } from "../icons";
@@ -68,9 +67,17 @@ export function TopicList({
   onRenameTopic,
   onDeleteTopic,
 }: TopicListProps) {
+  const topicSpoilers = topics.map((topic) => loadTopicSpoilerPrefs(topic, topic.game).major);
+  // Spoilers are per topic: one line above the list when every topic has them
+  // on; only a mixed list marks the rows that do.
+  const markRows = !topicSpoilers.every(Boolean);
   return (
     <section className="topic-list" aria-label="Topics">
       {headerBefore}
+
+      {topics.length > 0 && topicSpoilers.every(Boolean) ? (
+        <p className="topic-list-spoilers meta-text--attn">Spoilers on for this game</p>
+      ) : null}
 
       {topics.length === 0 ? (
         <div className="topic-list-empty">
@@ -83,11 +90,11 @@ export function TopicList({
       ) : (
         <>
           <ul className="topic-list-rows">
-            {topics.map((topic) => {
+            {topics.map((topic, index) => {
               const preview = topicPreviewFromMessages(topic.messages);
               const showYear = shouldShowTopicYear(topics, topic.updated_at);
               const topicWhen = formatTopicWhen(topic.updated_at, showYear);
-              const spoilersOn = loadTopicSpoilerPrefs(topic, topic.game).major;
+              const spoilersOn = markRows && topicSpoilers[index];
               return (
                 <li key={topic.id} className="topic-row">
                   <button
@@ -102,11 +109,8 @@ export function TopicList({
                           {displayTopicTitle(resolvedTopicTitle(topic))}
                         </strong>
                         {spoilersOn ? (
-                          <span
-                            className="topic-row-spoiler-chip"
-                            aria-label={SPOILER_MODE_ON_LABEL}
-                          >
-                            {TOPIC_SPOILER_CHIP_LABEL}
+                          <span className="topic-row-spoiler meta-text--attn">
+                            {SPOILER_MODE_ON_LABEL}
                           </span>
                         ) : null}
                       </span>

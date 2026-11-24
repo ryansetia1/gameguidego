@@ -2,7 +2,7 @@
 
 import { type KeyboardEvent, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
-import { IconBookmark, IconClock, IconDotsVertical, IconX } from "../icons";
+import { IconBookmark, IconDotsVertical, IconX } from "../icons";
 import { ReadingView } from "./reading-view";
 import type { SavedAnswer } from "./use-saved-answers";
 import {
@@ -254,13 +254,14 @@ export function SavedAnswersPanel({
                         <span className="saved-row-meta">
                           {savedDateLabel(item.createdAt)}
                           {signedIn && !item.synced ? (
-                            syncAvailable && syncFailed ? (
-                              <span className="saved-chip">
-                                <IconClock size={12} /> Not synced
-                              </span>
-                            ) : (
-                              <span className="saved-chip">On this device</span>
-                            )
+                            <>
+                              <span aria-hidden="true">·</span>
+                              {syncAvailable && syncFailed ? (
+                                <span className="meta-text--attn">Not synced</span>
+                              ) : (
+                                <span>On this device</span>
+                              )}
+                            </>
                           ) : null}
                         </span>
                       </button>
