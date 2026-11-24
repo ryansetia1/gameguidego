@@ -4686,4 +4686,288 @@ if (!canRunTsChecks) {
   }
 }
 
+// VGMaps phase 3 (#37): Cache API image store + saved-maps sync pass. Stubbed caches/fetch/Supabase.
+{
+  const bc = await import("../lib/map-blob-cache.js");
+  const sm = await import("../lib/saved-maps.js");
+  const img = "https://www.vgmaps.com/Atlas/NES/Final Fantasy - World.png";
+  const game = "https://www.vgmaps.com/Atlas/NES/index.htm#FinalFantasy";
+  const proxy = bc.mapProxyUrl(img, game);
+  assert.equal(proxy, `/api/maps/image?${new URLSearchParams({ url: img, game })}`, "exact ?url=&game= contract");
+  assert.ok(proxy.indexOf("url=") < proxy.indexOf("game="), "url before game");
+
+  const realFetch = globalThis.fetch;
+  const hadCaches = "caches" in globalThis;
+  const store = new Map();
+  let fetches = 0;
+  let mode = "ok";
+  globalThis.caches = {
+    async open(name) {
+      assert.equal(name, bc.MAP_CACHE_NAME);
+      return {
+        async put(key, res) { store.set(key, await res.blob()); },
+        async match(key) { return store.has(key) ? new Response(store.get(key)) : undefined; },
+        async keys() { return [...store.keys()].map((k) => ({ url: `http://localhost${k}` })); },
+        async delete(key) {
+          await new Promise((r) => setTimeout(r, 10)); // slow, like a real 30 MB entry
+          return store.delete(key);
+        },
+      };
+    },
+  };
+  globalThis.fetch = async (url, init) => {
+    fetches++;
+    await Promise.resolve();
+    if (init?.signal?.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    if (mode === "offline") throw new TypeError("fetch failed");
+    if (mode === "unlisted") return Response.json({ error: "Not a VGMaps map image." }, { status: 400 });
+    if (mode === "html") return new Response("<html>", { headers: { "content-type": "text/html" } });
+    return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "content-type": "image/png" } });
+  };
+  const errStatus = (p) => p.then(() => "resolved", (e) => (e instanceof bc.MapFetchError ? e.status : e.name));
+  try {
+    assert.equal(await bc.hasCachedMap(proxy), false);
+    const first = await bc.fetchAndCacheMapBlob(proxy);
+    assert.deepEqual([first.cached, first.blob.size, fetches], [true, 4, 1], "downloaded and stored");
+    mode = "offline";
+    const again = await bc.readCachedMapBlob(proxy);
+    assert.deepEqual([again.size, fetches], [4, 1], "offline open comes from the cache");
+    const other = bc.mapProxyUrl(`${img}x.png`, game);
+    assert.equal(await bc.readCachedMapBlob(other), null, "miss");
+    assert.equal(await errStatus(bc.fetchMapBlob(other)), 0, "offline miss is a network MapFetchError");
+    mode = "unlisted";
+    assert.equal(await errStatus(bc.downloadMapOnce(other)), bc.MAP_UNLISTED_STATUS, "unlisted map is a 400");
+    mode = "html";
+    assert.equal(await errStatus(bc.fetchAndCacheMapBlob(other)), 200, "non-image body rejected");
+    assert.equal(await bc.hasCachedMap(other), false, "nothing cached on failure");
+    mode = "ok";
+    assert.equal((await bc.fetchMapBlob(other)).size, 4);
+    assert.equal(await bc.hasCachedMap(other), false, "viewing an unsaved map stores nothing");
+    mode = "ok";
+    // Rapid repeat taps share one download; cancel aborts it for every waiter.
+    const before = fetches;
+    const taps = await Promise.all([bc.downloadMapOnce(other), bc.downloadMapOnce(other), bc.downloadMapOnce(other)]);
+    assert.deepEqual([fetches - before, taps[0] === taps[2]], [1, true], "single flight");
+    assert.equal(bc.downloadMapOnce(other) === bc.downloadMapOnce(other), true, "same promise while running");
+    const slow = bc.downloadMapOnce(bc.mapProxyUrl(`${img}y.png`, game));
+    const slow2 = bc.downloadMapOnce(bc.mapProxyUrl(`${img}y.png`, game));
+    bc.cancelMapDownload(bc.mapProxyUrl(`${img}y.png`, game));
+    assert.deepEqual([await errStatus(slow), await errStatus(slow2)], ["AbortError", "AbortError"], "cancel aborts the shared download");
+    await bc.deleteCachedMap(other);
+    const ctl = new AbortController();
+    ctl.abort();
+    assert.equal(await errStatus(bc.fetchAndCacheMapBlob(other, { signal: ctl.signal })), "AbortError");
+    assert.equal(await bc.deleteCachedMap(proxy), true);
+    assert.equal(await bc.hasCachedMap(proxy), false, "removed map leaves no cached image");
+    // A remove's delete still running when a re-save checks the cache: the check waits for it.
+    await bc.fetchAndCacheMapBlob(proxy);
+    const pendingDelete = bc.deleteCachedMap(proxy);
+    assert.equal(await bc.hasCachedMap(proxy), false, "re-save check waits for the running delete");
+    assert.equal(await pendingDelete, true);
+    // storeMapThenSave: the image is released when the metadata step doesn't save.
+    let live = false;
+    bc.setMapLiveCheck(() => live);
+    const cached = async () => bc.hasCachedMap(proxy);
+    let r = await bc.storeMapThenSave(proxy, () => ({ saved: false, why: "cap" }));
+    assert.deepEqual([r.why, await cached()], ["cap", false], "cap after download releases the image");
+    const quota = await bc
+      .storeMapThenSave(proxy, () => { throw new DOMException("full", "QuotaExceededError"); })
+      .then(() => null, (e) => e.name);
+    assert.deepEqual([quota, await cached()], ["QuotaExceededError", false], "metadata write failure releases the image");
+    live = true;
+    r = await bc.storeMapThenSave(proxy, () => ({ saved: false }));
+    assert.equal(await cached(), true, "kept while another saved item uses it");
+    await bc.deleteCachedMap(proxy);
+    live = false;
+    r = await bc.storeMapThenSave(proxy, () => ({ saved: true }));
+    assert.equal(await cached(), true, "a running save's claim keeps its own download");
+    await bc.deleteCachedMap(proxy);
+    mode = "unlisted";
+    assert.equal(await errStatus(bc.storeMapThenSave(proxy, () => ({ saved: true }))), 400, "failed download rethrows");
+    assert.equal(await cached(), false);
+    mode = "ok";
+    // A download that lands after its map was removed (here, or by a sync from another device)
+    // doesn't leave the image behind; one still in use stays.
+    live = false;
+    await bc.downloadMapOnce(proxy);
+    assert.equal(await cached(), false, "late download of a removed map is deleted");
+    live = true;
+    await bc.downloadMapOnce(proxy);
+    assert.equal(await cached(), true, "download of a saved map stays");
+    // Sweep: every cached image nothing uses goes, used ones stay.
+    const stray = bc.mapProxyUrl(`${img}stray.png`, game);
+    await bc.fetchAndCacheMapBlob(stray);
+    bc.setMapLiveCheck((url) => url === proxy);
+    assert.equal(await bc.sweepUnusedMaps(), 1, "one unused entry swept");
+    assert.deepEqual([await bc.hasCachedMap(proxy), await bc.hasCachedMap(stray)], [true, false]);
+    await bc.deleteCachedMap(proxy);
+    bc.setMapLiveCheck(() => true);
+    delete globalThis.caches;
+    const noCache = await bc.fetchAndCacheMapBlob(proxy);
+    assert.equal(noCache.cached, false, "no Cache API still downloads");
+    assert.equal(await bc.readCachedMapBlob(proxy), null);
+  } finally {
+    globalThis.fetch = realFetch;
+    if (!hadCaches) delete globalThis.caches;
+  }
+
+  assert.equal(sm.isMapListed({ imageUrl: img }, [{ imageUrl: img }]), true);
+  assert.equal(sm.isMapListed({ imageUrl: img }, [{ imageUrl: `${img}2` }]), false, "no longer listed");
+
+  // Fake saved_maps table: unique user_id + game_key + image_url, upsert onConflict on it.
+  function fakeServer() {
+    const rows = [];
+    const calls = [];
+    let missing = false;
+    const client = {
+      from(table) {
+        assert.equal(table, "saved_maps");
+        const fail = missing ? { code: "PGRST205", message: "Could not find the table 'public.saved_maps'" } : null;
+        return {
+          delete: () => ({
+            async in(col, ids) {
+              calls.push("delete");
+              if (fail) return { error: fail };
+              for (let i = rows.length - 1; i >= 0; i--) if (ids.includes(rows[i][col])) rows.splice(i, 1);
+              return { error: null };
+            },
+          }),
+          select: () => ({
+            async eq(col, v) {
+              calls.push("select");
+              return fail ? { data: null, error: fail } : { data: rows.filter((r) => r[col] === v).map((r) => ({ ...r })), error: null };
+            },
+          }),
+          async upsert(list, opts) {
+            calls.push("upsert");
+            if (fail) return { error: fail };
+            assert.equal(opts?.onConflict, "user_id,game_key,image_url");
+            for (const row of list) {
+              const i = rows.findIndex((r) => r.user_id === row.user_id && r.game_key === row.game_key && r.image_url === row.image_url);
+              if (i >= 0) rows[i] = { ...row };
+              else {
+                assert.ok(!rows.some((r) => r.id === row.id), "no duplicate id");
+                rows.push({ ...row });
+              }
+            }
+            return { error: null };
+          },
+        };
+      },
+      setMissing: (v) => (missing = v),
+    };
+    return { client, rows, calls };
+  }
+  const device = (items = []) => {
+    let data = items;
+    return { load: () => data, write: (next) => (data = next), get items() { return data; } };
+  };
+  const link = { mapName: "World", imageUrl: img, dimensions: "4096 x 4096", fileSize: "1 MB", format: "PNG", author: "A" };
+  const server = fakeServer();
+  // Device A: saved signed-out, then signs in. Claimed, pushed, synced.
+  const a = device(sm.addSavedMap([], sm.buildSavedMap({ owner: null, game: "Final Fantasy", sourceUrl: game, map: link })).items);
+  await sm.syncSavedMaps(server.client, "u1", a);
+  assert.deepEqual(server.calls, ["select", "upsert"], "fetch + merge before push");
+  assert.equal(server.rows.length, 1);
+  assert.deepEqual([a.items.length, a.items[0].owner, a.items[0].synced], [1, "u1", true], "anon save claimed and synced");
+  // Device B: saved the same map on its own (different id) and panned it. Merge collapses onto
+  // the server id before the push, so the unique index never sees a second row.
+  const b = device(sm.updateMapViewportState(
+    [sm.buildSavedMap({ owner: "u1", game: "final fantasy", sourceUrl: game, map: link })], "x", {},
+  ));
+  b.write(sm.updateMapViewportState(b.items, b.items[0].id, { lastZoom: 3 }));
+  await sm.syncSavedMaps(server.client, "u1", b);
+  assert.equal(server.rows.length, 1, "one row per user + game + image");
+  assert.deepEqual([b.items.length, b.items[0].id, b.items[0].synced, server.rows[0].last_zoom], [1, a.items[0].id, true, 3], "B adopted the server id and pushed its viewport");
+  // A picks up B's viewport.
+  await sm.syncSavedMaps(server.client, "u1", a);
+  assert.equal(a.items[0].lastZoom, 3, "viewport merged on the other device");
+  // B removes it: tombstone deleted on the server; A drops it on its next sync.
+  b.write(sm.removeSavedMap(b.items, b.items[0].id));
+  await sm.syncSavedMaps(server.client, "u1", b);
+  assert.deepEqual([server.rows.length, b.items.length], [0, 0], "remove synced");
+  const { start, final } = await sm.syncSavedMaps(server.client, "u1", a);
+  assert.deepEqual([start.length, final.length], [1, 0], "removed on the other device (hook drops its cached image)");
+  // Removed while its first push is in flight: tombstoned, deleted next pass, never comes back.
+  const d = device(sm.addSavedMap([], sm.buildSavedMap({ owner: "u1", game: "Final Fantasy", sourceUrl: game, map: link })).items);
+  const realUpsert = server.client.from;
+  server.client.from = (t) => {
+    const q = realUpsert(t);
+    const up = q.upsert;
+    q.upsert = async (...args) => {
+      const res = await up(...args);
+      d.write(sm.removeSavedMap(d.items, d.items[0].id));
+      return res;
+    };
+    return q;
+  };
+  await sm.syncSavedMaps(server.client, "u1", d);
+  server.client.from = realUpsert;
+  assert.deepEqual([d.items.length, d.items[0]?.deleted, server.rows.length], [1, true, 1], "tombstone for the row the push created");
+  await sm.syncSavedMaps(server.client, "u1", d);
+  assert.deepEqual([d.items.length, server.rows.length], [0, 0], "removed for good");
+  // Sign-out / account switch mid-pass: RLS makes the select return [] with no error. The pass
+  // must stop without writing, or every synced map would look removed (and lose its image).
+  {
+    const e = device(sm.addSavedMap([], sm.buildSavedMap({ owner: "u1", game: "Final Fantasy", sourceUrl: game, map: link })).items);
+    await sm.syncSavedMaps(server.client, "u1", e);
+    const synced = e.items;
+    assert.equal(synced[0].synced, true);
+    let signedIn = true;
+    const signedOutClient = { from: (t) => ({ ...server.client.from(t), select: () => ({ async eq() { signedIn = false; return { data: [], error: null }; } }) }) };
+    const writes = [];
+    const res = await sm.syncSavedMaps(signedOutClient, "u1", { load: () => e.items, write: (x) => { writes.push(x); e.write(x); }, isCurrent: () => signedIn });
+    assert.deepEqual([res.aborted, res.final, e.items], [true, null, synced], "aborted, store untouched after the select");
+    assert.equal(writes.length, 1, "only the pre-request claim write ran");
+    const early = await sm.syncSavedMaps(server.client, "u1", { load: () => e.items, write: () => assert.fail("no write"), isCurrent: async () => false });
+    assert.equal(early.aborted, true, "not current from the start: nothing written");
+    await sm.syncSavedMaps(server.client, "u1", { ...e, load: () => e.items, write: (x) => e.write(x), isCurrent: () => true });
+    assert.deepEqual([e.items.length, server.rows.length], [1, 1], "next real pass is normal");
+    e.write(sm.removeSavedMap(e.items, e.items[0].id));
+    await sm.syncSavedMaps(server.client, "u1", e);
+    assert.equal(server.rows.length, 0);
+  }
+  // Regression: concurrent local mutations during async initial isCurrent() must not be
+  // clobbered by a stale pre-await store.load() written back during the claim step.
+  {
+    const srv = fakeServer();
+    const link2 = { ...link, mapName: "Dungeon", imageUrl: img.replace(/\.png$/i, "-2.png") };
+    const link3 = { ...link, mapName: "Town", imageUrl: img.replace(/\.png$/i, "-3.png") };
+    let seed = sm.addSavedMap([], sm.buildSavedMap({ owner: "u1", game: "Final Fantasy", sourceUrl: game, map: link })).items;
+    seed = sm.addSavedMap(seed, sm.buildSavedMap({ owner: "u1", game: "Final Fantasy", sourceUrl: game, map: link2 })).items;
+    const f = device(seed);
+    await sm.syncSavedMaps(srv.client, "u1", f);
+    assert.equal(srv.rows.length, 2);
+    const m1 = f.items.find((r) => r.imageUrl === link.imageUrl);
+    const m2 = f.items.find((r) => r.imageUrl === link2.imageUrl);
+    let checks = 0;
+    const res = await sm.syncSavedMaps(srv.client, "u1", {
+      load: () => f.items,
+      write: (x) => f.write(x),
+      async isCurrent() {
+        checks += 1;
+        await Promise.resolve();
+        if (checks === 1) {
+          f.write(sm.removeSavedMap(f.items, m1.id));
+          f.write(sm.updateMapViewportState(f.items, m2.id, { lastZoom: 4 }));
+          f.write(sm.addSavedMap(f.items, sm.buildSavedMap({ owner: "u1", game: "Final Fantasy", sourceUrl: game, map: link3 })).items);
+        }
+        return true;
+      },
+    });
+    assert.equal(res.aborted, false);
+    assert.equal(f.items.some((r) => r.id === m1.id), false, "concurrent remove preserved and synced");
+    assert.equal(f.items.find((r) => r.id === m2.id)?.lastZoom, 4, "concurrent viewport edit preserved");
+    assert.equal(f.items.some((r) => r.imageUrl === link3.imageUrl && r.synced), true, "concurrent save preserved and pushed");
+    assert.equal(srv.rows.length, 2, "server reflects concurrent remove + save");
+    assert.equal(srv.rows.find((r) => r.id === m2.id)?.last_zoom, 4, "server received concurrent viewport edit");
+  }
+  // Missing table: throws an error isMissingTableError recognises (hook goes quiet).
+  server.client.setMissing(true);
+  const c = device(sm.addSavedMap([], sm.buildSavedMap({ owner: "u1", game: "FF", sourceUrl: game, map: link })).items);
+  const err = await sm.syncSavedMaps(server.client, "u1", c).then(() => null, (e) => e);
+  assert.ok(sm.isMissingTableError(err), "missing table is recognisable");
+  assert.equal(c.items.length, 1, "device copy kept when the table is missing");
+}
+
 console.log("Self-check passed.");
