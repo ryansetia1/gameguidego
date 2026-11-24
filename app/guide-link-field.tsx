@@ -6,6 +6,8 @@ import { createPortal } from "react-dom";
 import {
   MAX_GUIDE_URLS,
   cleanGuideUrl,
+  isGuideUrlTooLong,
+  MAX_GUIDE_URL_CHARS,
   guideUrlDedupeKey,
   isGamefaqsFaqGuideUrl,
   isUploadedGuideUrl,
@@ -22,7 +24,13 @@ import type { GuideIndexState } from "@/lib/guide-index-state";
 import { resolveGuideDisplayState } from "@/lib/guide-index-state";
 import { getSupabase } from "@/lib/supabase";
 import { dropRowAfterDelete } from "@/lib/upload-auth.js";
-import { isUploadTooLarge, MAX_UPLOAD_MB, UPLOAD_TOO_LARGE_MSG } from "@/lib/upload-limit.js";
+import {
+  isUploadNameTooLong,
+  isUploadTooLarge,
+  MAX_UPLOAD_MB,
+  UPLOAD_NAME_TOO_LONG_MSG,
+  UPLOAD_TOO_LARGE_MSG,
+} from "@/lib/upload-limit.js";
 import { IconX, IconClipboard } from "./icons";
 import { ClearButton } from "./clear-button";
 import { GuideStatusChip } from "./chat/guide-status-chip";
@@ -227,6 +235,10 @@ export function GuideLinkField({
     (raw: string, meta?: GuideMeta) => {
       const cleaned = normalizePreferredGuideUrl(raw);
       if (!cleaned) {
+        if (isGuideUrlTooLong(raw)) {
+          setAddError(`That link is too long. Max ${MAX_GUIDE_URL_CHARS} characters.`);
+          return false;
+        }
         setAddError("Paste a full http or https link.");
         return false;
       }
@@ -259,6 +271,10 @@ export function GuideLinkField({
     (raw: string) => {
       const cleaned = cleanGuideUrl(raw);
       if (!cleaned) {
+        if (isGuideUrlTooLong(raw)) {
+          setAddError(`That link is too long. Max ${MAX_GUIDE_URL_CHARS} characters.`);
+          return;
+        }
         setAddError("Paste a full http or https link.");
         return;
       }
@@ -502,6 +518,11 @@ export function GuideLinkField({
 
     if (isUploadTooLarge(file.size)) {
       setUploadError(UPLOAD_TOO_LARGE_MSG);
+      return;
+    }
+
+    if (isUploadNameTooLong(file.name)) {
+      setUploadError(UPLOAD_NAME_TOO_LONG_MSG);
       return;
     }
 

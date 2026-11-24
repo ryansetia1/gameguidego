@@ -14,7 +14,13 @@ import {
   normalizeGuideUrl,
   purgeGuideVerified,
 } from "@/lib/guide-ingest";
-import { isBodyTooLarge, isUploadTooLarge, UPLOAD_TOO_LARGE_MSG } from "@/lib/upload-limit";
+import {
+  isBodyTooLarge,
+  isUploadNameTooLong,
+  isUploadTooLarge,
+  UPLOAD_NAME_TOO_LONG_MSG,
+  UPLOAD_TOO_LARGE_MSG,
+} from "@/lib/upload-limit";
 import { runWithTrace, logTraceEvent } from "@/lib/trace";
 
 export const runtime = "nodejs";
@@ -80,6 +86,11 @@ export async function POST(request: Request) {
       { error: UPLOAD_TOO_LARGE_MSG },
       { status: 413 },
     );
+  }
+
+  // Bound the name before it becomes the key, so long names can't exceed the URL cap or collide.
+  if (isUploadNameTooLong(file.name)) {
+    return NextResponse.json({ error: UPLOAD_NAME_TOO_LONG_MSG }, { status: 400 });
   }
 
   const id = checkUploadIdentity(userId, formData.get("userId"));
