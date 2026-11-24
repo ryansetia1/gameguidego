@@ -90,12 +90,21 @@ class MainActivity : AppCompatActivity() {
 
         prefs.authToken = accessToken
         updateAuthStatusLabel()
-        val encodedAccess = Uri.encode(accessToken)
-        val encodedRefresh = Uri.encode(refreshToken)
-        binding.pwaWebView.loadUrl(
-            "${prefs.serverUrl}/#access_token=$encodedAccess&refresh_token=$encodedRefresh&token_type=bearer&type=magiclink"
-        )
         binding.bottomNav.selectedItemId = R.id.tab_pwa
+        val aJson = JSONObject.quote(accessToken)
+        val rJson = JSONObject.quote(refreshToken)
+        val js = """
+            (function() {
+                if (typeof window.__ggSetSession === 'function') {
+                    window.__ggSetSession($aJson, $rJson).then(function(ok) {
+                        if (ok) window.location.reload();
+                    });
+                } else {
+                    window.location.href = ${JSONObject.quote(prefs.serverUrl)} + '/#access_token=' + encodeURIComponent($aJson) + '&refresh_token=' + encodeURIComponent($rJson) + '&token_type=bearer&type=magiclink';
+                }
+            })();
+        """.trimIndent()
+        binding.pwaWebView.evaluateJavascript(js, null)
         toast("Signed in!")
     }
 

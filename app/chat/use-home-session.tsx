@@ -187,6 +187,17 @@ export function useHomeSession({
       setUser(session?.user ?? null);
       maybeHandOffToApk(session);
     });
+
+    (window as unknown as { __ggSetSession?: (a: string, r: string) => Promise<boolean> }).__ggSetSession =
+      async (access_token: string, refresh_token: string) => {
+        const { data, error: err } = await supabase.auth.setSession({ access_token, refresh_token });
+        if (!err && data.session?.user) {
+          setUser(data.session.user);
+          return true;
+        }
+        return false;
+      };
+
     return () => {
       mounted = false;
       sub.subscription.unsubscribe();
