@@ -499,6 +499,15 @@ do not sync to the cloud or use Storage uploads.
   loop); Supabase table `public.llm_calls`
   (`db/llm-calls.sql`, patch `db/llm-calls-embed.sql` on older installs) when
   `NEXT_PUBLIC_SUPABASE_*` are set (`LLM_DB_LOG=0` disables). Insert-only RLS — no client reads.
+- **VGMaps maps (in progress, #35/#36):** pure helpers `lib/vgmaps-parser.js`,
+  `lib/map-viewport.js`, `lib/saved-maps.js`; server `lib/vgmaps-cache.ts` (7-day cache in
+  `public.vgmaps_cache`, memory L1/fallback, writes via service role only, 16 MiB page cap
+  before parsing, manual redirects re-validated per hop) behind `GET /api/maps/search`,
+  `/api/maps/list` (Atlas-index game URLs only) and `/api/maps/image` (raster-only proxy,
+  30 MB cap, CDN-cached; query must be exactly `?url=<listed map>&game=<atlas game url>`
+  via `URLSearchParams` so cache keys can't be busted). 60s upstream backoff after a
+  VGMaps network error/5xx; Supabase cache reads time out at 3s. `public.saved_maps` (`db/saved-maps.sql`) is for the phase 3 sync. No login.
+  Plan: [`docs/plan/vgmaps-map-viewer.md`](docs/plan/vgmaps-map-viewer.md).
 - `lib/supabase-server.ts`: shared server-side Supabase client
   (`getServerClient()`, anon key, no session). All server modules — caches
   (`search-cache`, `embed-cache`, `hltb-cache`), logs
@@ -865,7 +874,8 @@ Server-only secrets (never expose via `NEXT_PUBLIC_`, never commit `.env.local`)
   anon DELETE policy: leftover cleanup of killed ingests and stale/insufficient index replace.
   Without it that cleanup is skipped: partial guides stay blocked (no spend) and flagged guides
   keep their old index. Guide file upload/remove (`/api/guide-upload`) returns 503 without it.
-  Safe to deploy without it (uploads disabled).
+  Safe to deploy without it (uploads disabled). Also the only writer of `public.vgmaps_cache`; without it the
+  VGMaps cache is per-instance memory only.
 
 Public client vars (safe to expose; protected by RLS), optional — enable
 accounts, saved chats, and the search cache:
