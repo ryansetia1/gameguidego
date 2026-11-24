@@ -4360,7 +4360,7 @@ if (!canRunTsChecks) {
   assert.equal(vg.extractVGMapsLinks(page, "https://www.vgmaps.com/Atlas/NES/index.htm").length, 6);
   assert.equal(vg.extractVGMapsLinks(page, "https://www.vgmaps.com/Atlas/NES/index.htm#Nope").length, 6);
   assert.equal(vg.extractVGMapsLinks(page, "https://www.vgmaps.com/Atlas/NES/index.htm#Nope")[0].guideTitle, "");
-  assert.equal(vg.selectRowsForPage(page, ffUrl).length, 6, "anchor row + its rows (nested table rows split out)");
+  assert.equal(vg.selectRowsForPage(page, ffUrl).length, 5, "anchor row + its rows (nested table rows split out, empty stubs skipped)");
   assert.deepEqual(vg.extractVGMapsLinks("", ffUrl), []);
   // Ids on cells/images are not game anchors; image URLs drop their #fragment.
   const idPage = `<table><tr><td><a name="G"></a>G</td></tr>
@@ -4374,6 +4374,19 @@ if (!canRunTsChecks) {
     <tr><td><a href="solo2.png">S2</a></td></tr></table>
     <table><tr><td><a href="after.png">After</a></td></tr></table>`;
   assert.deepEqual(vg.extractVGMapsLinks(outside, "https://www.vgmaps.com/Atlas/NES/index.htm#Solo").map((m) => m.mapName), ["S1", "S2"]);
+  // Review loop 2: back-to-back games, each anchor just before its own table. A's last row
+  // shares a chunk with B's anchor and must still be kept.
+  const backToBack = `<a name="A"></a><table><tr><td><a href="a1.png">A1</a></td></tr>
+    <tr><td><a href="a2.png">A2</a></td></tr></table> <a name="B"></a><table><tr><td><a href="b1.png">B1</a></td></tr></table>`;
+  assert.deepEqual(vg.extractVGMapsLinks(backToBack, "https://www.vgmaps.com/Atlas/NES/index.htm#A").map((m) => m.mapName), ["A1", "A2"]);
+  assert.deepEqual(vg.extractVGMapsLinks(backToBack, "https://www.vgmaps.com/Atlas/NES/index.htm#B").map((m) => m.mapName), ["B1"]);
+  // Anchor mid-row, its table closes, then the next game's anchor + table follow.
+  const midRow = `<table><tr><td><a name="M"></a>M <a href="m1.png">M1</a></td></tr></table>
+    <a name="N"></a><table><tr><td><a href="n1.png">N1</a></td></tr></table>`;
+  assert.deepEqual(vg.extractVGMapsLinks(midRow, "https://www.vgmaps.com/Atlas/NES/index.htm#M").map((m) => m.mapName), ["M1"]);
+  // A row that holds both a map and the next game's anchor keeps the map, not the next game's.
+  const sharedRow = `<table><tr><td><a name="P"></a>P</td></tr><tr><td><a href="p1.png">P1</a></td><td><a name="Q"></a>Q <a href="q1.png">Q1</a></td></tr></table>`;
+  assert.deepEqual(vg.extractVGMapsLinks(sharedRow, "https://www.vgmaps.com/Atlas/NES/index.htm#P").map((m) => m.mapName), ["P1"]);
   // Anchor before the first <tr> on the page.
   const lead = `<a name="Lead"></a><table><tr><td><a href="l1.png">L1</a></td></tr></table><table><tr><td><a href="x.png">X</a></td></tr></table>`;
   assert.deepEqual(vg.extractVGMapsLinks(lead, "https://www.vgmaps.com/Atlas/NES/index.htm#Lead").map((m) => m.mapName), ["L1"]);
@@ -4495,6 +4508,31 @@ if (!canRunTsChecks) {
   const revivedClaim = sm.claimAnonMaps([tombOwned, anonSame], "u1");
   assert.equal(revivedClaim.length, 1, "no second row for the same map");
   assert.deepEqual([revivedClaim[0].id, revivedClaim[0].owner, revivedClaim[0].deleted, revivedClaim[0].synced], [tombOwned.id, "u1", false, false]);
+  // Review loop 2: two-device case in the planned order (push pending, then fetch + merge).
+  // L (this device, newer) and S (other device, older) are the same map under two ids.
+  const sDev = { ...mk("u1", "Duo", 1, 100), lastZoom: 2, synced: true };
+  const lDev = { ...mk("u1", "Duo", 1, 900), lastZoom: 5 };
+  const twoDev = sm.mergeRemoteMaps([lDev], [sm.toSavedMapRow(sDev), sm.toSavedMapRow(lDev)], "u1", [lDev]);
+  const twoDevVisible = sm.visibleMaps(twoDev, "u1");
+  assert.equal(twoDevVisible.length, 1, "one visible row after both pushed");
+  assert.equal(twoDevVisible[0].id, sDev.id, "older server row's id wins");
+  assert.ok(twoDev.find((r) => r.id === lDev.id && r.deleted && r.synced), "loser on the server becomes a tombstone (next sync deletes it)");
+  assert.equal(twoDevVisible[0].lastZoom, 2, "both in sync: winner's viewport");
+  // Same, but L was panned after its push: the newer local viewport rides on the winner, queued.
+  const lMoved = { ...lDev, lastZoom: 8, synced: false };
+  const moved = sm.visibleMaps(sm.mergeRemoteMaps([lMoved], [sm.toSavedMapRow(sDev), sm.toSavedMapRow(lDev)], "u1", [lDev]), "u1");
+  assert.deepEqual([moved.length, moved[0].id, moved[0].lastZoom, moved[0].synced], [1, sDev.id, 8, false]);
+  // Upsert of L failed on the unique index (not pushed, not on the server): next merge recovers.
+  const recovered = sm.mergeRemoteMaps([lDev], [sm.toSavedMapRow(sDev)], "u1", []);
+  assert.deepEqual(recovered.map((r) => [r.id, r.lastZoom, r.synced, r.deleted]), [[sDev.id, 5, false, false]], "L dropped, its viewport queued on S");
+  // Order independent: the unsynced duplicate's viewport wins whichever copy comes first.
+  const dupSynced = { ...mk("u1", "Dup", 1, 10), synced: true };
+  const dupEdit = { ...mk("u1", "Dup", 1, 20), lastZoom: 6 };
+  for (const order of [[dupSynced, dupEdit], [dupEdit, dupSynced]]) {
+    const res = sm.visibleMaps(sm.mergeRemoteMaps(order, [sm.toSavedMapRow(dupSynced)], "u1"), "u1");
+    assert.deepEqual(res.map((r) => [r.id, r.lastZoom, r.synced]), [[dupSynced.id, 6, false]]);
+  }
+  assert.equal(sm.mergeRemoteMaps([twinLocal], [], "u1").length, 1, "no twins: untouched");
   // Untrusted rows and inputs.
   assert.equal(sm.addSavedMap([], mk(null, "X", 1, 1, { imageUrl: "https://evil.com/x.png" })).error, "invalid");
   assert.equal(sm.mergeRemoteMaps([], [{ ...twinRow, image_url: "https://evil.com/x.png" }, { ...twinRow, id: 5 }], "u1").length, 0, "bad server rows ignored");
