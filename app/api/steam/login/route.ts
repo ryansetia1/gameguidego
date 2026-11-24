@@ -19,6 +19,7 @@ export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const intent = params.get("intent") === "signin" ? "signin" : "link";
   const popup = params.get("popup") === "1";
+  const apkAuth = params.get("apk_auth") === "1";
   const response = NextResponse.redirect(buildSteamLoginUrl(origin, state, intent, popup));
   response.cookies.set(OPENID_STATE_COOKIE, state, {
     httpOnly: true,
@@ -27,5 +28,14 @@ export async function GET(request: Request) {
     path: "/",
     maxAge: OPENID_STATE_MAX_AGE,
   });
+  if (apkAuth) {
+    response.cookies.set("gg_apk_auth", "1", {
+      httpOnly: false,
+      sameSite: "lax",
+      secure,
+      path: "/",
+      maxAge: 300,
+    });
+  }
   return response;
 }

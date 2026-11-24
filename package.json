@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "check": "node scripts/check.mjs",
+    "build:apk": "cd android && JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" ~/.gradle/wrapper/dists/gradle-8.13-all/*/gradle-8.13/bin/gradle assembleDebug --no-daemon",
     "backfill:chats": "node scripts/backfill-chat-threads.mjs",
     "backfill:chats:verify": "node scripts/backfill-chat-threads.mjs --verify",
     "backfill:chats:dry": "node scripts/backfill-chat-threads.mjs --dry-run",

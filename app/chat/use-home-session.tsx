@@ -162,14 +162,30 @@ export function useHomeSession({
       return;
     }
     let mounted = true;
+    function maybeHandOffToApk(session: { access_token?: string; refresh_token?: string } | null) {
+      if (typeof window === "undefined" || !session?.access_token || !session?.refresh_token) return;
+      if (navigator.userAgent.includes("GameGuideGoAPK")) return;
+      const params = new URLSearchParams(window.location.search);
+      const hasApkQuery = params.get("apk_auth") === "1";
+      const hasApkCookie = document.cookie.split(";").some((c) => c.trim().startsWith("gg_apk_auth=1"));
+      if (!hasApkQuery && !hasApkCookie) return;
+      document.cookie = "gg_apk_auth=; path=/; max-age=0";
+      const target =
+        `gameguidego://auth?access_token=${encodeURIComponent(session.access_token)}` +
+        `&refresh_token=${encodeURIComponent(session.refresh_token)}`;
+      window.location.replace(target);
+    }
+
     supabase.auth.getSession().then(({ data }) => {
       if (mounted) {
         setUser(data.session?.user ?? null);
         setAuthReady(true);
+        maybeHandOffToApk(data.session);
       }
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      maybeHandOffToApk(session);
     });
     return () => {
       mounted = false;

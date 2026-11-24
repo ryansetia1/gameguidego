@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.GameGuideGo" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/signal</item>
+        <item name="colorOnPrimary">@color/on_signal</item>
+        <item name="colorSecondary">@color/signal_emerald</item>
+        <item name="colorOnSecondary">@color/on_signal</item>
+        <item name="android:windowBackground">@color/bg_primary</item>
+        <item name="android:statusBarColor">@color/bg_primary</item>
+        <item name="android:navigationBarColor">@color/bg_surface</item>
+        <item name="colorSurface">@color/bg_surface</item>
+        <item name="colorOnSurface">@color/ink_primary</item>
+    </style>
+</resources>

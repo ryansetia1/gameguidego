@@ -1038,3 +1038,10 @@ Sound human, not like AI. Specifically avoid these tells:
 - **`lib/guide-rag.ts`**: Fetches `chunk_index+1` when a retrieved chunk tail matches the player's stated position; passes chat `history` into rescoring.
 - **`lib/guide-rescore.js`**: `neighbor_continuation_boost`, `tail_endpoint_penalty`, `history_owned_acquire_penalty`.
 - **`lib/prompt.js`**: **PROGRESS FOLLOW-UP (strict)** — summarize must answer from the first preferred excerpt on vague/position follow-ups.
+
+## Android APK (`android/`)
+- **Folder**: `android/` (isolated native Kotlin + Material 3 + WebView + OkHttp + Jsoup project, package `app.gameguidego.android`).
+- **PWA + PixelGuide Capabilities**:
+  - **GameGuideGo tab**: Loads the live PWA URL (`AppPrefs.serverUrl`, configurable in Library & Settings) and auto-syncs the Supabase `access_token` from WebView `localStorage`.
+  - **Find Guides tab**: Ad-blocked WebView (`AdBlockFilter` + `GuideWebViewClient`) with GameFAQs, Neoseeker (`mobile_mode=on` cookie), ZeldaDungeon, VGMaps, and Custom URL search, DOM page detection (`GuidePageDetector`), and guide extraction (`GuideExtractor`) into `.txt`, `.md`, or `.pdf` for `POST /api/guide-upload` (`GameGuideGoApi`).
+- **Version Sync**: `android/app/build.gradle.kts` reads `version` directly from root `package.json` (`versionName` = `package.json` `version`, `versionCode` = semver integer). Whenever `package.json` version is bumped or the PWA is updated, run `npm run build:apk` to rebuild a matching APK at `android/app/build/outputs/apk/debug/app-debug.apk`.

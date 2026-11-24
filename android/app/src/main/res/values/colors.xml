@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_primary">#0B0F17</color>
+    <color name="bg_surface">#131A26</color>
+    <color name="bg_elevated">#1C2536</color>
+    <color name="ink_primary">#F1F5F9</color>
+    <color name="ink_muted">#94A3B8</color>
+    <color name="signal">#22D3EE</color>
+    <color name="on_signal">#071019</color>
+    <color name="signal_emerald">#34D399</color>
+    <color name="border_subtle">#253045</color>
+    <color name="danger">#F87171</color>
+</resources>

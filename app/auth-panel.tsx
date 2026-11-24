@@ -72,9 +72,12 @@ export function AuthPanel({ onClose }: Props) {
     if (!supabase || busy) return;
     setError("");
     setBusy(true);
+    const isApk = typeof navigator !== "undefined" && navigator.userAgent.includes("GameGuideGoAPK");
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: window.location.origin },
+      options: {
+        redirectTo: isApk ? `${window.location.origin}/?apk_auth=1` : window.location.origin,
+      },
     });
     if (oauthError) {
       setError(oauthError.message);
@@ -122,6 +125,11 @@ export function AuthPanel({ onClose }: Props) {
             // top-level nav to steamcommunity.com gets handed to the native Steam
             // app (which then returns to the browser, not us). A popup stays in
             // the browser and posts the result back here. Blocked -> full redirect.
+            const isApk = typeof navigator !== "undefined" && navigator.userAgent.includes("GameGuideGoAPK");
+            if (isApk) {
+              window.location.href = "/api/steam/login?intent=signin&apk_auth=1";
+              return;
+            }
             const url = "/api/steam/login?intent=signin";
             const w = window.open(`${url}&popup=1`, "gg_steam_auth", "width=520,height=700");
             if (!w) window.location.href = url;

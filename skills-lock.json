@@ -1,23 +1,30 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
     "code-review": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/code-review/SKILL.md",
-      "computedHash": "31d149a480eaa68c11e32f5ee77f0fd0b98a906834d531d881d502352edd0b8e"
+      "computedHash": "90fdcc973e755475b8f77b44ba4bd1d01394bb81ab1aab1d6aa59c2e0938f833"
     },
     "code-review-and-quality": {
       "source": "addyosmani/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/code-review-and-quality/SKILL.md",
-      "computedHash": "ae7a873053c84dd5a76f70c05a21efc4095017e95b8f5db778eb826809859cac"
+      "computedHash": "b7ff556d2c4f0003f8f29d8d6626a2e2ff65ac78a593106494b7f5107854d2e3"
+    },
+    "reverse-engineer-anything": {
+      "source": "morluto/rea",
+      "commit": "6adcf85fc8cf68635fd3416029e89d424c648220",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/reverse-engineer-anything/SKILL.md",
+      "computedHash": "d41e64caf770b8b373b3bb9491e824d22e1c996cab76a52dfe8d46a78152198c"
     },
     "uncle-bob-craft": {
       "source": "sickn33/antigravity-awesome-skills",
       "sourceType": "github",
       "skillPath": "skills/uncle-bob-craft/SKILL.md",
-      "computedHash": "f902899dbf63345ad3f84c0147885134fadf1d00c03da2702c81d8c0dee98df6"
+      "computedHash": "4b40856e5c1aa33e90e6891d8c56d578d225d988670b54429c3c2e191748927e"
     }
   }
 }
