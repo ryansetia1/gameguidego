@@ -382,6 +382,7 @@ export function useSavedMaps(user: User | null) {
    */
   const restoreMap = useCallback(
     async (item: SavedMap, cachedBlob?: Blob | null) => {
+      if ((item.owner ?? null) !== ownerRef.current) return false;
       try {
         writeStore(restoreSavedMap(load(), item) as SavedMap[]);
       } catch {

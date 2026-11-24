@@ -290,14 +290,19 @@ export default function Home() {
   const [librarySearch, setLibrarySearch] = useState("");
   const { confirmState, askConfirm, askConfirmWithCheckbox, closeConfirm } = useConfirmDialog();
   const [toast, setToast] = useState("");
-  const [toastOpensJournal, setToastOpensJournal] = useState(false);
-  // Optional action button on the toast ("View" / "Undo"); tied to its message so a
-  // later plain toast never inherits it.
+  // Optional action button on the toast ("View" / "Undo"); tied to its message.
   const [toastAction, setToastAction] = useState<{
     message: string;
     label: string;
     run: () => void;
   } | null>(null);
+  const pendingMapUndoRef = useRef<{ item: SavedMap; blob: Blob | null } | null>(null);
+  const pendingMapUndoGenerationRef = useRef(0);
+  useEffect(() => () => {
+    pendingMapUndoGenerationRef.current += 1;
+    pendingMapUndoRef.current = null;
+  }, []);
+  const [toastOpensJournal, setToastOpensJournal] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
   // Saved answer open in the reading view (own history entry, so back returns to the list).
   const [savedReadingId, setSavedReadingId] = useState<string | null>(null);
@@ -754,6 +759,8 @@ export default function Home() {
       }
 
       homeExitPromptAt.current = Date.now();
+      pendingMapUndoGenerationRef.current += 1;
+      pendingMapUndoRef.current = null;
       setToast("Press back again to leave");
       pushAppHistory({ gggHomeRoot: true });
     }
@@ -1076,6 +1083,8 @@ export default function Home() {
       return;
     }
     const timer = setTimeout(() => {
+      pendingMapUndoGenerationRef.current += 1;
+      pendingMapUndoRef.current = null;
       setToast("");
       setToastOpensJournal(false);
       setToastAction(null);
@@ -1084,6 +1093,8 @@ export default function Home() {
   }, [toast, toastAction]);
 
   const showJournalToast = useCallback((summary: string) => {
+    pendingMapUndoGenerationRef.current += 1;
+    pendingMapUndoRef.current = null;
     setToast(summary);
     setToastOpensJournal(true);
   }, []);
@@ -1094,6 +1105,8 @@ export default function Home() {
       const short = clean.length > 44 ? `${clean.slice(0, 43).trimEnd()}…` : clean;
       setToastOpensJournal(false);
       setToastAction(null);
+      pendingMapUndoGenerationRef.current += 1;
+      pendingMapUndoRef.current = null;
       setToast(updated ? `Updated "${short}"` : `Added "${short}"`);
     },
     [],
@@ -1397,6 +1410,9 @@ export default function Home() {
   }
 
   function newGame() {
+    pendingMapUndoGenerationRef.current += 1;
+    pendingMapUndoRef.current = null;
+    setToastAction(null);
     clearActiveTurnUi();
     setChatUrl(null);
     clearSessionDraft();
@@ -1636,6 +1652,9 @@ export default function Home() {
   }
 
   async function openChat(chat: Chat) {
+    pendingMapUndoGenerationRef.current += 1;
+    pendingMapUndoRef.current = null;
+    setToastAction(null);
     openingChatIdRef.current = chat.id;
     try {
       const isBgLoading = backgroundLoadingRef.current[chat.id] ?? false;
@@ -1847,6 +1866,8 @@ export default function Home() {
       void loadChats();
     } catch (caught) {
       console.error("Failed to save game details:", caught);
+      pendingMapUndoGenerationRef.current += 1;
+      pendingMapUndoRef.current = null;
       setToast("Couldn't save those game details. Try again.");
       setPreferredUrls(persistedUrls);
       void loadChats({ replace: true });
@@ -1860,9 +1881,13 @@ export default function Home() {
     if (!game.trim() || loading) return;
     const id = await persistChat([], null);
     if (!id) {
+      pendingMapUndoGenerationRef.current += 1;
+      pendingMapUndoRef.current = null;
       setToast("Couldn't save that game. Try again.");
       return;
     }
+    pendingMapUndoGenerationRef.current += 1;
+    pendingMapUndoRef.current = null;
     setToast("Saved. Find it in your games.");
     newGame();
   }
@@ -1910,8 +1935,10 @@ export default function Home() {
 
   function showActionToast(message: string, label: string, run: () => void) {
     setToastOpensJournal(false);
-    setToastAction({ message, label, run });
+    pendingMapUndoGenerationRef.current += 1;
+    pendingMapUndoRef.current = null;
     setToast(message);
+    setToastAction({ message, label, run });
   }
 
   function savedHistoryTag() {
@@ -2046,28 +2073,39 @@ export default function Home() {
   }
 
   async function removeSavedMapWithUndo(item: SavedMap) {
+    pendingMapUndoGenerationRef.current += 1;
+    pendingMapUndoRef.current = null;
+    const undoGeneration = pendingMapUndoGenerationRef.current;
+    setToastAction(null);
     const proxyUrl = mapProxyUrl(item.imageUrl, item.sourceUrl);
     const cachedBlob = await readCachedMapBlob(proxyUrl).catch(() => null);
     const ok = await savedMaps.removeMap(item);
+    if (pendingMapUndoGenerationRef.current !== undoGeneration) return;
     if (!ok) {
+      pendingMapUndoGenerationRef.current += 1;
+      pendingMapUndoRef.current = null;
       setToast("Couldn't remove it on this device.");
       return;
     }
     setMapsCacheVersion((v) => v + 1);
     showActionToast("Removed from saved maps", "Undo", () => {
-      void savedMaps.restoreMap(item, cachedBlob).then(() => {
+      const pending = pendingMapUndoRef.current;
+      pendingMapUndoRef.current = null;
+      if (!pending) return;
+      void savedMaps.restoreMap(pending.item, pending.blob).then(() => {
         setMapsCacheVersion((v) => v + 1);
       });
     });
+    pendingMapUndoRef.current = { item, blob: cachedBlob };
   }
 
   // Keep the open split-mode Maps panel synced when switching to another game in chat.
   useEffect(() => {
-    if (mapsPanelOpen && game.trim()) {
+    if (mapsPanelOpen && !editingGame && game.trim()) {
       setMapsPaneGame(game);
       setMapsPanePlatform(platform);
     }
-  }, [mapsPanelOpen, game, platform]);
+  }, [mapsPanelOpen, game, platform, editingGame]);
 
   /**
    * Reading view Back arrow: pop our "read" entry when it is on top; if chat entries
@@ -2101,6 +2139,8 @@ export default function Home() {
 
   function removeSavedAnswer(item: SavedAnswer) {
     if (!savedAnswers.remove(item)) {
+      pendingMapUndoGenerationRef.current += 1;
+      pendingMapUndoRef.current = null;
       setToast("Couldn't remove it on this device.");
       return;
     }
@@ -2129,8 +2169,12 @@ export default function Home() {
     } else if (result.status === "removed") {
       showActionToast("Removed from saved", "Undo", () => savedAnswers.restore(result.item));
     } else if (result.status === "cap") {
+      pendingMapUndoGenerationRef.current += 1;
+      pendingMapUndoRef.current = null;
       setToast("Saved list is full. Remove one to add more.");
     } else {
+      pendingMapUndoGenerationRef.current += 1;
+      pendingMapUndoRef.current = null;
       setToast("Couldn't save on this device.");
     }
   }
@@ -2305,6 +2349,10 @@ export default function Home() {
     // The signed-in user's saved answers are hidden once signed out; don't leave the
     // pane showing "gone". Leftover pane history entries are no-ops.
     if (savedOpenRef.current) closeSavedState();
+    if (mapsPanelOpenRef.current || viewingMapRef.current) closeMapsState();
+    pendingMapUndoGenerationRef.current += 1;
+    pendingMapUndoRef.current = null;
+    setToastAction(null);
     newGame();
   };
 
@@ -2341,6 +2389,8 @@ export default function Home() {
     const { error: deleteError } = await supabase.from("chats").delete().eq("id", chat.id);
     if (deleteError) {
       console.error("Failed to delete topic:", deleteError);
+      pendingMapUndoGenerationRef.current += 1;
+      pendingMapUndoRef.current = null;
       setToast("Couldn't delete that topic. Try again.");
       return;
     }
@@ -2389,6 +2439,8 @@ export default function Home() {
       const { error: deleteError } = await supabase.from("chats").delete().eq("id", chat.id);
       if (deleteError) {
         console.error("Failed to delete topic:", deleteError);
+        pendingMapUndoGenerationRef.current += 1;
+        pendingMapUndoRef.current = null;
         setToast("Couldn't delete all topics. Try again.");
         void loadChats({ replace: true });
         return;
@@ -2475,6 +2527,8 @@ export default function Home() {
       const { error: deleteError } = await supabase.from("chats").delete().eq("id", row.id);
       if (deleteError) {
         console.error("Failed to delete game room:", deleteError);
+        pendingMapUndoGenerationRef.current += 1;
+        pendingMapUndoRef.current = null;
         setToast("Couldn't delete that game. Try again.");
         void loadChats({ replace: true });
         return;
@@ -2595,6 +2649,8 @@ export default function Home() {
     }
     if (error) {
       console.error("Failed to rename topic:", error);
+      pendingMapUndoGenerationRef.current += 1;
+      pendingMapUndoRef.current = null;
       setToast("Couldn't rename topic. Try again.");
       void loadChats();
       return;
@@ -3430,6 +3486,8 @@ export default function Home() {
             toastOpensJournal
               ? () => {
                   setJourneyExpanded(true);
+                  pendingMapUndoGenerationRef.current += 1;
+                  pendingMapUndoRef.current = null;
                   setToast("");
                   setToastOpensJournal(false);
                 }
@@ -3441,6 +3499,8 @@ export default function Home() {
                   if (event.key !== "Enter" && event.key !== " ") return;
                   event.preventDefault();
                   setJourneyExpanded(true);
+                  pendingMapUndoGenerationRef.current += 1;
+                  pendingMapUndoRef.current = null;
                   setToast("");
                   setToastOpensJournal(false);
                 }
@@ -3454,6 +3514,8 @@ export default function Home() {
               className="snackbar-btn"
               onClick={() => {
                 const { run } = toastAction;
+                pendingMapUndoGenerationRef.current += 1;
+                pendingMapUndoRef.current = null;
                 setToast("");
                 setToastAction(null);
                 run();
@@ -3506,6 +3568,8 @@ export default function Home() {
           onToast={(message) => {
             setToastOpensJournal(false);
             setToastAction(null);
+            pendingMapUndoGenerationRef.current += 1;
+            pendingMapUndoRef.current = null;
             setToast(message);
           }}
           onClose={closeMapsPanel}

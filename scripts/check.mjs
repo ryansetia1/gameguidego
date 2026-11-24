@@ -5231,19 +5231,21 @@ if (!canRunTsChecks) {
   assert.equal(mp.downloadProgressRatio({ loaded: 50, total: 100 }), 0.5);
   assert.equal(mp.downloadProgressRatio({ loaded: 200, total: 100 }), 1);
 
-  // Mutual exclusivity between Saved answers and Maps side panels.
-  assert.deepEqual(
-    mp.nextSidePanelState({ savedOpen: true, mapsOpen: false }, "open-maps"),
-    { savedOpen: false, mapsOpen: true },
-    "opening Maps closes Saved answers",
-  );
-  assert.deepEqual(
-    mp.nextSidePanelState({ savedOpen: false, mapsOpen: true }, "open-saved"),
-    { savedOpen: true, mapsOpen: false },
-    "opening Saved answers closes Maps",
-  );
-
   // Back/forward history: Back closes MapViewer first, then MapsPanel; split chat entries passthrough.
+  assert.deepEqual(
+    mp.mapsPopAction({
+      panelOpen: true,
+      viewerOpen: true,
+      depth: 1,
+      prevDepth: 3,
+      panelDepth: 2,
+      viewerDepth: 3,
+      left: { gggMaps: "viewer" },
+      landing: null,
+    }),
+    { type: "close-panel" },
+    "multi-step Back below MapsPanel closes viewer and panel",
+  );
   assert.deepEqual(
     mp.mapsPopAction({
       panelOpen: true,

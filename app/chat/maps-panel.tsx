@@ -136,6 +136,13 @@ export function MapsPanel({
   const split = useSplitLayout();
   const paneRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const backBtnRef = useRef<HTMLButtonElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const gameRowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const mountedRef = useRef(true);
+  const gameKey = `${game}\n${platform}`;
+  const currentGameKeyRef = useRef(gameKey);
+  currentGameKeyRef.current = gameKey;
   const savedTabRef = useRef<HTMLButtonElement>(null);
   const findTabRef = useRef<HTMLButtonElement>(null);
   const scrollBodyRef = useRef<HTMLDivElement>(null);
@@ -160,6 +167,7 @@ export function MapsPanel({
   const [progressByUrl, setProgressByUrl] = useState<Record<string, MapDownloadProgress>>({});
   const [failedByUrl, setFailedByUrl] = useState<Record<string, boolean>>({});
   const [tooLargeByUrl, setTooLargeByUrl] = useState<Record<string, boolean>>({});
+  const [downloadAnnouncement, setDownloadAnnouncement] = useState("");
 
   const userEditedQueryRef = useRef(false);
   const autoSearchedGameRef = useRef<string | null>(null);
@@ -169,6 +177,13 @@ export function MapsPanel({
   const listAbortRef = useRef<AbortController | null>(null);
   const listGenRef = useRef(0);
   const prevGameKeyRef = useRef(`${game}\n${platform}`);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const selectTab = useCallback((next: MapsTab, focus = false) => {
     lastUsedMapsTab = next;
@@ -200,6 +215,9 @@ export function MapsPanel({
     setSelectedGame(null);
     setListStatus("idle");
     setMapLinks([]);
+    setProgressByUrl({});
+    setFailedByUrl({});
+    setTooLargeByUrl({});
     setOfflineNoticeId(null);
     setMenuId(null);
   }, [game, platform]);
@@ -247,14 +265,14 @@ export function MapsPanel({
   // Esc: close row menu first, else close panel (split mode only when focus is inside).
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented || viewerOpen) return;
+      if (event.key !== "Escape" || event.defaultPrevented || viewerOpen || inert) return;
       if (split && !paneRef.current?.contains(document.activeElement)) return;
       if (menuId) setMenuId(null);
       else onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [split, menuId, viewerOpen, onClose]);
+  }, [split, menuId, viewerOpen, inert, onClose]);
 
   // Refresh Cache API presence for every saved map in the current game without leaking blobs.
   useEffect(() => {
@@ -390,6 +408,7 @@ export function MapsPanel({
   function handleOpenGameEntry(entry: VGMapsGameEntry) {
     step1ScrollTopRef.current = scrollBodyRef.current?.scrollTop ?? 0;
     setSelectedGame(entry);
+    requestAnimationFrame(() => (backBtnRef.current ?? closeRef.current)?.focus());
     if (scrollBodyRef.current) scrollBodyRef.current.scrollTop = 0;
     void fetchGameMaps(entry);
   }
@@ -399,6 +418,11 @@ export function MapsPanel({
     listGenRef.current += 1;
     setSelectedGame(null);
     setListStatus("idle");
+    requestAnimationFrame(() => {
+      (gameRowRefs.current.get(selectedGame?.url ?? "") ??
+        searchInputRef.current ??
+        closeRef.current)?.focus();
+    });
     requestAnimationFrame(() => {
       if (scrollBodyRef.current) {
         scrollBodyRef.current.scrollTop = step1ScrollTopRef.current;
@@ -429,7 +453,14 @@ export function MapsPanel({
   function handleOpenSavedRow(item: SavedMap) {
     setMenuId(null);
     const proxyUrl = mapProxyUrl(item.imageUrl, item.sourceUrl);
-    if (!online && cachedByProxy[proxyUrl] === false) {
+    if (!online && !(cachedByProxy[proxyUrl] ?? false)) {
+      if (!(proxyUrl in cachedByProxy)) {
+        void hasCachedMap(proxyUrl).then((cached) => {
+          if (!cached) setOfflineNoticeId(item.id);
+          else onOpenSavedMap(item);
+        });
+        return;
+      }
       setOfflineNoticeId(item.id);
       return;
     }
@@ -440,6 +471,12 @@ export function MapsPanel({
   async function handleSaveMap(mapLink: VGMapsMapLink) {
     if (!selectedGame || !online) return;
     const url = mapLink.imageUrl;
+    const saveGameKey = gameKey;
+    const canUpdate = () =>
+      mountedRef.current && currentGameKeyRef.current === saveGameKey;
+    let lastProgressAt = 0;
+    let lastProgressText = "";
+    setDownloadAnnouncement(`Downloading ${mapLink.mapName}…`);
     setFailedByUrl((prev) => {
       if (!prev[url]) return prev;
       const next = { ...prev };
@@ -454,9 +491,18 @@ export function MapsPanel({
       gameEntry: selectedGame,
       mapLink,
       onProgress: (progress) => {
-        setProgressByUrl((prev) => ({ ...prev, [url]: progress }));
+        if (!canUpdate()) return;
+        const now = Date.now();
+        const formatted = formatDownloadProgressText(progress);
+        if (formatted !== lastProgressText || now - lastProgressAt >= 120) {
+          lastProgressAt = now;
+          lastProgressText = formatted;
+          setProgressByUrl((prev) => ({ ...prev, [url]: progress }));
+        }
       },
     });
+
+    if (!canUpdate()) return;
 
     setProgressByUrl((prev) => {
       const next = { ...prev };
@@ -467,22 +513,30 @@ export function MapsPanel({
     if (result.status === "saved") {
       const proxyUrl = mapProxyUrl(mapLink.imageUrl, selectedGame.url);
       setCachedByProxy((prev) => ({ ...prev, [proxyUrl]: true }));
+      setDownloadAnnouncement(`${mapLink.mapName} saved offline.`);
       return;
     }
-    if (result.status === "aborted") return;
+    if (result.status === "aborted") {
+      setDownloadAnnouncement("Download canceled.");
+      return;
+    }
     if (result.status === "too_large") {
       setTooLargeByUrl((prev) => ({ ...prev, [url]: true }));
+      setDownloadAnnouncement(`Couldn't save ${mapLink.mapName}.`);
       return;
     }
     if (result.status === "quota") {
+      setDownloadAnnouncement(`Couldn't save ${mapLink.mapName}.`);
       onToast("Not enough space on this device. Remove a saved map and try again.");
       return;
     }
     if (result.status === "cap") {
+      setDownloadAnnouncement(`Couldn't save ${mapLink.mapName}.`);
       onToast("Saved maps are full. Remove one to add more.");
       return;
     }
     setFailedByUrl((prev) => ({ ...prev, [url]: true }));
+    setDownloadAnnouncement(`Couldn't save ${mapLink.mapName}.`);
   }
 
   const inFindStep2 = activeTab === "find" && selectedGame !== null;
@@ -505,10 +559,14 @@ export function MapsPanel({
         onKeyDown={split ? undefined : trapTab}
         inert={inert}
       >
+        <div className="visually-hidden" role="status" aria-live="polite">
+          {downloadAnnouncement}
+        </div>
         <div className="library-head maps-head">
           {inFindStep2 ? (
             <div className="maps-head-step2">
               <button
+                ref={backBtnRef}
                 type="button"
                 className="maps-back-btn"
                 onClick={handleBackToResults}
@@ -652,6 +710,7 @@ export function MapsPanel({
                               onClick={() => {
                                 setMenuId(null);
                                 onRemoveSavedMap(item);
+                                requestAnimationFrame(() => closeRef.current?.focus());
                               }}
                             >
                               Remove
@@ -676,6 +735,7 @@ export function MapsPanel({
               <form className="maps-search-form" onSubmit={handleSearchSubmit}>
                 <div className="field-clear-wrap maps-search-field">
                   <input
+                    ref={searchInputRef}
                     type="search"
                     className="maps-search-input"
                     aria-label="Search VGMaps"
@@ -785,7 +845,7 @@ export function MapsPanel({
                           </div>
 
                           {downloading && (
-                            <div className="maps-progress-block" aria-live="polite">
+                            <div className="maps-progress-block">
                               <div className="maps-progress-head">
                                 <p className="maps-progress-text">
                                   {formatDownloadProgressText(rowProgress)}
@@ -793,7 +853,10 @@ export function MapsPanel({
                                 <button
                                   type="button"
                                   className="maps-btn-secondary maps-btn-cancel"
-                                  onClick={() => onCancelDownload(ref)}
+                                  onClick={() => {
+                                    setDownloadAnnouncement("Download canceled.");
+                                    onCancelDownload(ref);
+                                  }}
                                 >
                                   Cancel
                                 </button>
@@ -828,6 +891,7 @@ export function MapsPanel({
                             <button
                               type="button"
                               className="maps-btn-secondary"
+                              aria-label={`Open ${mapLink.mapName}`}
                               disabled={overLimit || (!online && !savedRecord)}
                               onClick={() =>
                                 onOpenFindMap(selectedGame, mapLink, savedRecord)
@@ -847,6 +911,7 @@ export function MapsPanel({
                               <button
                                 type="button"
                                 className="maps-btn-primary"
+                                aria-label={`Save ${mapLink.mapName}`}
                                 disabled={overLimit || downloading || !online}
                                 onClick={() => void handleSaveMap(mapLink)}
                               >
@@ -901,6 +966,10 @@ export function MapsPanel({
                       <button
                         type="button"
                         className="maps-game-row"
+                        ref={(element) => {
+                          if (element) gameRowRefs.current.set(entry.url, element);
+                          else gameRowRefs.current.delete(entry.url);
+                        }}
                         onClick={() => handleOpenGameEntry(entry)}
                       >
                         <strong className="saved-row-title">{entry.title}</strong>
