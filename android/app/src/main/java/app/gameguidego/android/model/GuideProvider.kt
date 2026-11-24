@@ -4,34 +4,48 @@ import android.net.Uri
 import android.webkit.CookieManager
 
 enum class GuideProvider(
-    val displayName: String,
-    val baseUrl: String
+    val id: String,
+    val displayName: String
 ) {
-    GAMEFAQS("GameFAQs", "https://gamefaqs.gamespot.com"),
-    NEOSEEKER("Neoseeker", "https://www.neoseeker.com"),
-    ZELDA_DUNGEON("ZeldaDungeon", "https://www.zeldadungeon.net"),
-    VGMAPS("VGMaps", "https://www.vgmaps.com/Atlas/index.htm"),
-    CUSTOM_URL("URL", "https://");
+    GAMEFAQS("gamefaqs", "GameFAQs"),
+    NEOSEEKER("neoseeker", "Neoseeker"),
+    ZELDA_DUNGEON("zelda_dungeon", "Zelda Dungeon"),
+    WEB("web", "Browse Web");
 
-    fun buildSearchUrl(query: String): String {
-        val trimmed = query.trim()
+    fun buildSearchUrl(gameName: String): String {
+        val trimmed = gameName.trim()
         if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
             return trimmed
         }
-        val encoded = Uri.encode(trimmed)
         return when (this) {
-            GAMEFAQS -> "https://gamefaqs.gamespot.com/search?game=$encoded"
-            NEOSEEKER -> "https://www.neoseeker.com/seeker.php?q=$encoded"
+            GAMEFAQS -> {
+                if (trimmed.isEmpty()) "https://gamefaqs.gamespot.com"
+                else "https://gamefaqs.gamespot.com/search?game=${Uri.encode(trimmed)}"
+            }
+            NEOSEEKER -> {
+                val cleaned = trimmed
+                    .replace(Regex("[^\\p{L}\\p{N}\\s]"), " ")
+                    .replace(Regex("\\s+"), " ")
+                    .trim()
+                if (cleaned.isEmpty()) "https://www.neoseeker.com"
+                else "https://www.neoseeker.com/seeker.php?q=${Uri.encode(cleaned)}"
+            }
             ZELDA_DUNGEON -> {
                 if (trimmed.isEmpty()) "https://www.zeldadungeon.net"
-                else "https://www.zeldadungeon.net/?s=$encoded"
+                else "https://www.zeldadungeon.net/?s=${Uri.encode(trimmed)}"
             }
-            VGMAPS -> "https://www.vgmaps.com/Atlas/index.htm"
-            CUSTOM_URL -> if (trimmed.isEmpty()) "https://gamefaqs.gamespot.com" else "https://$trimmed"
+            WEB -> {
+                if (trimmed.isEmpty()) "https://duckduckgo.com"
+                else "https://duckduckgo.com/?q=${Uri.encode("$trimmed walkthrough guide")}"
+            }
         }
     }
 
     companion object {
+        fun fromId(id: String?): GuideProvider {
+            return entries.firstOrNull { it.id == id } ?: GAMEFAQS
+        }
+
         fun applyProviderCookies(provider: GuideProvider) {
             if (provider == NEOSEEKER) {
                 val cm = CookieManager.getInstance()

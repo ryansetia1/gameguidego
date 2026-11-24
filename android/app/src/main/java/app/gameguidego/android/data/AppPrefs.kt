@@ -18,17 +18,9 @@ class AppPrefs(context: Context) {
             prefs.edit().putString(KEY_AUTH_TOKEN, value.trim()).apply()
         }
 
-    var maxChapters: Int
-        get() = prefs.getInt(KEY_MAX_CHAPTERS, DEFAULT_MAX_CHAPTERS).coerceIn(1, 100)
-        set(value) {
-            prefs.edit().putInt(KEY_MAX_CHAPTERS, value.coerceIn(1, 100)).apply()
-        }
-
     companion object {
         const val DEFAULT_SERVER_URL = "https://gameguidego.vercel.app"
-        const val DEFAULT_MAX_CHAPTERS = 10
         private const val KEY_SERVER_URL = "server_url"
         private const val KEY_AUTH_TOKEN = "auth_token"
-        private const val KEY_MAX_CHAPTERS = "max_chapters"
     }
 }

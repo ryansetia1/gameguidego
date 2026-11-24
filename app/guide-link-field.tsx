@@ -27,6 +27,80 @@ import { GuideStatusChip } from "./chat/guide-status-chip";
 
 type GuideHit = { title: string; url: string; snippet: string };
 
+type NativeGuideResult = {
+  guideUrl?: string;
+  title?: string;
+  filename?: string;
+  chunkCount?: number;
+  error?: string;
+};
+
+type AndroidBridgeWindow = Window & {
+  GameGuideGoAndroid?: {
+    openFindGuide?: (
+      providerId: string,
+      gameName: string,
+      platform: string,
+      accessToken: string,
+    ) => void;
+  };
+  __ggOnNativeGuideAdded?: (payload: NativeGuideResult) => void;
+};
+
+const NATIVE_PROVIDERS = [
+  {
+    id: "gamefaqs",
+    name: "GameFAQs",
+    desc: "TXT & HTML walkthroughs and guides",
+  },
+  {
+    id: "neoseeker",
+    name: "Neoseeker",
+    desc: "TXT guides and HTML walkthroughs",
+  },
+  {
+    id: "zelda_dungeon",
+    name: "Zelda Dungeon",
+    desc: "HTML walkthroughs from Zelda Dungeon",
+  },
+  {
+    id: "web",
+    name: "Browse Web",
+    desc: "Search any wiki or walkthrough site (IGN, Fandom, PDF)",
+  },
+] as const;
+
+function renderProviderIcon(id: (typeof NATIVE_PROVIDERS)[number]["id"]) {
+  if (id === "gamefaqs") {
+    return (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+        <path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6h-6" />
+      </svg>
+    );
+  }
+  if (id === "neoseeker") {
+    return (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+        <circle cx="12" cy="12" r="8" />
+        <path d="M12 4a8 8 0 0 1 8 8" />
+      </svg>
+    );
+  }
+  if (id === "zelda_dungeon") {
+    return (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+        <polygon points="12 4 4 20 20 20" />
+      </svg>
+    );
+  }
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+    </svg>
+  );
+}
+
 /** Bearer header for /api/guide-upload; the server derives the uid from the token. */
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = (await getSupabase()?.auth.getSession()) ?? { data: null };
@@ -85,10 +159,21 @@ export function GuideLinkField({
   onDone,
   onRequestConfirm,
 }: Props) {
-  const [mode, setMode] = useState<"link" | "search" | "upload">("link");
+  const [mode, setMode] = useState<"find" | "link" | "search" | "upload">("link");
+  const [isApk, setIsApk] = useState(false);
+  const [findError, setFindError] = useState("");
+  const [findNotice, setFindNotice] = useState("");
+  const pendingFindRef = useRef(false);
   const [showInfo, setShowInfo] = useState(false);
   const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true) }, []);
+  useEffect(() => {
+    setMounted(true);
+    const bridge = (window as AndroidBridgeWindow).GameGuideGoAndroid;
+    if (typeof bridge?.openFindGuide === "function") {
+      setIsApk(true);
+      setMode("find");
+    }
+  }, []);
   const [draftUrl, setDraftUrl] = useState("");
   const [addError, setAddError] = useState("");
   const [query, setQuery] = useState("");
@@ -272,8 +357,58 @@ export function GuideLinkField({
 
   useEffect(() => {
     onPendingChange?.(Boolean(uploadFile));
-    return () => onPendingChange?.(false);
+    return () => {
+      onPendingChange?.(false);
+    };
   }, [uploadFile, onPendingChange]);
+
+  useEffect(() => {
+    if (!isApk) return;
+    const win = window as AndroidBridgeWindow;
+    win.__ggOnNativeGuideAdded = (payload: NativeGuideResult) => {
+      if (!pendingFindRef.current) return;
+      pendingFindRef.current = false;
+
+      if (payload?.error) {
+        setFindNotice("");
+        setFindError(payload.error);
+        return;
+      }
+
+      const guideUrl = payload?.guideUrl?.trim();
+      if (!guideUrl) {
+        setFindNotice("");
+        setFindError("Guide upload did not return a valid URL.");
+        return;
+      }
+
+      if (value.some((entry) => isSamePreferredGuide(entry, guideUrl))) {
+        setFindNotice("");
+        setFindError("That guide is already in your list.");
+        return;
+      }
+
+      if (atMax) {
+        setFindNotice("");
+        setFindError(`You can add up to ${MAX_GUIDE_URLS} guides.`);
+        return;
+      }
+
+      const next = normalizeGuideUrlList([...value, guideUrl]);
+      onChange(next);
+      const title = payload.title?.trim();
+      if (title && onGuideMetaChange) {
+        onGuideMetaChange({ ...guideMeta, [guideUrl]: { title } });
+      }
+      const label = title || payload.filename?.trim() || "guide";
+      const chunks = typeof payload.chunkCount === "number" ? ` (${payload.chunkCount} chunks)` : "";
+      setFindError("");
+      setFindNotice(`Added "${label}"${chunks}.`);
+    };
+    return () => {
+      if (win.__ggOnNativeGuideAdded) delete win.__ggOnNativeGuideAdded;
+    };
+  }, [isApk, value, atMax, onChange, onGuideMetaChange, guideMeta]);
 
   useEffect(() => {
     if (canSearch) return;
@@ -390,10 +525,44 @@ export function GuideLinkField({
     }
   }, [userId, uploading, atMax, trimmedGame, platform, value, onChange]);
 
+  const openNativeProvider = useCallback(
+    async (providerId: string) => {
+      const bridge = (window as AndroidBridgeWindow).GameGuideGoAndroid;
+      if (typeof bridge?.openFindGuide !== "function") return;
+      if (!userId) {
+        setFindError("Sign in to download and index guides from providers.");
+        return;
+      }
+      const { data } = (await getSupabase()?.auth.getSession()) ?? { data: null };
+      const token = data?.session?.access_token ?? "";
+      if (!token) {
+        setFindError("Sign in first to ingest guides.");
+        return;
+      }
+      setFindError("");
+      setFindNotice("");
+      pendingFindRef.current = true;
+      bridge.openFindGuide(providerId, trimmedGame, platform.trim(), token);
+    },
+    [userId, trimmedGame, platform],
+  );
+
   return (
     <div className="guide-link-field">
       {!atMax && (
         <div className="guide-link-modes" role="tablist" aria-label="Preferred guide sources">
+          {isApk && (
+            <button
+              type="button"
+              role="tab"
+              className={mode === "find" ? "active" : undefined}
+              aria-selected={mode === "find"}
+              disabled={disabled}
+              onClick={() => setMode("find")}
+            >
+              Find
+            </button>
+          )}
           <button
             type="button"
             role="tab"
@@ -479,6 +648,35 @@ export function GuideLinkField({
         </ul>
       )}
 
+
+      {!atMax && isApk && mode === "find" && (
+        <div className="guide-find-panel" role="tabpanel" aria-label="Find guide from providers">
+          <ul className="guide-provider-list">
+            {NATIVE_PROVIDERS.map((provider) => (
+              <li key={provider.id}>
+                <button
+                  type="button"
+                  className="guide-provider-btn"
+                  disabled={disabled || !userId}
+                  onClick={() => void openNativeProvider(provider.id)}
+                >
+                  <span className="guide-provider-icon">{renderProviderIcon(provider.id)}</span>
+                  <span className="guide-provider-body">
+                    <span className="guide-provider-name">{provider.name}</span>
+                    <span className="guide-provider-desc">{provider.desc}</span>
+                  </span>
+                  <span className="guide-provider-arrow" aria-hidden="true">›</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          {!userId && (
+            <p className="field-hint">Sign in to download and index guides from providers.</p>
+          )}
+          {findError && <p className="guide-search-error" role="alert">{findError}</p>}
+          {findNotice && <p className="guide-find-notice" role="status">{findNotice}</p>}
+        </div>
+      )}
 
       {!atMax && mode === "link" && (
         <form className="guide-url-add-form" onSubmit={onAddSubmit} role="tabpanel">

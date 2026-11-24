@@ -7,6 +7,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -31,18 +32,40 @@ class GuideExtractor {
     suspend fun extractCurrentGuide(
         webView: WebView,
         detection: PageDetectionResult,
-        maxChapters: Int
+        maxPages: Int,
+        onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }
     ): ExtractedGuide {
         val userAgent = withContext(Dispatchers.Main) { webView.settings.userAgentString }
         return when (detection.kind) {
             DetectedGuideKind.GAMEFAQS_TXT -> extractGameFaqsTxt(webView, detection)
             DetectedGuideKind.NEOSEEKER_TXT -> extractNeoseekerTxt(webView, detection)
-            DetectedGuideKind.GAMEFAQS_HTML -> extractGameFaqsHtml(webView, detection, userAgent, maxChapters)
+            DetectedGuideKind.GAMEFAQS_HTML -> extractMultiPageHtml(
+                webView = webView,
+                detection = detection,
+                linkSelector = ".ftoc a[href]",
+                userAgent = userAgent,
+                maxPages = maxPages,
+                onProgress = onProgress
+            )
+            DetectedGuideKind.NEOSEEKER_HTML -> extractMultiPageHtml(
+                webView = webView,
+                detection = detection,
+                linkSelector = "div.wiki-toc a[href]",
+                userAgent = userAgent,
+                maxPages = maxPages,
+                onProgress = onProgress
+            )
+            DetectedGuideKind.ZELDA_DUNGEON_HTML -> extractMultiPageHtml(
+                webView = webView,
+                detection = detection,
+                linkSelector = ".entry-content a[href*='walkthrough'], #mw-content-text a[href*='/wiki/']",
+                userAgent = userAgent,
+                maxPages = maxPages,
+                onProgress = onProgress
+            )
             DetectedGuideKind.PDF_DOCUMENT -> downloadPdf(detection, userAgent)
-            DetectedGuideKind.NEOSEEKER_HTML,
-            DetectedGuideKind.ZELDA_DUNGEON_HTML,
-            DetectedGuideKind.VGMAPS_PAGE,
-            DetectedGuideKind.GENERIC_ARTICLE -> extractSingleHtmlAsMarkdown(webView, detection)
+            DetectedGuideKind.WEB_ARTICLE,
+            DetectedGuideKind.BROWSING -> extractSingleHtmlAsMarkdown(webView, detection)
         }
     }
 
@@ -84,25 +107,38 @@ class GuideExtractor {
         )
     }
 
-    private suspend fun extractGameFaqsHtml(
+    private suspend fun extractMultiPageHtml(
         webView: WebView,
         detection: PageDetectionResult,
+        linkSelector: String,
         userAgent: String,
-        maxChapters: Int
+        maxPages: Int,
+        onProgress: (done: Int, total: Int) -> Unit
     ): ExtractedGuide {
+        if (maxPages <= 1) {
+            onProgress(1, 1)
+            return extractSingleHtmlAsMarkdown(webView, detection)
+        }
+
+        val selectorJson = JSONObject.quote(linkSelector)
         val tocJsonRaw = withContext(Dispatchers.Main) {
             GuidePageDetector.evaluateJs(
                 webView,
                 """
                 (function() {
-                    var links = Array.from(document.querySelectorAll('.ftoc a[href]'));
+                    var links = Array.from(document.querySelectorAll($selectorJson));
                     var seen = new Set();
                     var out = [];
                     for (var i = 0; i < links.length; i++) {
-                        var href = links[i].href.split('#')[0];
-                        if (!seen.has(href)) {
+                        var link = links[i];
+                        var rawHref = link.getAttribute('href') || '';
+                        var onclick = link.getAttribute('onclick') || '';
+                        if (!rawHref.trim() || rawHref.trim().startsWith('#')) continue;
+                        if (onclick && (onclick.indexOf('show()') !== -1 || onclick.indexOf('hide()') !== -1)) continue;
+                        var href = (link.href || '').split('#')[0];
+                        if (href && href.startsWith('http') && !seen.has(href)) {
                             seen.add(href);
-                            out.push({ title: (links[i].innerText || '').trim(), href: href });
+                            out.push({ title: (link.innerText || '').trim(), href: href });
                         }
                     }
                     return JSON.stringify(out);
@@ -115,17 +151,18 @@ class GuideExtractor {
             JSONArray(GuidePageDetector.unquoteJsonString(tocJsonRaw))
         }.getOrElse { JSONArray() }
 
-        if (tocArray.length() == 0) {
+        if (tocArray.length() <= 1) {
+            onProgress(1, 1)
             return extractSingleHtmlAsMarkdown(webView, detection)
         }
 
         val totalLinks = tocArray.length()
-        val limit = totalLinks.coerceAtMost(maxChapters)
+        val limit = totalLinks.coerceAtMost(maxPages)
         val sb = StringBuilder()
         sb.append("# ").append(detection.title).append("\n")
         sb.append("Source: ").append(detection.url).append("\n")
         if (totalLinks > limit) {
-            sb.append("> Note: Capped at $limit of $totalLinks chapters (configurable in Library > Settings).\n")
+            sb.append("> Note: Extracted $limit of $totalLinks pages.\n")
         }
         sb.append("\n")
 
@@ -133,10 +170,11 @@ class GuideExtractor {
         withContext(Dispatchers.IO) {
             for (i in 0 until limit) {
                 val item = tocArray.optJSONObject(i) ?: continue
-                val chapterTitle = item.optString("title").ifBlank { "Section ${i + 1}" }
+                val chapterTitle = item.optString("title").ifBlank { "Page ${i + 1}" }
                 val chapterUrl = item.optString("href")
                 if (chapterUrl.isBlank()) continue
 
+                withContext(Dispatchers.Main) { onProgress(i + 1, limit) }
                 val html = fetchUrlWithCookies(chapterUrl, userAgent, detection.url) ?: continue
                 val md = htmlToCleanMarkdown(Jsoup.parse(html, chapterUrl))
                 if (md.isNotBlank()) {
@@ -227,11 +265,11 @@ class GuideExtractor {
     private fun htmlToCleanMarkdown(doc: Document): String {
         doc.select(
             "script, style, noscript, aside, nav, footer, header, iframe, form, " +
-                ".comments-area, #comments, .comment-respond, a[href*=/nplus/][href*=adblock]"
+                ".comments-area, #comments, .comment-respond, a[href*=/nplus/][href*=adblock], .ftoc"
         ).remove()
 
         val root: Element = doc.selectFirst(
-            "#faqwrap, .ffaq, article .entry-content, #mw-content-text .mw-parser-output, " +
+            "#faqwrap, .ffaq, article#wiki-content, article .entry-content, #mw-content-text .mw-parser-output, " +
                 ".entry-content, .post-content, .wiki-body, main article, article, main"
         ) ?: doc.body() ?: return ""
 
@@ -257,5 +295,25 @@ class GuideExtractor {
             return root.text().trim()
         }
         return lines.joinToString("\n").replace(Regex("\n{3,}"), "\n\n").trim()
+    }
+
+    companion object {
+        fun buildSafeUploadFilename(
+            gameName: String,
+            providerId: String,
+            guideTitle: String,
+            extension: String
+        ): String {
+            fun slug(s: String) = s
+                .lowercase()
+                .replace(Regex("[^a-z0-9]+"), "_")
+                .trim('_')
+
+            val parts = listOf(slug(gameName), slug(providerId), slug(guideTitle))
+                .filter { it.isNotEmpty() }
+            val joined = parts.joinToString("_").ifEmpty { "guide_${System.currentTimeMillis()}" }
+            val ext = extension.trimStart('.').lowercase().ifEmpty { "md" }
+            return "${joined.take(72).trimEnd('_')}.$ext"
+        }
     }
 }

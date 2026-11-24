@@ -4949,7 +4949,8 @@ details.sources small {
   flex: 1;
   border: none;
   background: transparent;
-  padding: 10px 12px;
+  padding: 10px 6px;
+  white-space: nowrap;
   font-family: var(--font-sans);
   font-size: 0.62rem;
   font-weight: 700;
@@ -4971,6 +4972,94 @@ details.sources small {
 .guide-link-modes button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.guide-find-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.guide-provider-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1.5px solid var(--ink);
+  background: var(--paper-strong);
+}
+
+.guide-provider-list li + li {
+  border-top: 1px solid var(--line);
+}
+
+.guide-provider-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.guide-provider-btn:active:not(:disabled),
+.guide-provider-btn:hover:not(:disabled) {
+  background: var(--paper);
+}
+
+.guide-provider-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.guide-provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  color: var(--ink);
+}
+
+.guide-provider-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.guide-provider-name {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.guide-provider-desc {
+  font-size: 0.74rem;
+  color: var(--muted);
+  line-height: 1.3;
+}
+
+.guide-provider-arrow {
+  flex: none;
+  font-size: 1.25rem;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.guide-find-notice {
+  margin: 0;
+  padding: 6px 10px;
+  background: var(--signal);
+  color: var(--on-signal);
+  font-size: 0.78rem;
+  font-weight: 600;
 }
 
 .guide-search-panel {

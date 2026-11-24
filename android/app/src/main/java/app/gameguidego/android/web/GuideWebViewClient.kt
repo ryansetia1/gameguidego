@@ -6,8 +6,10 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 
 class GuideWebViewClient(
-    private val enableAdBlock: Boolean,
+    var adBlockEnabled: Boolean,
     private val overrideUrlCallback: ((url: String) -> Boolean)? = null,
+    private val onPageStartedCallback: ((url: String?) -> Unit)? = null,
+    private val onHistoryUpdatedCallback: ((url: String?) -> Unit)? = null,
     private val onPageFinishedCallback: (url: String?) -> Unit
 ) : WebViewClient() {
 
@@ -23,10 +25,20 @@ class GuideWebViewClient(
         view: WebView?,
         request: WebResourceRequest?
     ): WebResourceResponse? {
-        if (enableAdBlock && AdBlockFilter.isBlocked(request?.url?.toString())) {
+        if (adBlockEnabled && AdBlockFilter.isBlocked(request?.url?.toString())) {
             return AdBlockFilter.emptyResponse()
         }
         return super.shouldInterceptRequest(view, request)
+    }
+
+    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+        super.onPageStarted(view, url, favicon)
+        onPageStartedCallback?.invoke(url)
+    }
+
+    override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+        super.doUpdateVisitedHistory(view, url, isReload)
+        onHistoryUpdatedCallback?.invoke(url)
     }
 
     override fun onPageFinished(view: WebView?, url: String?) {

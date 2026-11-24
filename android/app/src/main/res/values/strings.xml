@@ -1,8 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">GameGuideGo</string>
-    <string name="nav_pwa">GameGuideGo</string>
-    <string name="nav_find">Find Guides</string>
-    <string name="nav_library">Library</string>
-    <string name="default_server_url">https://gameguidego.vercel.app</string>
 </resources>

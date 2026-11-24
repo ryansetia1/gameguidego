@@ -1041,7 +1041,8 @@ Sound human, not like AI. Specifically avoid these tells:
 
 ## Android APK (`android/`)
 - **Folder**: `android/` (isolated native Kotlin + Material 3 + WebView + OkHttp + Jsoup project, package `app.gameguidego.android`).
-- **PWA + PixelGuide Capabilities**:
-  - **GameGuideGo tab**: Loads the live PWA URL (`AppPrefs.serverUrl`, configurable in Library & Settings) and auto-syncs the Supabase `access_token` from WebView `localStorage`.
-  - **Find Guides tab**: Ad-blocked WebView (`AdBlockFilter` + `GuideWebViewClient`) with GameFAQs, Neoseeker (`mobile_mode=on` cookie), ZeldaDungeon, VGMaps, and Custom URL search, DOM page detection (`GuidePageDetector`), and guide extraction (`GuideExtractor`) into `.txt`, `.md`, or `.pdf` for `POST /api/guide-upload` (`GameGuideGoApi`).
+- **Integrated PWA + PixelGuide Flow**:
+  - **Full-Screen PWA (`MainActivity`)**: Loads `AppPrefs.serverUrl` (`https://gameguidego.vercel.app`) without bottom nav tabs, intercepts Google/Steam OAuth via Chrome Custom Tabs (`gameguidego://auth` + `__ggSetSession`), and exposes `window.GameGuideGoAndroid.openFindGuide(...)` JS bridge.
+  - **Quick Add Guide (`app/guide-link-field.tsx`)**: When running inside the APK (`GameGuideGoAndroid` present), adds `Find` as the leftmost tab listing GameFAQs, Neoseeker, Zelda Dungeon, and Browse Web.
+  - **Native Find Browser (`FindGuideActivity`)**: Opens directly on the provider's game search results URL inside an ad-blocked WebView (`AdBlockFilter` + `GuideWebViewClient`), detects actual guide pages (`GuidePageDetector`) before enabling `Download`, extracts TXT / multi-page HTML Markdown / PDF (`GuideExtractor`) with a sample/full choice for multi-page guides, uploads to `POST /api/guide-upload` (`GameGuideGoApi`), and returns the result straight into `GuideLinkField` via `window.__ggOnNativeGuideAdded`.
 - **Version Sync**: `android/app/build.gradle.kts` reads `version` directly from root `package.json` (`versionName` = `package.json` `version`, `versionCode` = semver integer). Whenever `package.json` version is bumped or the PWA is updated, run `npm run build:apk` to rebuild a matching APK at `android/app/build/outputs/apk/debug/app-debug.apk`.
