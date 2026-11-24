@@ -3,14 +3,12 @@ import type { User } from "@supabase/supabase-js";
 import { GuideLinkField, type GuideMeta } from "../guide-link-field";
 import { HltbRow } from "../hltb-row";
 import {
-  IconAlert,
   IconArrowUpRight,
   IconChevronDown,
   IconDotsVertical,
   IconIncognito,
   IconPlus,
   IconRefresh,
-  IconX,
 } from "../icons";
 import { gameCardGuideRow } from "@/lib/guide-card-ui.js";
 import { guideUrlDedupeKey } from "@/lib/guide-urls.js";
@@ -524,14 +522,10 @@ export function ActiveGameCard({
               </button>
             )}
             {hasBlocked && (
-              <span className="guide-status-chip is-blocked">
-                <IconAlert size={12} /> Blocked
-              </span>
+              <GuideStatusChip state="blocked" />
             )}
             {hasFailed && (
-              <span className="guide-status-chip is-failed">
-                <IconX size={10} /> Failed
-              </span>
+              <GuideStatusChip state="failed" />
             )}
             {hasLimited && <GuideStatusChip state="limited" />}
             {!hasLimited && hasRefreshing && <GuideStatusChip state="refreshing" />}

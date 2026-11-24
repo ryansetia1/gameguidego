@@ -652,17 +652,14 @@ export function PlayerMemorySection({ session, onToast }: Props) {
                   <p className="player-memory-panel-hint">
                     Pick your defaults or run Update now to refresh from chats. Your edits stay put.
                   </p>
-                  <div className="player-memory-chips" aria-label="Current style summary">
-                    {(STYLE_FIELD_KEYS as readonly StyleFieldKey[]).map((field) => {
-                      const value = style[field];
-                      if (!value) return null;
-                      return (
-                        <span key={field} className="player-memory-chip">
-                          {styleChipLabel(field, value)}
-                        </span>
-                      );
-                    })}
-                  </div>
+                  <p className="player-memory-summary" aria-label="Current style summary">
+                    {(STYLE_FIELD_KEYS as readonly StyleFieldKey[])
+                      .flatMap((field) => {
+                        const value = style[field];
+                        return value ? [styleChipLabel(field, value)] : [];
+                      })
+                      .join(" · ")}
+                  </p>
                   <div className="player-memory-prefs-grid">
                     {(STYLE_FIELD_KEYS as readonly StyleFieldKey[]).map((field) => (
                       <label key={field} className="player-memory-pref-field">

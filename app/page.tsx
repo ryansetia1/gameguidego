@@ -2763,10 +2763,7 @@ export default function Home() {
             onSignOut={() => void signOut()}
           />
           {!user && !supabaseReady && (
-            <span className="live-badge">
-              <span aria-hidden="true" />
-              WEB LIVE
-            </span>
+            <span className="meta-text">Web live</span>
           )}
         </div>
       </nav>

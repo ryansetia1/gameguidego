@@ -201,23 +201,35 @@ main {
   object-fit: contain;
 }
 
-.live-badge {
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  color: var(--muted);
+/* Plain status text (#41): no box, no icon. Ladder: muted (fine) -> ink bold
+   (needs attention) -> danger bold (broken). Status is always words. */
+.meta-text,
+.meta-text--attn,
+.meta-text--error {
   font-family: var(--font-sans);
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-size: 0.74rem;
+  font-weight: 500;
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
-.live-badge > span {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #00b37e;
-  box-shadow: 0 0 0 4px rgba(0, 179, 126, 0.14);
+.meta-text--attn {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.meta-text--error {
+  font-weight: 700;
+  color: var(--danger);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .hero {
@@ -1146,21 +1158,6 @@ details[open] > summary .chevron-toggle .icon {
   font-size: 0.68rem;
 }
 
-/* Per-source provenance chip (PDF / GameFAQs / Guide / Web) so a mixed-source
-   answer shows which guide each citation came from. No radius per theme rules. */
-.source-badge {
-  display: inline-block;
-  margin-right: 6px;
-  padding: 1px 5px;
-  border: 1px solid var(--line);
-  font-size: 0.6rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  vertical-align: baseline;
-}
-
 /* The "?" affordance beside the answer + its on-demand accuracy popover. The
    toggle is deliberately lighter than the regenerate button (hairline, not the
    ink border) so it reads as a quiet aside. */
@@ -1774,8 +1771,7 @@ details.sources small {
   width: 28px;
   height: 28px;
   place-items: center;
-  border: 1px solid currentColor;
-  border-radius: 50%;
+  border: 1.5px solid currentColor;
   font-family: var(--font-sans);
   font-weight: 700;
 }
@@ -3428,15 +3424,24 @@ details.sources small {
   position: absolute;
   top: -8px;
   right: -8px;
-  width: 22px;
-  height: 22px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   border: 1.5px solid var(--ink);
-  border-radius: 50%;
   background: var(--paper-strong);
   color: var(--ink);
   font-size: 0.9rem;
   line-height: 1;
   cursor: pointer;
+}
+
+/* 44px touch target around the 24px square. */
+.attachment-thumb button::after {
+  content: "";
+  position: absolute;
+  inset: -10px;
 }
 
 /* Shared cover element (box art or letter tile). */
@@ -3935,49 +3940,15 @@ details.sources small {
   opacity: 0.7;
 }
 
-/* Guide index status chip — small inline badge beside guide labels */
-.guide-status-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 7px;
-  font-family: var(--font-sans);
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  vertical-align: middle;
-  line-height: 1.4;
-  border: 1px solid transparent;
+/* Guide index status: plain word after the label (#41). */
+.guide-status {
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
-.guide-status-chip.is-indexed {
-  color: var(--signal-dark);
-  background: color-mix(in srgb, var(--signal) 14%, transparent);
-  border-color: color-mix(in srgb, var(--signal) 40%, transparent);
-}
-
-.guide-status-chip.is-limited,
-.guide-status-chip.is-paused {
-  color: var(--warn);
-  background: var(--warn-bg);
-  border-color: var(--warn-border);
-}
-
-.guide-status-chip.is-refreshing {
-  color: var(--signal-dark);
-  background: color-mix(in srgb, var(--signal) 12%, transparent);
-  border-color: color-mix(in srgb, var(--signal) 36%, transparent);
-  animation: guide-chip-pulse 1.4s ease-in-out infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .guide-status-chip.is-refreshing,
-  .guide-status-chip.is-checking {
-    animation: none;
-  }
+.guide-url-row .guide-status {
+  margin-top: 2px;
+  align-self: flex-start;
 }
 
 .guide-refresh-action {
@@ -3987,20 +3958,26 @@ details.sources small {
   padding: 4px 9px;
   min-height: 28px;
   font-family: var(--font-sans);
-  font-size: 0.68rem;
+  font-size: 0.74rem;
   font-weight: 700;
-  letter-spacing: 0.03em;
-  color: var(--warn);
-  background: var(--warn-bg);
-  border: 1px solid var(--warn-border);
-  border-radius: 4px;
+  color: var(--ink);
+  background: var(--paper-strong);
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
   cursor: pointer;
   flex-shrink: 0;
   white-space: nowrap;
 }
 
+@media (pointer: coarse) {
+  .guide-refresh-action {
+    min-height: 44px;
+  }
+}
+
 .guide-refresh-action:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--warn) 22%, transparent);
+  background: var(--signal);
+  color: var(--on-signal);
 }
 
 .guide-refresh-action:disabled {
@@ -4015,48 +3992,6 @@ details.sources small {
 
 .game-card-link.is-refreshing {
   color: var(--signal-dark);
-}
-
-.guide-status-chip.is-failed,
-.guide-status-chip.is-blocked {
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
-}
-
-.guide-status-chip.is-pending {
-  color: var(--muted);
-  background: color-mix(in srgb, var(--muted) 10%, transparent);
-  border-color: color-mix(in srgb, var(--muted) 25%, transparent);
-}
-
-.guide-status-chip.is-unavailable {
-  color: var(--muted);
-  opacity: 0.65;
-  background: color-mix(in srgb, var(--muted) 8%, transparent);
-  border-color: color-mix(in srgb, var(--muted) 18%, transparent);
-}
-
-.guide-status-chip.is-checking {
-  color: var(--muted);
-  background: color-mix(in srgb, var(--muted) 8%, transparent);
-  border-color: color-mix(in srgb, var(--muted) 20%, transparent);
-}
-
-/* Subtle pulse for the checking chip */
-.guide-status-chip.is-checking {
-  animation: guide-chip-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes guide-chip-pulse {
-  0%, 100% { opacity: 0.55; }
-  50% { opacity: 1; }
-}
-
-/* Status chip inside the guide-url-row (setup form) */
-.guide-url-row .guide-status-chip {
-  margin-top: 2px;
-  align-self: flex-start;
 }
 
 .game-card-bundle-spinner {
@@ -4275,24 +4210,21 @@ details.sources small {
   transform: translateY(-50%);
   width: 24px;
   height: 24px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: var(--bg-hover);
-  color: var(--text-dim);
+  border: 1.5px solid var(--ink);
+  background: var(--paper-strong);
+  color: var(--ink);
   font-size: 12px;
   font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.2s ease;
   padding: 0;
 }
 
 .guide-url-info-btn:hover {
-  background: var(--bg-active);
-  color: var(--text);
-  border-color: var(--border-hover);
+  background: var(--signal);
+  color: var(--on-signal);
 }
 
 .guide-url-paste-btn {
@@ -6580,23 +6512,11 @@ details.sources small {
   line-height: 1.4;
 }
 
-.player-memory-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
-.player-memory-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--line);
-  background: var(--paper-muted);
-  color: var(--ink);
-  font-size: 0.72rem;
-  font-weight: 600;
+.player-memory-summary {
+  margin: 0 0 12px;
+  color: var(--text-subtle);
+  font-size: 0.8rem;
+  font-weight: 500;
 }
 
 .player-memory-search-field {
@@ -6797,18 +6717,6 @@ details.sources small {
   margin: 0;
 }
 
-.player-memory-edited-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 6px;
-  border: 1px solid var(--signal);
-  color: var(--signal);
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-
 .player-memory-text-btn {
   flex: none;
   border: none;
@@ -6859,7 +6767,7 @@ details.sources small {
   line-height: 1.45;
 }
 
-.player-memory-note .player-memory-edited-badge {
+.player-memory-note > .meta-text {
   flex: none;
   align-self: center;
 }
@@ -7376,47 +7284,33 @@ details.sources small {
   object-fit: contain;
   user-select: none;
 }
-.lightbox-close {
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
-  border: none;
-  border-radius: 50%;
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  cursor: pointer;
-  z-index: 10;
-  transition: background 0.2s;
-}
-.lightbox-close:hover {
-  background: rgba(0, 0, 0, 0.8);
-}
+.lightbox-close,
 .lightbox-nav {
   position: fixed;
-  top: 50%;
-  transform: translateY(-50%);
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
-  border: none;
-  border-radius: 50%;
-  width: 48px;
-  height: 48px;
+  width: 44px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  padding: 0;
+  background: var(--paper-strong);
+  color: var(--ink);
+  border: 1.5px solid var(--ink);
   cursor: pointer;
   z-index: 10;
-  transition: background 0.2s;
 }
+.lightbox-close {
+  top: 16px;
+  right: 16px;
+}
+.lightbox-nav {
+  top: 50%;
+  transform: translateY(-50%);
+}
+.lightbox-close:hover,
 .lightbox-nav:hover {
-  background: rgba(0, 0, 0, 0.8);
+  background: var(--signal);
+  color: var(--on-signal);
 }
 .lightbox-nav.prev {
   left: 16px;
@@ -7579,18 +7473,13 @@ details.sources small {
   min-height: 0;
 }
 
-.topic-row-spoiler-chip {
+.topic-row-spoiler {
   flex-shrink: 0;
-  padding: 1px 6px;
-  border: 1px solid color-mix(in srgb, var(--spoiler-hint) 55%, var(--ink));
-  background: var(--spoiler-surface);
-  color: var(--spoiler-hint);
-  font-size: 0.58rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  line-height: 1.35;
-  text-transform: uppercase;
   white-space: nowrap;
+}
+
+.topic-list-spoilers {
+  margin: 0 0 8px;
 }
 
 .topic-row-open small {
@@ -8102,19 +7991,11 @@ details.sources small {
 
 .saved-row-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   color: var(--muted);
   font-size: 0.72rem;
-}
-
-.saved-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: 1px solid var(--line);
-  padding: 1px 6px;
-  color: var(--muted);
 }
 
 .saved-row-menu .row-menu-pop {
@@ -8296,7 +8177,7 @@ details.sources small {
   border-left-color: var(--signal);
 }
 
-.reading-chip {
+.reading-note {
   margin: 0;
   padding: 6px 16px;
   border-bottom: 1px solid var(--line);
@@ -8376,7 +8257,7 @@ details.sources small {
 @media (prefers-reduced-motion: reduce) {
   .app-split,
   .saved-pane,
-  .reading-chip {
+  .reading-note {
     transition: none;
     animation: none;
   }

@@ -406,9 +406,7 @@ function AnswerFoot({
                     {number}
                     <span>
                       <strong>{source.title}</strong>
-                      <small>
-                        <span className="source-badge">{badge}</span>
-                      </small>
+                      <small>{badge}</small>
                     </span>
                   </div>
                 </li>
@@ -421,8 +419,7 @@ function AnswerFoot({
                   <span>
                     <strong>{source.title}</strong>
                     <small>
-                      <span className="source-badge">{badge}</span>
-                      {sourceHostname(source.url)}
+                      {badge} · {sourceHostname(source.url)}
                     </small>
                   </span>
                   <span className="source-arrow" aria-hidden="true">

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 export function EditedBadge() {
-  return <span className="player-memory-edited-badge">Edited by you</span>;
+  return <span className="meta-text">Edited by you</span>;
 }
 
 export function EditableNoteRow({
