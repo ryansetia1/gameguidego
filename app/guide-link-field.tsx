@@ -396,9 +396,16 @@ export function GuideLinkField({
         return;
       }
 
+      const title = payload.title?.trim();
+      const label = title || payload.filename?.trim() || "guide";
+      const chunks = typeof payload.chunkCount === "number" ? ` (${payload.chunkCount} chunks)` : "";
+
       if (value.some((entry) => isSamePreferredGuide(entry, guideUrl))) {
-        setFindNotice("");
-        setFindError("That guide is already in your list.");
+        if (title && onGuideMetaChange) {
+          onGuideMetaChange({ ...guideMeta, [guideUrl]: { title } });
+        }
+        setFindError("");
+        setFindNotice(`Updated "${label}"${chunks}.`);
         return;
       }
 
@@ -410,12 +417,9 @@ export function GuideLinkField({
 
       const next = normalizeGuideUrlList([...value, guideUrl]);
       onChange(next);
-      const title = payload.title?.trim();
       if (title && onGuideMetaChange) {
         onGuideMetaChange({ ...guideMeta, [guideUrl]: { title } });
       }
-      const label = title || payload.filename?.trim() || "guide";
-      const chunks = typeof payload.chunkCount === "number" ? ` (${payload.chunkCount} chunks)` : "";
       setFindError("");
       setFindNotice(`Added "${label}"${chunks}.`);
     };
