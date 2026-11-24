@@ -516,8 +516,8 @@ export function MessageList({
                 {message.images && message.images.length > 0 && (
                   <div className="msg-images">
                     {message.images.map((url, i) => (
-                      // eslint-disable-next-line @next/next/no-img-element
                       <a key={i} href={url} target="_blank" rel="noreferrer">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           className="msg-image"
                           src={url}

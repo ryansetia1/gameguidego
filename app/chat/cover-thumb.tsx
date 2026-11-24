@@ -16,8 +16,8 @@ export function CoverThumb({
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const cls = `cover${className ? ` ${className}` : ""}`;
   if (cover && cover !== failedUrl) {
-    // eslint-disable-next-line @next/next/no-img-element
     return (
+      // eslint-disable-next-line @next/next/no-img-element
       <img
         className={cls}
         src={cover}
