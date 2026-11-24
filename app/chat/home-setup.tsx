@@ -86,6 +86,7 @@ export type HomeSetupProps = {
   onGameSpoilerChange: (value: boolean) => void;
   onSaveGameMeta: () => void;
   onSaveNewGame: () => void;
+  onGuideCommitted?: (info: { label: string; updated?: boolean }) => void;
 };
 
 export function HomeSetup({
@@ -132,6 +133,7 @@ export function HomeSetup({
   onGameSpoilerChange,
   onSaveGameMeta,
   onSaveNewGame,
+  onGuideCommitted,
 }: HomeSetupProps) {
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
   const [quickSearch, setQuickSearch] = useState("");
@@ -368,6 +370,10 @@ export function HomeSetup({
                   disabled={loading}
                   userId={user?.id}
                   onDone={() => onSetOptPanel(null)}
+                  onGuideCommitted={(info) => {
+                    onSetOptPanel(null);
+                    onGuideCommitted?.(info);
+                  }}
                   onRequestConfirm={onRequestConfirm}
                 />
               </div>

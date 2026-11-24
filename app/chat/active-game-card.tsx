@@ -64,6 +64,7 @@ export type ActiveGameCardProps = {
     danger?: boolean;
   }) => Promise<boolean>;
   onSaveGameMeta: () => void;
+  onGuideCommitted?: (info: { label: string; updated?: boolean }) => void;
   onRetryGuideIngest: (url: string) => void;
   onReindexAllPending: () => void;
   onGameSpoilerChange: (value: boolean) => void;
@@ -120,6 +121,7 @@ export function ActiveGameCard({
   onGuidePendingChange,
   onRequestConfirm,
   onSaveGameMeta,
+  onGuideCommitted,
   onRetryGuideIngest,
   onReindexAllPending,
   onGameSpoilerChange,
@@ -193,6 +195,10 @@ export function ActiveGameCard({
             platform={platform}
             disabled={loading}
             userId={user?.id}
+            onGuideCommitted={(info) => {
+              onSetShowQuickAdd(false);
+              onGuideCommitted?.(info);
+            }}
             onRequestConfirm={onRequestConfirm}
           />
           <div className="game-card-quick-add-done">

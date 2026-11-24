@@ -1015,6 +1015,17 @@ export default function Home() {
     setToastOpensJournal(true);
   }, []);
 
+  const handleGuideCommitted = useCallback(
+    ({ label, updated }: { label: string; updated?: boolean }) => {
+      const clean = label.trim() || "guide";
+      const short = clean.length > 44 ? `${clean.slice(0, 43).trimEnd()}…` : clean;
+      setToastOpensJournal(false);
+      setToastAction(null);
+      setToast(updated ? `Updated "${short}"` : `Added "${short}"`);
+    },
+    [],
+  );
+
   // Mobile edge-swipe. Closed: swipe in from the left edge → sidebar; from the
   // right edge → last-opened library (Steam if connected + last used, else saved).
   // Open: swipe back the other way to dismiss (left → close sidebar, right → close
@@ -2680,6 +2691,7 @@ export default function Home() {
       onGuidePendingChange={setGuidePending}
       onRequestConfirm={(opts) => askConfirm(opts.message, opts.confirmLabel, opts.danger)}
       onSaveGameMeta={() => void saveGameMeta()}
+      onGuideCommitted={handleGuideCommitted}
       onRetryGuideIngest={(url) => void retryGuideIngest(url)}
       onReindexAllPending={() => void reindexAllPending()}
       onGameSpoilerChange={updateGameSpoiler}
@@ -2951,6 +2963,7 @@ export default function Home() {
         onGameSpoilerChange={updateGameSpoiler}
         onSaveGameMeta={() => void saveGameMeta()}
         onSaveNewGame={() => void saveNewGame()}
+        onGuideCommitted={handleGuideCommitted}
       />
 
       {showTopicList ? (

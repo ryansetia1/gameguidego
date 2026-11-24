@@ -3771,4 +3771,47 @@ if (!canRunTsChecks) {
   );
 }
 
+// Auto-close guide panel after ingest/add wiring
+{
+  const fs = await import("node:fs");
+  const fieldSrc = fs.readFileSync(new URL("../app/guide-link-field.tsx", import.meta.url), "utf8");
+  const commitCalls = fieldSrc.match(/onGuideCommitted\?\.\(/g) ?? [];
+  assert.ok(
+    commitCalls.length >= 3,
+    "GuideLinkField calls onGuideCommitted on URL add, native Find add/update, and upload",
+  );
+  const removeBlock = fieldSrc.slice(
+    fieldSrc.indexOf("const removeUrl"),
+    fieldSrc.indexOf("const confirmRemoveUrl"),
+  );
+  assert.ok(
+    !removeBlock.includes("onGuideCommitted"),
+    "removeUrl never auto-closes the guide panel on delete",
+  );
+
+  const cardSrc = fs.readFileSync(
+    new URL("../app/chat/active-game-card.tsx", import.meta.url),
+    "utf8",
+  );
+  const cardCommitBlock = cardSrc.slice(
+    cardSrc.indexOf("onGuideCommitted={(info)"),
+    cardSrc.indexOf("onRequestConfirm={onRequestConfirm}"),
+  );
+  assert.ok(cardCommitBlock.includes("onSetShowQuickAdd(false)"), "ActiveGameCard auto-closes Quick Add");
+  assert.ok(
+    !cardCommitBlock.includes("onSaveGameMeta("),
+    "ActiveGameCard onGuideCommitted avoids stale onSaveGameMeta call",
+  );
+
+  const setupSrc = fs.readFileSync(
+    new URL("../app/chat/home-setup.tsx", import.meta.url),
+    "utf8",
+  );
+  const setupCommitBlock = setupSrc.slice(
+    setupSrc.indexOf("onGuideCommitted={(info)"),
+    setupSrc.indexOf("onRequestConfirm={onRequestConfirm}"),
+  );
+  assert.ok(setupCommitBlock.includes("onSetOptPanel(null)"), "HomeSetup auto-collapses guide panel");
+}
+
 console.log("Self-check passed.");

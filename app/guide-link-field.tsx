@@ -143,6 +143,7 @@ type Props = {
   onPendingChange?: (pending: boolean) => void;
   guideIndexState?: GuideIndexState;
   onDone?: () => void;
+  onGuideCommitted?: (info: { label: string; updated?: boolean }) => void;
   onRequestConfirm?: (opts: {
     message: string;
     confirmLabel?: string;
@@ -171,6 +172,7 @@ export function GuideLinkField({
   onPendingChange,
   guideIndexState = {},
   onDone,
+  onGuideCommitted,
   onRequestConfirm,
 }: Props) {
   const [mode, setMode] = useState<"find" | "link" | "search" | "upload">("link");
@@ -244,9 +246,13 @@ export function GuideLinkField({
       setDraftUrl("");
       setAddError("");
       setHideSearchResults(true);
+      const label =
+        meta?.title?.trim() ||
+        (isGamefaqsFaqGuideUrl(cleaned) ? "GameFAQs guide" : hostLabel(cleaned));
+      onGuideCommitted?.({ label });
       return true;
     },
-    [guideMeta, onGuideMetaChange, onChange, value],
+    [guideMeta, onGuideMetaChange, onChange, onGuideCommitted, value],
   );
 
   const previewGuideUrl = useCallback(
@@ -407,6 +413,7 @@ export function GuideLinkField({
         }
         setFindError("");
         setFindNotice(`Updated "${label}".`);
+        onGuideCommitted?.({ label, updated: true });
         return;
       }
 
@@ -423,11 +430,12 @@ export function GuideLinkField({
       }
       setFindError("");
       setFindNotice(`Added "${label}".`);
+      onGuideCommitted?.({ label });
     };
     return () => {
       if (win.__ggOnNativeGuideAdded) delete win.__ggOnNativeGuideAdded;
     };
-  }, [isApk, value, atMax, onChange, onGuideMetaChange, guideMeta]);
+  }, [isApk, value, atMax, onChange, onGuideMetaChange, onGuideCommitted, guideMeta]);
 
   useEffect(() => {
     if (canSearch) return;
@@ -586,6 +594,7 @@ export function GuideLinkField({
       setUploadProgress(100);
       onChange([...value, payload.guideUrl]);
       setUploadError("");
+      onGuideCommitted?.({ label: uploadedGuideFilename(payload.guideUrl) });
     } catch {
       setUploadError("Upload failed. Check your connection and try again.");
     } finally {
@@ -593,7 +602,7 @@ export function GuideLinkField({
       setUploadFile(null);
       setUploadProgress(0);
     }
-  }, [userId, uploading, atMax, trimmedGame, platform, value, onChange]);
+  }, [userId, uploading, atMax, trimmedGame, platform, value, onChange, onGuideCommitted]);
 
   const openNativeProvider = useCallback(
     async (providerId: string) => {
