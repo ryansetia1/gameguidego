@@ -1,7 +1,9 @@
 package app.gameguidego.android
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
@@ -15,6 +17,8 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import app.gameguidego.android.data.AppPrefs
@@ -22,12 +26,15 @@ import app.gameguidego.android.databinding.ActivityMainBinding
 import app.gameguidego.android.scraper.GuidePageDetector
 import app.gameguidego.android.web.GuideWebViewClient
 import org.json.JSONObject
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var prefs: AppPrefs
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private var pendingChooserParams: WebChromeClient.FileChooserParams? = null
+    private var cameraPhotoUri: Uri? = null
 
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -35,6 +42,25 @@ class MainActivity : AppCompatActivity() {
         val uris = WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
         filePathCallback?.onReceiveValue(uris)
         filePathCallback = null
+    }
+
+    // Camera row in the composer (<input capture>): createIntent() ignores capture,
+    // so take the photo ourselves into a FileProvider URI (#50).
+    private val takePictureLauncher = registerForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { saved ->
+        val uri = cameraPhotoUri
+        cameraPhotoUri = null
+        filePathCallback?.onReceiveValue(if (saved && uri != null) arrayOf(uri) else null)
+        filePathCallback = null
+    }
+
+    private val cameraPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val params = pendingChooserParams
+        pendingChooserParams = null
+        if (granted) launchCamera(params) else launchFilePicker(params)
     }
 
     private val findGuideLauncher = registerForActivityResult(
@@ -162,14 +188,58 @@ class MainActivity : AppCompatActivity() {
             ): Boolean {
                 this@MainActivity.filePathCallback?.onReceiveValue(null)
                 this@MainActivity.filePathCallback = filePathCallback
-                val intent = fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
-                    type = "*/*"
-                }
-                runCatching { fileChooserLauncher.launch(intent) }.onFailure {
-                    this@MainActivity.filePathCallback = null
+                if (fileChooserParams?.isCaptureEnabled == true && acceptsImages(fileChooserParams)) {
+                    openCamera(fileChooserParams)
+                } else {
+                    launchFilePicker(fileChooserParams)
                 }
                 return true
             }
+        }
+    }
+
+    private fun acceptsImages(params: WebChromeClient.FileChooserParams): Boolean {
+        val types = params.acceptTypes.filter { it.isNotBlank() }
+        return types.isEmpty() || types.any { it.startsWith("image/") }
+    }
+
+    private fun openCamera(params: WebChromeClient.FileChooserParams) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            launchCamera(params)
+        } else {
+            pendingChooserParams = params
+            runCatching { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) }
+                .onFailure {
+                    pendingChooserParams = null
+                    launchFilePicker(params)
+                }
+        }
+    }
+
+    /** Falls back to the file picker when no camera app can take the photo. */
+    private fun launchCamera(params: WebChromeClient.FileChooserParams?) {
+        runCatching {
+            val dir = File(cacheDir, "camera").apply { mkdirs() }
+            dir.listFiles()?.forEach { it.delete() } // previous capture was already handed off
+            val file = File(dir, "photo-${System.currentTimeMillis()}.jpg")
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            cameraPhotoUri = uri
+            takePictureLauncher.launch(uri)
+        }.onFailure {
+            cameraPhotoUri = null
+            launchFilePicker(params)
+        }
+    }
+
+    private fun launchFilePicker(params: WebChromeClient.FileChooserParams?) {
+        val intent = params?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "*/*"
+        }
+        runCatching { fileChooserLauncher.launch(intent) }.onFailure {
+            filePathCallback?.onReceiveValue(null)
+            filePathCallback = null
         }
     }
 
