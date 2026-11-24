@@ -181,6 +181,8 @@ import {
   isGamefaqsFaqGuideUrl,
   isGamefaqsBundleUrl,
   MAX_GUIDE_URLS,
+  MAX_GUIDE_URL_CHARS,
+  isGuideUrlTooLong,
   mergeRoomPreferredUrls,
   normalizeGuideUrlList,
   normalizePreferredGuideUrl,
@@ -1273,6 +1275,25 @@ assert.equal(guideSourceLinkLabel("https://www.ign.com/walkthroughs/foo"), "ign.
 const uploadKey =
   "upload://user-1/Mario%20Kart%20Wii%20-%20Guide%20and%20Walkthrough%20-%20Wii%20-%20By%20Crazyreyn%20-%20GameFAQs.pdf";
 assert.equal(cleanGuideUrl(uploadKey), uploadKey);
+// #13: over-long guide URLs are rejected, never truncated into a different URL.
+{
+  const base = "https://example.com/guide?q=";
+  const atLimit = base + "a".repeat(MAX_GUIDE_URL_CHARS - base.length);
+  assert.equal(atLimit.length, MAX_GUIDE_URL_CHARS);
+  assert.equal(cleanGuideUrl(atLimit), atLimit, "URL exactly at the limit is accepted unchanged");
+  assert.equal(cleanGuideUrl(atLimit + "a"), "", "URL one char over the limit is rejected");
+  assert.equal(isGuideUrlTooLong(atLimit + "a"), true);
+  assert.equal(isGuideUrlTooLong(atLimit), false);
+  const longKey = "upload://user-1/" + "b".repeat(MAX_GUIDE_URL_CHARS) + ".pdf";
+  assert.equal(cleanGuideUrl(longKey), "", "over-long upload key is rejected");
+  assert.deepEqual(normalizeGuideUrlList([atLimit + "a", "https://example.com/ok"]), ["https://example.com/ok"]);
+  // 301-char URL used to be cut at 300; now kept intact.
+  const old301 = base + "c".repeat(301 - base.length);
+  assert.equal(cleanGuideUrl(old301), old301, "URLs past the old 300 cap are no longer truncated");
+  // Existing short URLs unchanged.
+  assert.equal(cleanGuideUrl(" https://www.ign.com/walkthroughs/foo "), "https://www.ign.com/walkthroughs/foo");
+  assert.equal(cleanGuideUrl("ftp://example.com/x"), "");
+}
 assert.deepEqual(normalizeGuideUrlList([uploadKey, uploadKey]), [uploadKey]);
 assert.deepEqual(
   guideUrlsPayload([uploadKey]),
@@ -3437,6 +3458,17 @@ if (!canRunTsChecks) {
     assert.equal(isBodyTooLarge(null), false, "missing Content-Length falls through to the file.size check");
     assert.equal(isBodyTooLarge("abc"), false, "garbage Content-Length falls through");
     assert.ok(UPLOAD_BODY_MARGIN >= 16 * 1024, "margin covers real multipart framing");
+    // #13: upload filenames are bounded before the upload:// key is built.
+    {
+      const { MAX_UPLOAD_NAME_CHARS, isUploadNameTooLong } = await import("../lib/upload-limit.js");
+      const atCap = "x".repeat(MAX_UPLOAD_NAME_CHARS - 4) + ".pdf";
+      assert.equal(isUploadNameTooLong(atCap), false, "name at the cap is allowed");
+      assert.equal(isUploadNameTooLong("y" + atCap), true, "name over the cap is rejected");
+      // Worst case: every char percent-encodes to 9 chars; the key must still pass cleanGuideUrl intact.
+      const worst = "\u4e2d".repeat(MAX_UPLOAD_NAME_CHARS);
+      const key = new URL(`upload://00000000-0000-0000-0000-000000000000/${worst}`).toString();
+      assert.equal(cleanGuideUrl(key), key, "longest allowed filename yields an intact key");
+    }
     {
       const fd = new FormData();
       fd.append("file", new File([new Uint8Array(MAX_UPLOAD_BYTES)], "x".repeat(255) + ".pdf"));
