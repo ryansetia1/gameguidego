@@ -26,5 +26,6 @@ they describe where the codebase is going, not necessarily what is shipped yet.
 | [ign-wiki-bundle.md](./ign-wiki-bundle.md) | **Research** | IGN `/wikis/` guides: dedicated `lib/ign-wiki.js`, `__NEXT_DATA__` htmlEntities extract (not Tavily), next/prev discovery, calibration on Pokémon D/P/Pt + Elden Ring |
 | [embedding-fallback-replicate.md](./embedding-fallback-replicate.md) | **Planned** | Sumopod embedding primary, Replicate fallback (`lucataco/qwen3-embedding-8b@42d9684`, model decided 2026-10-29); per-chunk `embed_model`, same-model query/retrieval, lexical-only for old guides during outage |
 | [topic-title-in-summarize.md](./topic-title-in-summarize.md) | **Shipped** | Fold first-turn `topicTitle` into `summarize` JSON — drop the third Gemini call (includes revert steps) |
+| [vgmaps-map-viewer.md](./vgmaps-map-viewer.md) | **Planned** | Seamless VGMaps search, anchor-scoped map detection, offline-first Cache API saving, and high-res dual-layer Canvas map viewer (no annotations in v1) |
 
 When a plan phase ships, update its status here and cross-link from `CLAUDE.md`.
