@@ -355,6 +355,11 @@ type GuideChunkMeta = {
   chunk_index: number;
 };
 
+export type IngestProgressEvent = {
+  progress: number;
+  stage: "preparing" | "indexing" | "saving";
+};
+
 export async function insertGuideChunks(input: {
   supabase: SupabaseClient;
   guideUrl: string;
@@ -362,6 +367,7 @@ export async function insertGuideChunks(input: {
   embeddings: number[][];
   /** Model tag that produced `embeddings`; stored per row so queries use the same model. */
   model: string;
+  onProgress?: (done: number, total: number) => void;
 }): Promise<{ indexed: boolean; chunkCount: number; embedFailed?: boolean }> {
   const guideUrl = normalizeGuideUrl(input.guideUrl);
   if (!input.chunks.length) return { indexed: false, chunkCount: 0 };
@@ -431,6 +437,7 @@ export async function insertGuideChunks(input: {
       }
       inserted += batch.length;
       insertedFrom = offset;
+      input.onProgress?.(inserted, rows.length);
     }
   } catch (error) {
     // Only this run's own range; a kill (no catch) is handled by isGuideIndexed + leftover cleanup.
@@ -474,9 +481,11 @@ async function storeGuideChunks(input: {
   startMs: number;
   /** Replace a flagged (stale/insufficient) index: purge it only now, after the new embeds exist. */
   replace?: boolean;
+  onProgress?: (event: IngestProgressEvent) => void;
 }): Promise<{ indexed: boolean; chunkCount: number; embedFailed?: boolean; keptOld?: boolean; lostOld?: boolean }> {
   const chunks = chunkGuideWithMeta(input.text);
   if (!chunks.length) return { indexed: false, chunkCount: 0 };
+  input.onProgress?.({ progress: 0.08, stage: "preparing" });
 
   void logTraceEvent(
     "ingest_chunk",
@@ -496,6 +505,7 @@ async function storeGuideChunks(input: {
   }
 
   const embedInputs = chunks.map((chunk) => `${formatEmbedPrefix(chunk)}${chunk.text}`);
+  input.onProgress?.({ progress: 0.12, stage: "indexing" });
 
   // One call = one model for the whole guide (Sumopod, else Qwen), never mixed.
   let embeddings: number[][];
@@ -505,7 +515,13 @@ async function storeGuideChunks(input: {
       purpose: "ingest",
       guideUrl: input.guideUrl,
       ...input.embedLog,
-    }, { ingestTimeoutMs: embedTimeoutMs }));
+    }, {
+      ingestTimeoutMs: embedTimeoutMs,
+      onProgress: (done, total) => {
+        const ratio = Math.min(1, done / Math.max(total, 1));
+        input.onProgress?.({ progress: 0.12 + ratio * 0.68, stage: "indexing" });
+      },
+    }));
   } catch (error) {
     void logTraceEvent(
       "ingest_embed_error",
@@ -517,6 +533,7 @@ async function storeGuideChunks(input: {
     return { indexed: false, chunkCount: 0, embedFailed: true };
   }
 
+  input.onProgress?.({ progress: 0.8, stage: "saving" });
   if (input.replace) {
     const purged = await purgeGuideVerified(input.guideUrl);
     if (purged === "kept") return { indexed: false, chunkCount: 0, keptOld: true };
@@ -529,7 +546,12 @@ async function storeGuideChunks(input: {
     chunks,
     embeddings,
     model,
+    onProgress: (done, total) => {
+      const ratio = Math.min(1, done / Math.max(total, 1));
+      input.onProgress?.({ progress: 0.8 + ratio * 0.18, stage: "saving" });
+    },
   });
+  if (stored.indexed) input.onProgress?.({ progress: 1, stage: "saving" });
   // ponytail: purge->insert window. A failed or killed insert after the purge loses the old
   // index (uploads cannot be re-extracted); the user must re-upload. Upgrade: insert under a
   // temp key, then swap.
@@ -722,6 +744,7 @@ export function ingestGuideFromText(input: {
   ctx?: IngestContext;
   /** Re-upload: swap an existing index only after the new embeds are ready. */
   replace?: boolean;
+  onProgress?: (event: IngestProgressEvent) => void;
 }): Promise<IngestResult> {
   // One writer per guide_url: the same file shares the flight, a different file is refused so
   // two uploads never interleave batches or mix embed models in one index.
@@ -743,6 +766,7 @@ async function runIngestGuideFromText(input: {
   signal?: AbortSignal;
   ctx?: IngestContext;
   replace?: boolean;
+  onProgress?: (event: IngestProgressEvent) => void;
 }): Promise<IngestResult> {
   const supabase = getServerClient();
   if (!supabase || !isEmbedConfigured()) {
@@ -753,11 +777,17 @@ async function runIngestGuideFromText(input: {
   let replace = false;
   if (await isGuideIndexed(input.guideUrl)) {
     // No service key: the purge could never run, so embedding would be wasted spend.
-    if (!input.replace || !getServiceClient()) return indexedGuideCacheHit(supabase, input.guideUrl);
+    if (!input.replace || !getServiceClient()) {
+      input.onProgress?.({ progress: 1, stage: "saving" });
+      return indexedGuideCacheHit(supabase, input.guideUrl);
+    }
     replace = true;
   } else {
     const leftovers = await clearGuideLeftovers(getServiceClient(), supabase, input.guideUrl);
-    if (leftovers === "cached") return indexedGuideCacheHit(supabase, input.guideUrl);
+    if (leftovers === "cached") {
+      input.onProgress?.({ progress: 1, stage: "saving" });
+      return indexedGuideCacheHit(supabase, input.guideUrl);
+    }
     if (leftovers === "blocked") {
       return { indexed: false, chunkCount: 0, hubWarning: false, embedFailed: true };
     }
@@ -779,6 +809,7 @@ async function runIngestGuideFromText(input: {
     embedLog: embedLogFromContext(input.ctx),
     startMs,
     replace,
+    onProgress: input.onProgress,
   });
 
   if (!stored.indexed) {

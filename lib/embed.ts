@@ -94,6 +94,8 @@ export type EmbedOptions = {
   model?: string;
   /** Ingest only: cap the Qwen call below QWEN_INGEST_TIMEOUT_MS so the caller ends before its hard kill. */
   ingestTimeoutMs?: number;
+  /** Progress callback reporting embedded item counts internally (never exposed to users). */
+  onProgress?: (done: number, total: number) => void;
 };
 
 function resolveEmbedModel(): string {
@@ -225,6 +227,7 @@ async function embedViaSumopodBatches(
       const result = await runEmbedBatch(client, model, batch, requestOptions);
       out.push(...result.embeddings);
       count(result.totalTokens);
+      opts.onProgress?.(out.length, cleaned.length);
     } catch (batchError) {
       // Credit/auth/abort/query failures would fail every single too: bail out now.
       if (opts.query || isAbort(batchError, signal) || isCreditOrAuthError(batchError)) {
@@ -238,6 +241,7 @@ async function embedViaSumopodBatches(
         return result.embeddings[0];
       });
       out.push(...singles);
+      opts.onProgress?.(out.length, cleaned.length);
     }
     if (i + BATCH_SIZE < cleaned.length && BATCH_DELAY_MS) {
       await sleep(BATCH_DELAY_MS, signal);
@@ -287,8 +291,15 @@ async function embedViaQwen(
   for (let i = 0; i < cleaned.length; i += QWEN_BATCH) batches.push(cleaned.slice(i, i + QWEN_BATCH));
 
   // First batch alone so a cold start is paid once, then the rest in parallel.
-  const first = await runBatch(batches[0]);
-  const rest = await mapPool(batches.slice(1), QWEN_CONCURRENCY, runBatch);
+  let done = 0;
+  const runTracked = async (batch: string[]) => {
+    const vectors = await runBatch(batch);
+    done += batch.length;
+    opts.onProgress?.(done, cleaned.length);
+    return vectors;
+  };
+  const first = await runTracked(batches[0]);
+  const rest = await mapPool(batches.slice(1), QWEN_CONCURRENCY, runTracked);
   return { vectors: [...first, ...rest.flat()], inputTokens: null };
 }
 

@@ -1,6 +1,7 @@
 package app.gameguidego.android
 
 import android.Manifest
+import android.animation.ObjectAnimator
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -52,7 +53,14 @@ class FindGuideActivity : AppCompatActivity() {
     private var currentDetection: PageDetectionResult? = null
     private var detectJob: Job? = null
     private var ingestJob: Job? = null
+    private var creepJob: Job? = null
     private var isIngesting: Boolean = false
+    private var displayedPercent: Int = 0
+    private var ceilingPercent: Int = 0
+    private var currentStageLabel: String = ""
+    private var lastNotifiedPercent: Int = -1
+    private var lastNotifiedMessage: String = ""
+    private var progressAnimator: ObjectAnimator? = null
 
     private val notificationPermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -85,6 +93,8 @@ class FindGuideActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        creepJob?.cancel()
+        progressAnimator?.cancel()
         ingestJob?.cancel()
         GuideIngestService.stop(this)
         super.onDestroy()
@@ -211,6 +221,7 @@ class FindGuideActivity : AppCompatActivity() {
             .setTitle("Cancel guide upload?")
             .setMessage("Uploading/indexing is still in progress. Cancel it now?")
             .setPositiveButton("Cancel upload") { _, _ ->
+                creepJob?.cancel()
                 ingestJob?.cancel()
                 GuideIngestService.stop(this)
                 setBusy(false, "")
@@ -323,7 +334,16 @@ class FindGuideActivity : AppCompatActivity() {
 
     private fun extractAndIngest(detection: PageDetectionResult, maxPages: Int) {
         ingestJob?.cancel()
-        setBusy(true, "Extracting guide...")
+        resetProgressUi()
+        val isMultiPage = detection.tocPageCount > 1 && maxPages > 1
+        setBusy(true, if (isMultiPage) "Downloading guide…" else "Preparing guide…")
+        updateProgress(
+            percent = if (isMultiPage) 2 else 5,
+            message = if (isMultiPage) "Downloading guide…" else "Preparing guide…",
+            allowCreepTo = if (isMultiPage) 12 else 15
+        )
+        startCreep()
+
         ingestJob = lifecycleScope.launch {
             var tempFile: File? = null
             try {
@@ -332,8 +352,14 @@ class FindGuideActivity : AppCompatActivity() {
                     detection = detection,
                     maxPages = maxPages
                 ) { done, total ->
-                    binding.txtProgressMessage.text = "Downloading page $done of $total…"
+                    if (isMultiPage) {
+                        val pct = ((done.toFloat() / total.coerceAtLeast(1)) * 40f).toInt().coerceIn(4, 40)
+                        updateProgress(pct, "Downloading guide…", allowCreepTo = 42)
+                    }
                 }
+
+                val uploadBase = if (isMultiPage) 40 else 10
+                updateProgress(uploadBase, "Preparing guide…", allowCreepTo = (uploadBase + 25).coerceAtMost(85))
 
                 val sourceSlug = resolveSourceSlug(provider, detection.url)
                 val safeName = GuideExtractor.buildSafeUploadFilename(
@@ -353,18 +379,34 @@ class FindGuideActivity : AppCompatActivity() {
                     "Extracted guide exceeds 4 MB upload limit. Choose a smaller page range."
                 }
 
-                binding.txtProgressMessage.text = "Uploading & indexing into GameGuideGo…"
                 GuideIngestService.start(
                     this@FindGuideActivity,
-                    "Uploading & indexing ${extracted.title}…"
+                    "Indexing guide…",
+                    displayedPercent
                 )
                 val uploadRes = api.uploadGuideForIngest(
                     serverUrl = serverUrl,
                     authToken = accessToken,
                     file = tempFile,
                     game = gameName.ifBlank { null },
-                    platform = platform.ifBlank { null }
+                    platform = platform.ifBlank { null },
+                    onProgress = { progress, stage ->
+                        val mapped = (uploadBase + progress * (100 - uploadBase)).toInt()
+                            .coerceIn(uploadBase, 100)
+                        val label = stageToLabel(stage)
+                        val creepCap = when (stage) {
+                            "preparing" -> (uploadBase + 15).coerceAtMost(88)
+                            "indexing" -> 88
+                            "saving" -> 96
+                            else -> 90
+                        }
+                        runOnUiThread {
+                            updateProgress(mapped, label, allowCreepTo = creepCap)
+                        }
+                    }
                 ).getOrThrow()
+
+                updateProgress(100, "Saving guide…", allowCreepTo = 100)
 
                 val data = Intent().apply {
                     putExtra(EXTRA_GUIDE_URL, uploadRes.guideUrl)
@@ -385,12 +427,72 @@ class FindGuideActivity : AppCompatActivity() {
                         .show()
                 }
             } finally {
+                creepJob?.cancel()
                 GuideIngestService.stop(this@FindGuideActivity)
                 tempFile?.delete()
                 if (!isFinishing && !isDestroyed) {
                     setBusy(false, "")
                 } else {
                     window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+            }
+        }
+    }
+
+    private fun stageToLabel(stage: String): String = when (stage) {
+        "indexing" -> "Indexing guide…"
+        "saving" -> "Saving guide…"
+        else -> "Preparing guide…"
+    }
+
+    private fun resetProgressUi() {
+        creepJob?.cancel()
+        progressAnimator?.cancel()
+        displayedPercent = 0
+        ceilingPercent = 0
+        currentStageLabel = ""
+        lastNotifiedPercent = -1
+        lastNotifiedMessage = ""
+        binding.ingestProgressBar.progress = 0
+        binding.txtProgressPercent.text = "0%"
+    }
+
+    private fun updateProgress(percent: Int, message: String, allowCreepTo: Int = -1) {
+        val target = percent.coerceIn(displayedPercent, 100)
+        displayedPercent = target
+        if (allowCreepTo >= 0) {
+            ceilingPercent = maxOf(ceilingPercent, allowCreepTo.coerceAtMost(92))
+        }
+        currentStageLabel = message
+        binding.txtProgressMessage.text = message
+        binding.txtProgressPercent.text = "$target%"
+
+        progressAnimator?.cancel()
+        progressAnimator = ObjectAnimator.ofInt(
+            binding.ingestProgressBar,
+            "progress",
+            binding.ingestProgressBar.progress,
+            target * 10
+        ).apply {
+            duration = 240
+            start()
+        }
+
+        if (target - lastNotifiedPercent >= 5 || message != lastNotifiedMessage) {
+            lastNotifiedPercent = target
+            lastNotifiedMessage = message
+            GuideIngestService.start(this, "$message ($target%)", target)
+        }
+    }
+
+    private fun startCreep() {
+        creepJob?.cancel()
+        creepJob = lifecycleScope.launch {
+            while (isIngesting) {
+                delay(1800)
+                if (!isIngesting) break
+                if (displayedPercent < ceilingPercent && displayedPercent < 92) {
+                    updateProgress(displayedPercent + 1, currentStageLabel.ifBlank { "Indexing guide…" })
                 }
             }
         }
@@ -419,6 +521,8 @@ class FindGuideActivity : AppCompatActivity() {
         if (busy) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
+            creepJob?.cancel()
+            progressAnimator?.cancel()
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
         binding.progressOverlay.visibility = if (busy) View.VISIBLE else View.GONE

@@ -29,23 +29,28 @@ class GuideIngestService : Service() {
 
         val message = intent?.getStringExtra(EXTRA_MESSAGE)
             ?.takeIf { it.isNotBlank() }
-            ?: "Uploading & indexing guide…"
+            ?: "Indexing guide…"
+        val percent = intent?.getIntExtra(EXTRA_PERCENT, -1) ?: -1
 
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("GameGuideGo")
             .setContentText(message)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setProgress(0, 0, true)
-            .build()
+
+        if (percent in 0..100) {
+            builder.setProgress(100, percent, false)
+        } else {
+            builder.setProgress(0, 0, true)
+        }
 
         val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
         } else {
             0
         }
-        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, serviceType)
+        ServiceCompat.startForeground(this, NOTIFICATION_ID, builder.build(), serviceType)
         return START_NOT_STICKY
     }
 
@@ -68,10 +73,12 @@ class GuideIngestService : Service() {
         private const val NOTIFICATION_ID = 4201
         private const val ACTION_STOP = "app.gameguidego.android.action.STOP_INGEST"
         private const val EXTRA_MESSAGE = "message"
+        private const val EXTRA_PERCENT = "percent"
 
-        fun start(context: Context, message: String) {
+        fun start(context: Context, message: String, percent: Int = -1) {
             val intent = Intent(context, GuideIngestService::class.java).apply {
                 putExtra(EXTRA_MESSAGE, message)
+                putExtra(EXTRA_PERCENT, percent)
             }
             runCatching { ContextCompat.startForegroundService(context, intent) }
         }

@@ -198,6 +198,8 @@ export function GuideLinkField({
   const [hideSearchResults, setHideSearchResults] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStage, setUploadStage] = useState("Preparing guide…");
   const [uploadError, setUploadError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
@@ -398,14 +400,13 @@ export function GuideLinkField({
 
       const title = payload.title?.trim();
       const label = title || payload.filename?.trim() || "guide";
-      const chunks = typeof payload.chunkCount === "number" ? ` (${payload.chunkCount} chunks)` : "";
 
       if (value.some((entry) => isSamePreferredGuide(entry, guideUrl))) {
         if (title && onGuideMetaChange) {
           onGuideMetaChange({ ...guideMeta, [guideUrl]: { title } });
         }
         setFindError("");
-        setFindNotice(`Updated "${label}"${chunks}.`);
+        setFindNotice(`Updated "${label}".`);
         return;
       }
 
@@ -421,7 +422,7 @@ export function GuideLinkField({
         onGuideMetaChange({ ...guideMeta, [guideUrl]: { title } });
       }
       setFindError("");
-      setFindNotice(`Added "${label}"${chunks}.`);
+      setFindNotice(`Added "${label}".`);
     };
     return () => {
       if (win.__ggOnNativeGuideAdded) delete win.__ggOnNativeGuideAdded;
@@ -498,6 +499,8 @@ export function GuideLinkField({
 
     setUploadFile(file);
     setUploading(true);
+    setUploadProgress(4);
+    setUploadStage("Preparing guide…");
     setUploadError("");
     try {
       const form = new FormData();
@@ -507,7 +510,10 @@ export function GuideLinkField({
 
       const response = await fetch("/api/guide-upload", {
         method: "POST",
-        headers: await authHeader(),
+        headers: {
+          ...(await authHeader()),
+          Accept: "application/x-ndjson",
+        },
         body: form,
       });
       // Vercel's own 413 (body over its cap) is not JSON.
@@ -515,17 +521,61 @@ export function GuideLinkField({
         setUploadError(UPLOAD_TOO_LARGE_MSG);
         return;
       }
-      const payload: {
-        indexed?: boolean;
-        chunkCount?: number;
-        guideUrl?: string;
-        fileType?: string;
-        error?: string;
-      } = await response.json().catch(() => ({}));
 
-      if (!response.ok) {
-        setUploadError(payload.error ?? "Upload failed. Try again.");
-        return;
+      type UploadPayload = {
+        type?: string;
+        progress?: number;
+        stage?: string;
+        indexed?: boolean;
+        guideUrl?: string;
+        error?: string;
+      };
+
+      const stageText = (stage?: string) => {
+        if (stage === "indexing") return "Indexing guide…";
+        if (stage === "saving") return "Saving guide…";
+        return "Preparing guide…";
+      };
+
+      let payload: UploadPayload = {};
+      const contentType = response.headers.get("content-type") ?? "";
+      if (response.ok && contentType.includes("ndjson") && response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { value: chunk, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(chunk, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            const evt = JSON.parse(trimmed) as UploadPayload;
+            if (evt.type === "progress") {
+              const pct = Math.max(0, Math.min(100, Math.round((evt.progress ?? 0) * 100)));
+              setUploadProgress((prev) => Math.max(prev, pct));
+              if (evt.stage) setUploadStage(stageText(evt.stage));
+            } else if (evt.type === "done" || evt.type === "error") {
+              payload = evt;
+            }
+          }
+        }
+        if (buf.trim()) {
+          const evt = JSON.parse(buf.trim()) as UploadPayload;
+          if (evt.type === "done" || evt.type === "error") payload = evt;
+        }
+        if (payload.type === "error" || payload.error) {
+          setUploadError(payload.error ?? "Upload failed. Try again.");
+          return;
+        }
+      } else {
+        payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          setUploadError(payload.error ?? "Upload failed. Try again.");
+          return;
+        }
       }
 
       if (!payload.indexed || !payload.guideUrl) {
@@ -533,6 +583,7 @@ export function GuideLinkField({
         return;
       }
 
+      setUploadProgress(100);
       onChange([...value, payload.guideUrl]);
       setUploadError("");
     } catch {
@@ -540,6 +591,7 @@ export function GuideLinkField({
     } finally {
       setUploading(false);
       setUploadFile(null);
+      setUploadProgress(0);
     }
   }, [userId, uploading, atMax, trimmedGame, platform, value, onChange]);
 
@@ -865,11 +917,19 @@ export function GuideLinkField({
               }}
             />
             {uploading ? (
-              <div style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "12px", border: "1px dashed var(--line)" }}>
-                <span className="guide-search-spinner loader" aria-hidden="true" />
-                <span className="field-hint" style={{ margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink)" }}>
-                  Uploading &amp; indexing {uploadFile?.name ?? "your file"}…
-                </span>
+              <div className="guide-upload-progress" role="status" aria-live="polite">
+                <div className="guide-upload-progress-head">
+                  <span className="guide-upload-progress-label">
+                    {uploadStage}
+                  </span>
+                  <span className="guide-upload-progress-pct">{uploadProgress}%</span>
+                </div>
+                <div className="guide-upload-progress-track" aria-hidden="true">
+                  <div
+                    className="guide-upload-progress-fill"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
               </div>
             ) : value.length > 0 ? (
               <div style={{ display: "flex", gap: "10px", width: "100%" }}>

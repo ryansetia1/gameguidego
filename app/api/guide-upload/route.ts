@@ -102,13 +102,18 @@ export async function POST(request: Request) {
   }
 
   const traceId = request.headers.get("X-Trace-Id") || crypto.randomUUID();
+  const wantsStream = request.headers.get("accept")?.includes("application/x-ndjson") ?? false;
 
-  return runWithTrace(traceId, async () => {
+  const processUpload = async (
+    onProgress?: (event: { progress: number; stage: string }) => void,
+  ): Promise<{ status: number; body: Record<string, unknown> }> => {
     await logTraceEvent("upload_start", `Started uploading and parsing file: ${file.name}`, undefined, {
       filename: file.name,
       game,
       platform,
     });
+
+    onProgress?.({ progress: 0.04, stage: "preparing" });
 
     let parsed;
     try {
@@ -117,7 +122,7 @@ export async function POST(request: Request) {
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Could not parse that file.";
       await logTraceEvent("upload_error", `Failed to parse file: ${msg}`, undefined, { error: msg });
-      return NextResponse.json({ error: msg }, { status: 422 });
+      return { status: 422, body: { error: msg } };
     }
 
     await logTraceEvent("guide_upload_received", `Uploaded ${parsed.fileType.toUpperCase()} guide: ${file.name} (${(file.size / 1024).toFixed(0)} KB, ${parsed.text.length} chars)`, undefined, {
@@ -133,13 +138,14 @@ export async function POST(request: Request) {
       signal: request.signal,
       ctx: { game, platform, userId },
       replace: true,
+      onProgress,
     });
 
     if (result.busy) {
-      return NextResponse.json(
-        { error: "Another upload of that file is still running. Try again when it finishes." },
-        { status: 409 },
-      );
+      return {
+        status: 409,
+        body: { error: "Another upload of that file is still running. Try again when it finishes." },
+      };
     }
 
     if (!result.indexed) {
@@ -150,7 +156,7 @@ export async function POST(request: Request) {
         guideUrl,
         textLength: parsed.text.length,
       });
-      return NextResponse.json({ error: msg }, { status: 500 });
+      return { status: 500, body: { error: msg } };
     }
 
     await logTraceEvent("upload_complete", `Successfully indexed ${result.chunkCount} chunks.`, undefined, {
@@ -159,13 +165,71 @@ export async function POST(request: Request) {
       guideUrl,
     });
 
-    return NextResponse.json({
-      indexed: result.indexed,
-      chunkCount: result.chunkCount,
-      guideUrl,
-      fileType: parsed.fileType,
-      filename: file.name,
+    return {
+      status: 200,
+      body: {
+        indexed: result.indexed,
+        chunkCount: result.chunkCount,
+        guideUrl,
+        fileType: parsed.fileType,
+        filename: file.name,
+      },
+    };
+  };
+
+  if (!wantsStream) {
+    return runWithTrace(traceId, async () => {
+      const outcome = await processUpload();
+      return NextResponse.json(outcome.body, { status: outcome.status });
     });
+  }
+
+  const encoder = new TextEncoder();
+  let closed = false;
+  const stream = new ReadableStream({
+    start(controller) {
+      const emit = (obj: Record<string, unknown>) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
+        } catch {
+          closed = true;
+        }
+      };
+
+      void runWithTrace(traceId, async () => {
+        try {
+          const outcome = await processUpload(({ progress, stage }) => {
+            emit({ type: "progress", progress: Number(progress.toFixed(3)), stage });
+          });
+          if (outcome.status === 200) {
+            emit({ type: "done", ...outcome.body });
+          } else {
+            emit({ type: "error", status: outcome.status, ...outcome.body });
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "Upload failed.";
+          emit({ type: "error", status: 500, error: msg });
+        } finally {
+          if (!closed) {
+            closed = true;
+            try {
+              controller.close();
+            } catch {}
+          }
+        }
+      });
+    },
+    cancel() {
+      closed = true;
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+    },
   });
 }
 

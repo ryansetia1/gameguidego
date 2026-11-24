@@ -37,7 +37,8 @@ class GameGuideGoApi {
         authToken: String,
         file: File,
         game: String?,
-        platform: String?
+        platform: String?,
+        onProgress: (progress: Float, stage: String) -> Unit = { _, _ -> }
     ): Result<IngestUploadResult> = withContext(Dispatchers.IO) {
         try {
             require(authToken.isNotBlank()) {
@@ -64,6 +65,7 @@ class GameGuideGoApi {
             val request = Request.Builder()
                 .url(endpoint)
                 .header("Authorization", "Bearer $authToken")
+                .header("Accept", "application/x-ndjson")
                 .post(bodyBuilder.build())
                 .build()
 
@@ -78,7 +80,40 @@ class GameGuideGoApi {
                     override fun onResponse(call: Call, response: Response) {
                         val parsed = runCatching {
                             response.use { resp ->
-                                val raw = resp.body?.string().orEmpty()
+                                val body = resp.body
+                                val contentType = resp.header("Content-Type").orEmpty()
+                                if (resp.isSuccessful && contentType.contains("ndjson", ignoreCase = true) && body != null) {
+                                    val source = body.source()
+                                    var finalResult: IngestUploadResult? = null
+                                    while (true) {
+                                        val line = source.readUtf8Line() ?: break
+                                        val trimmed = line.trim()
+                                        if (trimmed.isEmpty()) continue
+                                        val json = JSONObject(trimmed)
+                                        when (json.optString("type")) {
+                                            "progress" -> {
+                                                val p = json.optDouble("progress", 0.0).toFloat()
+                                                val stage = json.optString("stage")
+                                                onProgress(p, stage)
+                                            }
+                                            "done" -> {
+                                                finalResult = IngestUploadResult(
+                                                    indexed = json.optBoolean("indexed", false),
+                                                    chunkCount = json.optInt("chunkCount", 0),
+                                                    guideUrl = json.optString("guideUrl"),
+                                                    filename = json.optString("filename").ifBlank { file.name }
+                                                )
+                                            }
+                                            "error" -> {
+                                                val err = json.optString("error").ifBlank { "Upload failed." }
+                                                error(err)
+                                            }
+                                        }
+                                    }
+                                    return@use finalResult ?: error("Upload ended without a final status.")
+                                }
+
+                                val raw = body?.string().orEmpty()
                                 val json = runCatching { JSONObject(raw) }.getOrNull()
                                 if (!resp.isSuccessful) {
                                     val err = json?.optString("error")?.takeIf { it.isNotBlank() }
