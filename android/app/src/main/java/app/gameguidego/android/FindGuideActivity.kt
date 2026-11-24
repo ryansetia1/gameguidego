@@ -51,6 +51,7 @@ class FindGuideActivity : AppCompatActivity() {
     private var currentDetection: PageDetectionResult? = null
     private var detectJob: Job? = null
     private var ingestJob: Job? = null
+    private var isIngesting: Boolean = false
 
     private val notificationPermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -254,8 +255,20 @@ class FindGuideActivity : AppCompatActivity() {
     }
 
     private fun renderDetectionState(detection: PageDetectionResult?) {
+        if (isIngesting) {
+            binding.btnDownloadGuide.isEnabled = false
+            binding.btnDownloadGuide.text = "Uploading…"
+            binding.btnDownloadGuide.alpha = 0.65f
+            binding.btnDownloadGuide.backgroundTintList =
+                ColorStateList.valueOf(Color.parseColor("#1C2536"))
+            binding.btnDownloadGuide.setTextColor(Color.parseColor("#64748B"))
+            return
+        }
+
+        binding.btnDownloadGuide.text = "Download"
+        binding.btnDownloadGuide.alpha = 1.0f
         val ready = detection != null && detection.canDownload
-        binding.btnDownloadGuide.isEnabled = ready && ingestJob?.isActive != true
+        binding.btnDownloadGuide.isEnabled = ready
 
         if (detection != null && detection.canDownload) {
             binding.txtStatusIcon.text = "✓"
@@ -282,7 +295,7 @@ class FindGuideActivity : AppCompatActivity() {
     }
 
     private fun onDownloadClicked(detection: PageDetectionResult) {
-        if (ingestJob?.isActive == true) return
+        if (isIngesting || ingestJob?.isActive == true) return
         if (detection.tocPageCount > 1) {
             val fullLimit = minOf(detection.tocPageCount, 50)
             val options = arrayOf(
@@ -382,6 +395,7 @@ class FindGuideActivity : AppCompatActivity() {
     }
 
     private fun setBusy(busy: Boolean, message: String) {
+        isIngesting = busy
         if (busy) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
@@ -391,7 +405,7 @@ class FindGuideActivity : AppCompatActivity() {
         binding.txtProgressMessage.text = message
         binding.btnToggleSearch.isEnabled = !busy
         binding.btnToggleAdBlock.isEnabled = !busy
-        binding.btnDownloadGuide.isEnabled = !busy && (currentDetection?.canDownload == true)
+        renderDetectionState(currentDetection)
         updateNavButtons()
     }
 

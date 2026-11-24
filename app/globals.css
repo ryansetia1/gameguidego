@@ -959,6 +959,8 @@ h1 {
 
 .turn.guide .turn-action-icon {
   position: static;
+  top: auto;
+  right: auto;
 }
 
 /* The answer's footer band: no top control bar anymore. Left holds what the
@@ -1040,6 +1042,7 @@ details[open] > summary .chevron-toggle .icon {
   gap: 8px;
   margin-left: auto;
   min-width: 0;
+  max-width: 100%;
 }
 
 .answer-foot-right > :not(.answer-model) {
@@ -1051,6 +1054,7 @@ details[open] > summary .chevron-toggle .icon {
   font-family: var(--font-sans);
   font-size: 0.62rem;
   font-weight: 500;
+  line-height: 1;
   letter-spacing: 0.02em;
   color: var(--muted);
   flex: 0 1 auto;
@@ -1060,7 +1064,15 @@ details[open] > summary .chevron-toggle .icon {
   white-space: nowrap;
 }
 
-@media (max-width: 399px) {
+@media (max-width: 480px) {
+  .answer-foot-bar {
+    padding: 9px 14px;
+  }
+
+  .answer-foot-right {
+    gap: 6px;
+  }
+
   .answer-model {
     max-width: 112px;
   }
@@ -1176,7 +1188,7 @@ details[open] > summary .chevron-toggle .icon {
 
 .answer-info-toggle:hover,
 .answer-info-toggle[aria-expanded="true"] {
-  color: var(--ink);
+  color: var(--on-signal);
   background: var(--signal);
   border-color: var(--ink);
 }
@@ -7795,13 +7807,15 @@ details.sources small {
 .save-answer,
 .turn.guide .turn-action-icon.save-answer {
   position: relative;
+  top: auto;
+  right: auto;
 }
 
-/* Keep the 26px visual but give the dense foot bar a 40px tap target. */
+/* Keep the 26px visual but give the dense foot bar a ~40px vertical tap target without overlapping neighbors. */
 .save-answer::after {
   content: "";
   position: absolute;
-  inset: -7px;
+  inset: -7px -4px;
 }
 
 .save-answer.is-saved {
