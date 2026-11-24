@@ -4707,7 +4707,10 @@ if (!canRunTsChecks) {
       return {
         async put(key, res) { store.set(key, await res.blob()); },
         async match(key) { return store.has(key) ? new Response(store.get(key)) : undefined; },
-        async delete(key) { return store.delete(key); },
+        async delete(key) {
+          await new Promise((r) => setTimeout(r, 10)); // slow, like a real 30 MB entry
+          return store.delete(key);
+        },
       };
     },
   };
@@ -4755,6 +4758,29 @@ if (!canRunTsChecks) {
     assert.equal(await errStatus(bc.fetchAndCacheMapBlob(other, { signal: ctl.signal })), "AbortError");
     assert.equal(await bc.deleteCachedMap(proxy), true);
     assert.equal(await bc.hasCachedMap(proxy), false, "removed map leaves no cached image");
+    // A remove's delete still running when a re-save checks the cache: the check waits for it.
+    await bc.fetchAndCacheMapBlob(proxy);
+    const pendingDelete = bc.deleteCachedMap(proxy);
+    assert.equal(await bc.hasCachedMap(proxy), false, "re-save check waits for the running delete");
+    assert.equal(await pendingDelete, true);
+    // storeMapThenSave: the image is released when the metadata step doesn't save.
+    const cached = async () => bc.hasCachedMap(proxy);
+    let r = await bc.storeMapThenSave(proxy, () => ({ saved: false, why: "cap" }), () => false);
+    assert.deepEqual([r.why, await cached()], ["cap", false], "cap after download releases the image");
+    const quota = await bc
+      .storeMapThenSave(proxy, () => { throw new DOMException("full", "QuotaExceededError"); }, () => false)
+      .then(() => null, (e) => e.name);
+    assert.deepEqual([quota, await cached()], ["QuotaExceededError", false], "metadata write failure releases the image");
+    r = await bc.storeMapThenSave(proxy, () => ({ saved: false }), () => true);
+    assert.equal(await cached(), true, "kept while another saved item uses it");
+    await bc.deleteCachedMap(proxy);
+    r = await bc.storeMapThenSave(proxy, () => ({ saved: true }), () => false);
+    assert.equal(await cached(), true, "saved keeps the image");
+    await bc.deleteCachedMap(proxy);
+    mode = "unlisted";
+    assert.equal(await errStatus(bc.storeMapThenSave(proxy, () => ({ saved: true }), () => false)), 400, "failed download rethrows");
+    assert.equal(await cached(), false);
+    mode = "ok";
     delete globalThis.caches;
     const noCache = await bc.fetchAndCacheMapBlob(proxy);
     assert.equal(noCache.cached, false, "no Cache API still downloads");
@@ -4859,6 +4885,27 @@ if (!canRunTsChecks) {
   assert.deepEqual([d.items.length, d.items[0]?.deleted, server.rows.length], [1, true, 1], "tombstone for the row the push created");
   await sm.syncSavedMaps(server.client, "u1", d);
   assert.deepEqual([d.items.length, server.rows.length], [0, 0], "removed for good");
+  // Sign-out / account switch mid-pass: RLS makes the select return [] with no error. The pass
+  // must stop without writing, or every synced map would look removed (and lose its image).
+  {
+    const e = device(sm.addSavedMap([], sm.buildSavedMap({ owner: "u1", game: "Final Fantasy", sourceUrl: game, map: link })).items);
+    await sm.syncSavedMaps(server.client, "u1", e);
+    const synced = e.items;
+    assert.equal(synced[0].synced, true);
+    let signedIn = true;
+    const signedOutClient = { from: (t) => ({ ...server.client.from(t), select: () => ({ async eq() { signedIn = false; return { data: [], error: null }; } }) }) };
+    const writes = [];
+    const res = await sm.syncSavedMaps(signedOutClient, "u1", { load: () => e.items, write: (x) => { writes.push(x); e.write(x); }, isCurrent: () => signedIn });
+    assert.deepEqual([res.aborted, res.final, e.items], [true, null, synced], "aborted, store untouched after the select");
+    assert.equal(writes.length, 1, "only the pre-request claim write ran");
+    const early = await sm.syncSavedMaps(server.client, "u1", { load: () => e.items, write: () => assert.fail("no write"), isCurrent: async () => false });
+    assert.equal(early.aborted, true, "not current from the start: nothing written");
+    await sm.syncSavedMaps(server.client, "u1", { ...e, load: () => e.items, write: (x) => e.write(x), isCurrent: () => true });
+    assert.deepEqual([e.items.length, server.rows.length], [1, 1], "next real pass is normal");
+    e.write(sm.removeSavedMap(e.items, e.items[0].id));
+    await sm.syncSavedMaps(server.client, "u1", e);
+    assert.equal(server.rows.length, 0);
+  }
   // Missing table: throws an error isMissingTableError recognises (hook goes quiet).
   server.client.setMissing(true);
   const c = device(sm.addSavedMap([], sm.buildSavedMap({ owner: "u1", game: "FF", sourceUrl: game, map: link })).items);

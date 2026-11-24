@@ -10,9 +10,9 @@ import {
   deleteCachedMap,
   downloadMapOnce,
   fetchMapBlob,
-  hasCachedMap,
   mapProxyUrl,
   readCachedMapBlob,
+  storeMapThenSave,
 } from "@/lib/map-blob-cache.js";
 import {
   addSavedMap,
@@ -121,12 +121,15 @@ export type MapRef = { imageUrl: string; sourceUrl: string };
 
 const proxyOf = (item: MapRef) => mapProxyUrl(item.imageUrl, item.sourceUrl);
 
+/** Whether any saved item on this device (any owner) still uses this image. */
+const isLive = (proxyUrl: string) => load().some((row) => !row.deleted && proxyOf(row) === proxyUrl);
+
 /** Drop cached images no live item points at any more (removed here or on another device). */
 function dropOrphanedImages(before: SavedMap[], after: SavedMap[]) {
   const live = new Set(after.filter((row) => !row.deleted).map(proxyOf));
-  for (const url of new Set(before.filter((row) => !row.deleted).map(proxyOf))) {
-    if (!live.has(url)) void deleteCachedMap(url).catch(() => {});
-  }
+  const gone = [...new Set(before.filter((row) => !row.deleted).map(proxyOf))].filter((url) => !live.has(url));
+  // Re-checked against the store at delete time: a save may have landed since `after`.
+  return Promise.all(gone.map((url) => (isLive(url) ? false : deleteCachedMap(url).catch(() => false))));
 }
 
 function failure(err: unknown): { status: "unlisted" | "aborted" | "error" } {
@@ -153,12 +156,21 @@ export function useSavedMaps(user: User | null) {
   const rerun = useRef(false);
   const viewportTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // The signed-in owner right now; a sync pass started for someone else stops writing.
+  const ownerRef = useRef(owner);
+  useEffect(() => {
+    ownerRef.current = owner;
+  }, [owner]);
+
   const syncOnce = useCallback(async () => {
     const supabase = getSupabase();
     if (!owner || !supabase || serverTableMissing) return;
     try {
-      const { start, final } = await syncSavedMaps(supabase, owner, { load, write: writeStore });
-      dropOrphanedImages(start, final as SavedMap[]);
+      const isCurrent = async () =>
+        ownerRef.current === owner && (await supabase.auth.getSession()).data.session?.user.id === owner;
+      const { start, final, aborted } = await syncSavedMaps(supabase, owner, { load, write: writeStore, isCurrent });
+      if (aborted || !final) return;
+      await dropOrphanedImages(start, final as SavedMap[]);
       setSyncFailed(false);
     } catch (error) {
       if (isMissingTableError(error)) {
@@ -243,20 +255,28 @@ export function useSavedMaps(user: User | null) {
       if (precheck.error) return { status: precheck.error === "cap" ? "cap" : "error" };
       const proxyUrl = proxyOf(item);
       try {
-        await track(proxyUrl, async () => {
-          if (!(await hasCachedMap(proxyUrl))) await downloadMapOnce(proxyUrl);
-        });
-        // Ask the browser not to evict offline maps under storage pressure (best-effort).
-        void navigator.storage?.persist?.().catch(() => {});
-        const current = load();
-        const again = findSavedMap(current, owner, input.game, item.imageUrl) as SavedMap | undefined;
-        if (again) return { status: "saved", item: again };
-        const added = addSavedMap(current, item);
-        if (added.error) return { status: added.error === "cap" ? "cap" : "error" };
-        writeStore(added.items as SavedMap[]);
-        void sync();
-        const saved = findSavedMap(added.items, owner, input.game, item.imageUrl) as SavedMap;
-        return { status: "saved", item: saved };
+        const result = await track(proxyUrl, () =>
+          storeMapThenSave(
+            proxyUrl,
+            (): { saved: boolean; out: SaveMapResult } => {
+              const current = load();
+              const again = findSavedMap(current, owner, input.game, item.imageUrl) as SavedMap | undefined;
+              if (again) return { saved: true, out: { status: "saved", item: again } };
+              const added = addSavedMap(current, item);
+              if (added.error) return { saved: false, out: { status: added.error === "cap" ? "cap" : "error" } };
+              writeStore(added.items as SavedMap[]); // throws on quota: the image is released
+              const saved = findSavedMap(added.items, owner, input.game, item.imageUrl) as SavedMap;
+              return { saved: true, out: { status: "saved", item: saved } };
+            },
+            () => isLive(proxyUrl),
+          ),
+        );
+        if (result.saved) {
+          // Ask the browser not to evict offline maps under storage pressure (best-effort).
+          void navigator.storage?.persist?.().catch(() => {});
+          void sync();
+        }
+        return result.out;
       } catch (err) {
         return failure(err);
       }
@@ -287,25 +307,32 @@ export function useSavedMaps(user: User | null) {
     [track],
   );
 
-  /** Stop a running download (closing the panel or viewer). */
+  /**
+   * Stop a running download (closing the panel or viewer). The download is shared, so this
+   * also stops a save of the same map; the save then reports "aborted" and keeps nothing.
+   */
   const cancelDownload = useCallback((map: MapRef) => {
     cancelMapDownload(proxyOf(map));
   }, []);
 
-  /** Remove the saved map and its cached image (unless another saved item uses it). */
+  /**
+   * Remove the saved map and its cached image (unless another saved item uses it). Resolves
+   * once the image is gone; a re-save started earlier still waits for that delete.
+   */
   const removeMap = useCallback(
-    (item: SavedMap) => {
+    async (item: SavedMap) => {
+      let before: SavedMap[];
+      let next: SavedMap[];
       try {
-        const before = load();
-        const next = removeSavedMap(before, item.id) as SavedMap[];
+        before = load();
+        next = removeSavedMap(before, item.id) as SavedMap[];
         writeStore(next);
-        cancelMapDownload(proxyOf(item));
-        dropOrphanedImages(before, next);
-        void sync();
-        return true;
       } catch {
         return false;
       }
+      await dropOrphanedImages(before, next);
+      void sync();
+      return true;
     },
     [sync],
   );
