@@ -7,6 +7,7 @@ import {
   MAP_TOO_LARGE_STATUS,
   MAP_UNLISTED_STATUS,
   MapFetchError,
+  cacheMapBlob,
   cancelMapDownload,
   downloadMapOnce,
   fetchMapBlob,
@@ -24,6 +25,7 @@ import {
   loadSavedMaps,
   mapsForGame,
   removeSavedMap,
+  restoreSavedMap,
   syncSavedMaps,
   updateMapViewportState,
   visibleMaps,
@@ -374,6 +376,27 @@ export function useSavedMaps(user: User | null) {
     [sync],
   );
 
+  /**
+   * Undo a remove: re-store the metadata and (when provided) the previously cached image
+   * blob so Undo stays instant and works even offline.
+   */
+  const restoreMap = useCallback(
+    async (item: SavedMap, cachedBlob?: Blob | null) => {
+      if ((item.owner ?? null) !== ownerRef.current) return false;
+      try {
+        writeStore(restoreSavedMap(load(), item) as SavedMap[]);
+      } catch {
+        return false;
+      }
+      if (cachedBlob) {
+        await cacheMapBlob(proxyOf(item), cachedBlob).catch(() => false);
+      }
+      void sync();
+      return true;
+    },
+    [sync],
+  );
+
   /** Remember the viewer position now; the server copy follows 600ms after the last change. */
   const saveViewport = useCallback(
     (id: string, state: MapViewport) => {
@@ -419,6 +442,7 @@ export function useSavedMaps(user: User | null) {
     openMap,
     cancelDownload,
     removeMap,
+    restoreMap,
     saveViewport,
   };
 }

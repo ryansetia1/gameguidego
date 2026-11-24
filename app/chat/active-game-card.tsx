@@ -7,6 +7,7 @@ import {
   IconChevronDown,
   IconDotsVertical,
   IconIncognito,
+  IconMap,
   IconPlus,
   IconRefresh,
 } from "../icons";
@@ -80,6 +81,9 @@ export type ActiveGameCardProps = {
   /** Saved answers for this game; the menu item opens the saved drawer. */
   savedCount?: number;
   onOpenSaved?: () => void;
+  /** Saved VGMaps maps for this game; button + menu item open the Maps panel. */
+  savedMapsCount?: number;
+  onOpenMaps?: () => void;
   className?: string;
 };
 
@@ -134,6 +138,8 @@ export function ActiveGameCard({
   onJourneyToast,
   savedCount = 0,
   onOpenSaved,
+  savedMapsCount = 0,
+  onOpenMaps,
   className,
 }: ActiveGameCardProps) {
   const hasBlocked = preferredUrls.some(
@@ -354,9 +360,25 @@ export function ActiveGameCard({
 
   const gameCardClass = className ? `game-card ${className}` : "game-card";
   const showIncognito = !temporary && (Boolean(activeChatId) || menuVariant === "topics");
+  const showMaps = Boolean(onOpenMaps);
+  const mapsLabel = savedMapsCount > 0 ? `Maps (${savedMapsCount} saved)` : "Maps";
+  const quickCount = (showIncognito ? 1 : 0) + (showMaps ? 1 : 0);
+  const metaQuickClass =
+    quickCount === 2 ? " has-quick-2" : quickCount === 1 ? " has-quick" : "";
 
   return (
     <section className={gameCardClass} aria-label="Game" ref={topRef}>
+      {showMaps && (
+        <button
+          type="button"
+          className={`game-card-maps${showIncognito ? " beside-incognito" : ""}`}
+          title={mapsLabel}
+          aria-label={mapsLabel}
+          onClick={onOpenMaps}
+        >
+          <IconMap size={18} />
+        </button>
+      )}
       {showIncognito && (
         <button
           type="button"
@@ -385,6 +407,11 @@ export function ActiveGameCard({
             {onOpenSaved && (
               <button type="button" className="row-menu-item" onClick={onOpenSaved}>
                 Saved answers{savedCount > 0 ? ` (${savedCount})` : ""}
+              </button>
+            )}
+            {onOpenMaps && (
+              <button type="button" className="row-menu-item" onClick={onOpenMaps}>
+                Maps{savedMapsCount > 0 ? ` (${savedMapsCount})` : ""}
               </button>
             )}
             <button type="button" className="row-menu-item" onClick={onEditGame}>
@@ -440,7 +467,7 @@ export function ActiveGameCard({
         {coverEnabled && (
           <CoverThumb cover={cover} name={game} className="cover-lg game-card-cover" />
         )}
-        <div className={`game-card-meta${showIncognito ? " has-quick" : ""}`}>
+        <div className={`game-card-meta${metaQuickClass}`}>
           <h2>{game || "Untitled game"}</h2>
           {(platform || releaseYear || game) && (
             <p className="meta-subline game-card-meta-line">
