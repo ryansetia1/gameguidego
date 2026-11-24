@@ -4362,6 +4362,21 @@ if (!canRunTsChecks) {
   assert.equal(vg.extractVGMapsLinks(page, "https://www.vgmaps.com/Atlas/NES/index.htm#Nope")[0].guideTitle, "");
   assert.equal(vg.selectRowsForPage(page, ffUrl).length, 6, "anchor row + its rows (nested table rows split out)");
   assert.deepEqual(vg.extractVGMapsLinks("", ffUrl), []);
+  // Ids on cells/images are not game anchors; image URLs drop their #fragment.
+  const idPage = `<table><tr><td><a name="G"></a>G</td></tr>
+    <tr><td id="cell1"><img id="thumb" src="t.gif"><a href="g1.png#zoom">One</a></td></tr>
+    <tr><td><a name="H"></a>H</td></tr><tr><td><a href="h1.png">H1</a></td></tr></table>`;
+  const gMaps = vg.extractVGMapsLinks(idPage, "https://www.vgmaps.com/Atlas/NES/index.htm#G");
+  assert.deepEqual(gMaps.map((m) => m.imageUrl), ["https://www.vgmaps.com/Atlas/NES/g1.png"]);
+  // Anchor outside any <tr> (just before the game's table): that table only, not the previous game's.
+  const outside = `<table><tr><td><a href="prev.png">Prev</a></td></tr></table>
+    <a name="Solo"></a><h3>Solo</h3><table><tr><td><a href="solo1.png">S1</a></td></tr>
+    <tr><td><a href="solo2.png">S2</a></td></tr></table>
+    <table><tr><td><a href="after.png">After</a></td></tr></table>`;
+  assert.deepEqual(vg.extractVGMapsLinks(outside, "https://www.vgmaps.com/Atlas/NES/index.htm#Solo").map((m) => m.mapName), ["S1", "S2"]);
+  // Anchor before the first <tr> on the page.
+  const lead = `<a name="Lead"></a><table><tr><td><a href="l1.png">L1</a></td></tr></table><table><tr><td><a href="x.png">X</a></td></tr></table>`;
+  assert.deepEqual(vg.extractVGMapsLinks(lead, "https://www.vgmaps.com/Atlas/NES/index.htm#Lead").map((m) => m.mapName), ["L1"]);
 }
 
 {
@@ -4392,6 +4407,11 @@ if (!canRunTsChecks) {
   assert.deepEqual(mv.computeFocalZoomTransform({ ...base, ...before, zoomFactor: 0.01, centroid }), { scale: 1, offset: { x: 0, y: 0 } }, "zoom out to fit recentres");
   assert.deepEqual(mv.computeOverviewDimensions(8192, 4096), { width: 2048, height: 1024, overviewScale: 0.25 });
   assert.deepEqual(mv.computeOverviewDimensions(300, 200), { width: 300, height: 200, overviewScale: 1 });
+  // Bad input never yields NaN.
+  assert.deepEqual(mv.computeFocalZoomTransform({ ...base, ...before, zoomFactor: Number.NaN, centroid }), before, "NaN zoom is no zoom");
+  assert.equal(mv.computeFocalZoomTransform({ ...base, ...before, zoomFactor: 2, centroid, maxZoom: 0.5 }).scale, 1, "maxZoom floors at 1");
+  assert.deepEqual(mv.calculateMapPanBounds(Number.NaN, 100, 400, 400, 2), { maxPanX: 0, maxPanY: 0 });
+  assert.deepEqual(mv.computeOverviewDimensions(Number.NaN, 0), { width: 1, height: 1, overviewScale: 1 });
   assert.ok(!mv.shouldRenderHdOverlay(0.25, 0.25));
   assert.ok(!mv.shouldRenderHdOverlay(0.26, 0.25), "within 5%");
   assert.ok(mv.shouldRenderHdOverlay(0.27, 0.25));
@@ -4443,7 +4463,7 @@ if (!canRunTsChecks) {
   const remoteViewport = { ...sm.toSavedMapRow(synced), last_zoom: 6 };
   const gone = { ...mk("u1", "Other", 8, 4000), synced: true };
   const tomb = { ...mk("u1", "Other", 9, 3000), synced: true, deleted: true };
-  const merged = sm.mergeRemoteMaps([...claimed, gone, tomb], [remoteNew, remoteViewport, sm.toSavedMapRow(tomb)], "u1", [anonNew.id]);
+  const merged = sm.mergeRemoteMaps([...claimed, gone, tomb], [remoteNew, remoteViewport, sm.toSavedMapRow(tomb)], "u1", [claimed.find((r) => r.id === anonNew.id)]);
   assert.ok(merged.find((r) => r.id === remoteNew.id && r.synced), "remote row added");
   assert.equal(merged.find((r) => r.id === synced.id).lastZoom, 6, "synced item takes the server viewport");
   assert.ok(merged.find((r) => r.id === anonNew.id && r.synced), "pushed row marked synced");
@@ -4452,6 +4472,33 @@ if (!canRunTsChecks) {
   assert.equal(sm.mergeRemoteMaps([tomb], [], "u1", [], [tomb.id]).length, 0, "confirmed delete drops tombstone");
   const editedMidSync = { ...synced, lastZoom: 9, synced: false };
   assert.equal(sm.mergeRemoteMaps([editedMidSync], [remoteViewport], "u1")[0].lastZoom, 9, "unpushed local edit stays queued");
+  // Review fix 1: same map saved on two devices (different ids) collapses under the server id.
+  const twinLocal = { ...mk("u1", "Twin", 1, 100), lastZoom: 4 };
+  const twinRow = sm.toSavedMapRow({ ...mk("u1", "Twin", 1, 50), lastZoom: 2 });
+  const collapsed = sm.mergeRemoteMaps([twinLocal], [twinRow], "u1");
+  assert.equal(collapsed.length, 1, "one row per owner+game+image");
+  assert.deepEqual([collapsed[0].id, collapsed[0].lastZoom, collapsed[0].synced], [twinRow.id, 4, false], "server id, unpushed local viewport kept and queued");
+  const sameView = sm.mergeRemoteMaps([{ ...twinLocal, lastZoom: 2 }], [twinRow], "u1");
+  assert.deepEqual([sameView[0].id, sameView[0].synced], [twinRow.id, true], "identical viewport collapses as synced");
+  const syncedTwin = sm.mergeRemoteMaps([{ ...twinLocal, synced: true }], [twinRow], "u1");
+  assert.deepEqual([syncedTwin.length, syncedTwin[0].lastZoom], [1, 2], "synced local copy takes the server row");
+  assert.equal(sm.mergeRemoteMaps([twinLocal, { ...twinLocal, id: "dup-2" }], [twinRow], "u1").length, 1, "second local copy dropped too");
+  // Review fix 2: viewport edited while its push was in flight stays unsynced.
+  const pushedSnap = { ...twinLocal, synced: false };
+  const editedAfterPush = { ...twinLocal, lastZoom: 7 };
+  const inFlight = sm.mergeRemoteMaps([editedAfterPush], [sm.toSavedMapRow(pushedSnap)], "u1", [pushedSnap]);
+  assert.deepEqual([inFlight.length, inFlight[0].lastZoom, inFlight[0].synced], [1, 7, false], "newer viewport re-sent next sync");
+  assert.equal(sm.mergeRemoteMaps([pushedSnap], [sm.toSavedMapRow(pushedSnap)], "u1", [pushedSnap])[0].synced, true, "unchanged push marked synced");
+  // Review fix 3: an anon save of a map the account tombstoned revives the tombstone id.
+  const tombOwned = { ...mk("u1", "Revive", 1, 10), synced: true, deleted: true };
+  const anonSame = mk(null, "Revive", 1, 20);
+  const revivedClaim = sm.claimAnonMaps([tombOwned, anonSame], "u1");
+  assert.equal(revivedClaim.length, 1, "no second row for the same map");
+  assert.deepEqual([revivedClaim[0].id, revivedClaim[0].owner, revivedClaim[0].deleted, revivedClaim[0].synced], [tombOwned.id, "u1", false, false]);
+  // Untrusted rows and inputs.
+  assert.equal(sm.addSavedMap([], mk(null, "X", 1, 1, { imageUrl: "https://evil.com/x.png" })).error, "invalid");
+  assert.equal(sm.mergeRemoteMaps([], [{ ...twinRow, image_url: "https://evil.com/x.png" }, { ...twinRow, id: 5 }], "u1").length, 0, "bad server rows ignored");
+  assert.equal(sm.fromSavedMapRow({ ...twinRow, created_at: null }, "u1").createdAt, new Date(0).toISOString(), "missing createdAt defaulted");
   const roundTrip = sm.fromSavedMapRow(sm.toSavedMapRow(a), "u1");
   assert.deepEqual({ ...roundTrip, owner: null, synced: false }, a, "row round-trip");
   assert.ok(sm.isMissingTableError({ code: "PGRST205" }));
