@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -334,9 +335,10 @@ class FindGuideActivity : AppCompatActivity() {
                     binding.txtProgressMessage.text = "Downloading page $done of $total…"
                 }
 
+                val sourceSlug = resolveSourceSlug(provider, detection.url)
                 val safeName = GuideExtractor.buildSafeUploadFilename(
                     gameName = gameName,
-                    providerId = provider.id,
+                    providerId = sourceSlug,
                     guideTitle = extracted.title,
                     extension = extracted.extension
                 )
@@ -391,6 +393,24 @@ class FindGuideActivity : AppCompatActivity() {
                     window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 }
             }
+        }
+    }
+
+    private fun resolveSourceSlug(provider: GuideProvider, pageUrl: String): String {
+        if (provider != GuideProvider.WEB) return provider.id
+        val host = runCatching { Uri.parse(pageUrl).host?.lowercase() }.getOrNull().orEmpty()
+        return when {
+            host == "ign.com" || host.endsWith(".ign.com") -> "ign"
+            host.endsWith("fandom.com") -> "fandom"
+            host.endsWith("fextralife.com") -> "fextralife"
+            host.endsWith("powerpyx.com") -> "powerpyx"
+            host.endsWith("psnprofiles.com") -> "psnprofiles"
+            host.endsWith("eurogamer.net") -> "eurogamer"
+            host.endsWith("polygon.com") -> "polygon"
+            host.endsWith("pcgamer.com") -> "pcgamer"
+            host.endsWith("wiki.gg") -> "wikigg"
+            host.endsWith("reddit.com") -> "reddit"
+            else -> "web"
         }
     }
 

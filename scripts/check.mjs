@@ -169,6 +169,8 @@ import {
   mergeRoomPreferredUrls,
   normalizeGuideUrlList,
   normalizePreferredGuideUrl,
+  uploadedGuideDisplayType,
+  uploadedGuideSourceLabel,
 } from "../lib/guide-urls.js";
 import {
   coerceRagGuideUrls,
@@ -2474,6 +2476,30 @@ assert.equal(
 assert.equal(
   pipelineSourceLabel("fallback_web", [{ title: "Risk of Rain wiki", url: "https://wiki.gg/risk-of-rain" }]),
   "Web",
+);
+assert.equal(
+  uploadedGuideDisplayType("upload://u/doom_gamefaqs_walkthrough.txt"),
+  "TXT - GameFAQs",
+);
+assert.equal(
+  uploadedGuideDisplayType("upload://u/doom_ign_guide.md"),
+  "MD - IGN",
+);
+assert.equal(
+  uploadedGuideDisplayType("upload://u/zelda_zelda_dungeon_walkthrough.md"),
+  "MD - Zelda Dungeon",
+);
+assert.equal(
+  uploadedGuideSourceLabel("upload://u/campaign_design_notes.txt"),
+  "",
+);
+assert.equal(
+  uploadedGuideDisplayType("upload://u/campaign_design_notes.txt"),
+  "TXT",
+);
+assert.equal(
+  pipelineSourceLabel("rag", [{ title: "doom_gamefaqs_walkthrough.txt", url: "upload://u/doom_gamefaqs_walkthrough.txt" }]),
+  "TXT - GameFAQs",
 );
 
 // answerModeInfo: the answer-card mode chip / inline upsell gate.

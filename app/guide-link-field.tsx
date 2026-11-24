@@ -12,8 +12,10 @@ import {
   isSamePreferredGuide,
   normalizeGuideUrlList,
   normalizePreferredGuideUrl,
+  uploadedGuideDisplayType,
   uploadedGuideFilename,
   uploadedGuideFileTypeLabel,
+  uploadedGuideSourceLabel,
 } from "@/lib/guide-urls.js";
 import { parseGamefaqsFaqUrl } from "@/lib/gamefaqs-bundle.js";
 import type { GuideIndexState } from "@/lib/guide-index-state";
@@ -624,7 +626,7 @@ export function GuideLinkField({
                   <div className="guide-url-row-header" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "nowrap", overflow: "hidden" }}>
                     {uploaded ? (
                       <span className="guide-url-host" style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {uploadedGuideFileTypeLabel(url)} file
+                        {uploadedGuideSourceLabel(url) ? uploadedGuideDisplayType(url) : `${uploadedGuideFileTypeLabel(url)} file`}
                       </span>
                     ) : (
                       <a href={url} target="_blank" rel="noreferrer" className="guide-url-host" style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
