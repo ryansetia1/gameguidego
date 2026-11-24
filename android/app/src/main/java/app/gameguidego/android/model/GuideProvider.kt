@@ -9,6 +9,7 @@ enum class GuideProvider(
 ) {
     GAMEFAQS("gamefaqs", "GameFAQs"),
     NEOSEEKER("neoseeker", "Neoseeker"),
+    IGN("ign", "IGN Wikis"),
     ZELDA_DUNGEON("zelda_dungeon", "Zelda Dungeon"),
     WEB("web", "Browse Web");
 
@@ -29,6 +30,10 @@ enum class GuideProvider(
                     .trim()
                 if (cleaned.isEmpty()) "https://www.neoseeker.com"
                 else "https://www.neoseeker.com/seeker.php?q=${Uri.encode(cleaned)}"
+            }
+            IGN -> {
+                if (trimmed.isEmpty()) "https://www.ign.com/wikis"
+                else "https://www.ign.com/search?q=${Uri.encode(trimmed)}&filter=wikis"
             }
             ZELDA_DUNGEON -> {
                 if (trimmed.isEmpty()) "https://www.zeldadungeon.net"

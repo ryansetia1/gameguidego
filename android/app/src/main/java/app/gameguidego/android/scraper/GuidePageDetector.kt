@@ -12,6 +12,7 @@ enum class DetectedGuideKind(val label: String) {
     GAMEFAQS_HTML("GameFAQs HTML"),
     NEOSEEKER_TXT("Neoseeker TXT"),
     NEOSEEKER_HTML("Neoseeker HTML"),
+    IGN_WIKI_HTML("IGN Wiki"),
     ZELDA_DUNGEON_HTML("Zelda Dungeon"),
     PDF_DOCUMENT("PDF Document"),
     WEB_ARTICLE("Web Guide")
@@ -27,16 +28,51 @@ data class PageDetectionResult(
 )
 
 object GuidePageDetector {
+    const val IGN_COLLECT_LINKS_FN = """
+        function collectIgnWikiLinks(slug) {
+            if (!slug) return [];
+            var prefix = '/wikis/' + slug + '/';
+            var excluded = ['/checklists', '/map', '/interactive-map', '/how-to-wiki', 'special:', 'file:', 'category:', 'user:', '/edit', '/history', '/talk'];
+            var seen = new Set();
+            var out = [];
+            var selectors = ['.wiki-html a[href]', '.wiki-toc a[href]'];
+            for (var s = 0; s < selectors.length; s++) {
+                var links = Array.from(document.querySelectorAll(selectors[s]));
+                for (var i = 0; i < links.length; i++) {
+                    var a = links[i];
+                    var href = a.href || '';
+                    if (!href || href.indexOf('?') !== -1) continue;
+                    var parsed;
+                    try { parsed = new URL(href); } catch (e) { continue; }
+                    var h = parsed.hostname.toLowerCase();
+                    if (h !== 'ign.com' && !h.endsWith('.ign.com')) continue;
+                    var cleanPath = parsed.pathname.replace(/\/+$/, '');
+                    var lowerPath = cleanPath.toLowerCase();
+                    if (!lowerPath.startsWith(prefix) || lowerPath.length <= prefix.length) continue;
+                    var isExcluded = excluded.some(function(ex) { return lowerPath.indexOf(ex) !== -1; });
+                    if (isExcluded) continue;
+                    var canonical = parsed.origin + cleanPath;
+                    if (!seen.has(canonical)) {
+                        seen.add(canonical);
+                        out.push({ title: (a.innerText || a.getAttribute('title') || '').trim(), href: canonical });
+                    }
+                }
+            }
+            return out;
+        }
+    """
+
     private fun buildDetectScript(providerId: String): String = """
         (function() {
+            $IGN_COLLECT_LINKS_FN
             var providerId = ${JSONObject.quote(providerId)};
             var url = window.location.href || '';
             var pathname = window.location.pathname || '';
             var search = window.location.search || '';
             var host = (window.location.hostname || '').toLowerCase();
-            var titleEl = document.querySelector('h1.page-title, h1, h2.title, .page-title');
+            var titleEl = document.querySelector('h1.wiki-page-heading, h1.page-title, h1, h2.title, .page-title');
             var title = ((titleEl && titleEl.innerText) ? titleEl.innerText : (document.title || '')).trim();
-            title = title.replace(/\s*-\s*(GameFAQs|Neoseeker|Zelda Dungeon).*$/i, '').trim();
+            title = title.replace(/\s*-\s*(GameFAQs|Neoseeker|Zelda Dungeon|IGN).*$/i, '').trim();
 
             function countUniqueLinks(selector) {
                 var links = Array.from(document.querySelectorAll(selector));
@@ -67,6 +103,13 @@ object GuidePageDetector {
             var hasNeoHtml = hasNeoWikiContent && (hasNeoWikiToc || isNeoFaqSubpage);
             var neoTocCount = hasNeoWikiToc ? countUniqueLinks('div.wiki-toc a[href]') : 0;
 
+            var isIgnHost = host === 'ign.com' || host.endsWith('.ign.com');
+            var ignSlugMatch = pathname.match(/^\/wikis\/([^\/]+)/i);
+            var ignSlug = ignSlugMatch ? ignSlugMatch[1].toLowerCase() : '';
+            var hasIgnWikiDom = document.querySelector('.wiki-html, .wiki-page, .wiki-guide-content') !== null;
+            var hasIgnWiki = isIgnHost && ignSlug.length > 0 && hasIgnWikiDom;
+            var ignTocCount = hasIgnWiki ? collectIgnWikiLinks(ignSlug).length : 0;
+
             var isZdHost = host === 'zeldadungeon.net' || host.endsWith('.zeldadungeon.net');
             var isZdSearchOrHome = pathname === '/' || search.indexOf('?s=') !== -1 || search.indexOf('&s=') !== -1;
             var isZdPath = pathname.toLowerCase().indexOf('walkthrough') !== -1 || pathname.toLowerCase().indexOf('/wiki/') !== -1;
@@ -95,6 +138,8 @@ object GuidePageDetector {
                 hasNeoTxt: hasNeoTxt,
                 hasNeoHtml: hasNeoHtml,
                 neoTocCount: neoTocCount,
+                hasIgnWiki: hasIgnWiki,
+                ignTocCount: ignTocCount,
                 hasZd: hasZd,
                 zdTocCount: zdTocCount,
                 isSearchEngine: isSearchEngine,
@@ -175,6 +220,12 @@ object GuidePageDetector {
                 else -> browsingResult(url, title)
             }
 
+            GuideProvider.IGN -> if (json.optBoolean("hasIgnWiki")) {
+                ignWikiResult(url, title, json)
+            } else {
+                browsingResult(url, title)
+            }
+
             GuideProvider.ZELDA_DUNGEON -> if (json.optBoolean("hasZd")) {
                 val count = json.optInt("zdTocCount", 1).coerceAtLeast(1)
                 val pagesLabel = if (count > 1) " · $count sections" else ""
@@ -191,6 +242,7 @@ object GuidePageDetector {
             }
 
             GuideProvider.WEB -> when {
+                json.optBoolean("hasIgnWiki") -> ignWikiResult(url, title, json)
                 isTxt -> PageDetectionResult(
                     url = url,
                     title = title,
@@ -210,6 +262,19 @@ object GuidePageDetector {
                 else -> browsingResult(url, title)
             }
         }
+    }
+
+    private fun ignWikiResult(url: String, title: String, json: JSONObject): PageDetectionResult {
+        val count = json.optInt("ignTocCount", 1).coerceAtLeast(1)
+        val pagesLabel = if (count > 1) " · $count pages" else ""
+        return PageDetectionResult(
+            url = url,
+            title = title,
+            kind = DetectedGuideKind.IGN_WIKI_HTML,
+            canDownload = true,
+            tocPageCount = count,
+            summaryLabel = "IGN Wiki$pagesLabel"
+        )
     }
 
     private fun browsingResult(url: String, title: String) = PageDetectionResult(

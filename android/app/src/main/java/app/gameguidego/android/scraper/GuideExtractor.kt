@@ -55,6 +55,13 @@ class GuideExtractor {
                 maxPages = maxPages,
                 onProgress = onProgress
             )
+            DetectedGuideKind.IGN_WIKI_HTML -> extractIgnWikiHtml(
+                webView = webView,
+                detection = detection,
+                userAgent = userAgent,
+                maxPages = maxPages,
+                onProgress = onProgress
+            )
             DetectedGuideKind.ZELDA_DUNGEON_HTML -> extractMultiPageHtml(
                 webView = webView,
                 detection = detection,
@@ -151,6 +158,64 @@ class GuideExtractor {
             JSONArray(GuidePageDetector.unquoteJsonString(tocJsonRaw))
         }.getOrElse { JSONArray() }
 
+        return fetchTocPagesToMarkdown(
+            webView = webView,
+            detection = detection,
+            tocArray = tocArray,
+            userAgent = userAgent,
+            maxPages = maxPages,
+            onProgress = onProgress
+        )
+    }
+
+    private suspend fun extractIgnWikiHtml(
+        webView: WebView,
+        detection: PageDetectionResult,
+        userAgent: String,
+        maxPages: Int,
+        onProgress: (done: Int, total: Int) -> Unit
+    ): ExtractedGuide {
+        if (maxPages <= 1) {
+            onProgress(1, 1)
+            return extractSingleHtmlAsMarkdown(webView, detection)
+        }
+
+        val tocJsonRaw = withContext(Dispatchers.Main) {
+            GuidePageDetector.evaluateJs(
+                webView,
+                """
+                (function() {
+                    ${GuidePageDetector.IGN_COLLECT_LINKS_FN}
+                    var match = (window.location.pathname || '').match(/^\/wikis\/([^\/]+)/i);
+                    var slug = match ? match[1].toLowerCase() : '';
+                    return JSON.stringify(collectIgnWikiLinks(slug));
+                })();
+                """.trimIndent()
+            )
+        } ?: "[]"
+
+        val tocArray = runCatching {
+            JSONArray(GuidePageDetector.unquoteJsonString(tocJsonRaw))
+        }.getOrElse { JSONArray() }
+
+        return fetchTocPagesToMarkdown(
+            webView = webView,
+            detection = detection,
+            tocArray = tocArray,
+            userAgent = userAgent,
+            maxPages = maxPages,
+            onProgress = onProgress
+        )
+    }
+
+    private suspend fun fetchTocPagesToMarkdown(
+        webView: WebView,
+        detection: PageDetectionResult,
+        tocArray: JSONArray,
+        userAgent: String,
+        maxPages: Int,
+        onProgress: (done: Int, total: Int) -> Unit
+    ): ExtractedGuide {
         if (tocArray.length() <= 1) {
             onProgress(1, 1)
             return extractSingleHtmlAsMarkdown(webView, detection)
@@ -265,16 +330,17 @@ class GuideExtractor {
     private fun htmlToCleanMarkdown(doc: Document): String {
         doc.select(
             "script, style, noscript, aside, nav, footer, header, iframe, form, " +
-                ".comments-area, #comments, .comment-respond, a[href*=/nplus/][href*=adblock], .ftoc"
+                ".comments-area, #comments, .comment-respond, a[href*=/nplus/][href*=adblock], .ftoc, " +
+                ".wiki-comments, .wiki-sidebar, .wiki-toc, .wiki-paging-buttons, .wiki-page-tabs-nav-mobile, .byline, [data-cy='site-breadcrumb']"
         ).remove()
 
         val root: Element = doc.selectFirst(
-            "#faqwrap, .ffaq, article#wiki-content, article .entry-content, #mw-content-text .mw-parser-output, " +
+            ".wiki-html, #faqwrap, .ffaq, article#wiki-content, article .entry-content, #mw-content-text .mw-parser-output, " +
                 ".entry-content, .post-content, .wiki-body, main article, article, main"
         ) ?: doc.body() ?: return ""
 
         val lines = mutableListOf<String>()
-        for (el in root.select("h1, h2, h3, h4, p, li, pre, tr")) {
+        for (el in root.select("h1, h2, h3, h4, p, div[data-paragraph]:not(:has(p)), li, pre, tr")) {
             val text = el.text().trim()
             if (text.isEmpty()) continue
             when (el.tagName().lowercase()) {

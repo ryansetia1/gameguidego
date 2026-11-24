@@ -59,6 +59,11 @@ const NATIVE_PROVIDERS = [
     desc: "TXT guides and HTML walkthroughs",
   },
   {
+    id: "ign",
+    name: "IGN Wikis",
+    desc: "Multi-page walkthroughs & guides from IGN",
+  },
+  {
     id: "zelda_dungeon",
     name: "Zelda Dungeon",
     desc: "HTML walkthroughs from Zelda Dungeon",
@@ -83,6 +88,13 @@ function renderProviderIcon(id: (typeof NATIVE_PROVIDERS)[number]["id"]) {
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
         <circle cx="12" cy="12" r="8" />
         <path d="M12 4a8 8 0 0 1 8 8" />
+      </svg>
+    );
+  }
+  if (id === "ign") {
+    return (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+        <path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4" />
       </svg>
     );
   }
