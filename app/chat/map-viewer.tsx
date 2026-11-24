@@ -209,17 +209,31 @@ async function decodeMapAsset(blob: Blob, objectUrl: string): Promise<DecodedAss
   const overview = document.createElement("canvas");
   overview.width = ov.width;
   overview.height = ov.height;
-  const ctx = overview.getContext("2d");
-  if (!ctx) {
-    if (isBitmap) (source as ImageBitmap).close();
+  const cleanupPartial = () => {
+    if (isBitmap) {
+      try {
+        (source as ImageBitmap).close();
+      } catch {
+        // Already closed.
+      }
+    }
     if (retainedUrl) URL.revokeObjectURL(retainedUrl);
     overview.width = 0;
     overview.height = 0;
+  };
+  const ctx = overview.getContext("2d");
+  if (!ctx) {
+    cleanupPartial();
     throw new RangeError("Canvas allocation failed.");
   }
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(source, 0, 0, ov.width, ov.height);
+  try {
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(source, 0, 0, ov.width, ov.height);
+  } catch (err) {
+    cleanupPartial();
+    throw err;
+  }
 
   return {
     source,
@@ -282,6 +296,8 @@ export function MapViewer({
   const interactingRef = useRef(false);
   const hdPendingRef = useRef(false);
   const pointersRef = useRef<Map<number, PointerRecord>>(new Map());
+  const rawDragOffsetRef = useRef<{ x: number; y: number } | null>(null);
+  const hadMultiTouchRef = useRef(false);
   const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
   const suppressDblClickUntilRef = useRef(0);
 
@@ -554,10 +570,11 @@ export function MapViewer({
     }
   }, [getVisibleBox, scheduleDraw, syncZoomUi]);
 
-  // Modal lifecycle + focus return to invoking element on close.
+  // Modal lifecycle + focus return to invoking element + GPU canvas release on close.
   const isOpen = map !== null;
   useEffect(() => {
     const dialog = dialogRef.current;
+    const canvas = canvasRef.current;
     if (!dialog) return;
     if (isOpen) {
       invokerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -570,6 +587,10 @@ export function MapViewer({
     return () => {
       if (!isOpen) return;
       if (dialog.open) dialog.close();
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
       const invoker = invokerRef.current;
       invokerRef.current = null;
       if (invoker && invoker.isConnected) {
@@ -601,9 +622,8 @@ export function MapViewer({
     if (assetRef.current) scheduleDraw(true);
   }, [pixelCrisp, scheduleDraw]);
 
-  // Clear timers/canvas/assets on unmount.
+  // Clear timers/assets on unmount (canvas backing store is released in the [isOpen] cleanup).
   useEffect(() => {
-    const canvas = canvasRef.current;
     return () => {
       cancelAnimation();
       if (rafRef.current !== null) window.cancelAnimationFrame(rafRef.current);
@@ -613,10 +633,6 @@ export function MapViewer({
       abortRef.current?.abort();
       disposeAsset(assetRef.current);
       assetRef.current = null;
-      if (canvas) {
-        canvas.width = 0;
-        canvas.height = 0;
-      }
     };
   }, [cancelAnimation]);
 
@@ -638,6 +654,8 @@ export function MapViewer({
       wheelTimerRef.current = null;
     }
     pointersRef.current.clear();
+    rawDragOffsetRef.current = null;
+    hadMultiTouchRef.current = false;
     interactingRef.current = false;
     setIsDragging(false);
     setSavingProgress(null);
@@ -661,15 +679,26 @@ export function MapViewer({
       return;
     }
 
+    // Clear previous map pixels immediately before showing the next map's loading/status overlay.
+    renderNow(false);
+
     const controller = new AbortController();
     abortRef.current = controller;
     let active = true;
     let openedUrl: string | null = null;
+    let isBig = false;
+    let latestProgress: MapDownloadProgress | null = null;
+    let lastEmitAt = 0;
+    let lastProgressKey = "";
 
     setViewerState({ kind: "loading", big: false, phase: "downloading", progress: null });
     const bigTimer = setTimeout(() => {
       if (!active || loadGenRef.current !== gen) return;
-      setViewerState((prev) => (prev.kind === "loading" ? { ...prev, big: true } : prev));
+      isBig = true;
+      lastEmitAt = performance.now();
+      setViewerState((prev) =>
+        prev.kind === "loading" ? { ...prev, big: true, progress: prev.phase === "downloading" ? latestProgress : null } : prev,
+      );
     }, BIG_LOAD_DELAY_MS);
 
     const run = async () => {
@@ -679,6 +708,16 @@ export function MapViewer({
           controller.signal,
           (progress) => {
             if (!active || loadGenRef.current !== gen) return;
+            latestProgress = progress;
+            if (!isBig) return;
+            const key = progress.total
+              ? `${formatMegabytes(progress.loaded)}/${formatMegabytes(progress.total)}`
+              : formatMegabytes(progress.loaded);
+            const now = performance.now();
+            const isComplete = progress.total !== null && progress.loaded >= progress.total;
+            if (!isComplete && (key === lastProgressKey || now - lastEmitAt < 120)) return;
+            lastEmitAt = now;
+            lastProgressKey = key;
             setViewerState((prev) =>
               prev.kind === "loading" && prev.phase === "downloading" ? { ...prev, progress } : prev,
             );
@@ -914,10 +953,25 @@ export function MapViewer({
 
   const handleSaveOffline = useCallback(async () => {
     if (!onSave || isSaving || isSavedRef.current) return;
+    const gen = loadGenRef.current;
+    let lastEmitAt = 0;
+    let lastPercent: number | null = null;
     setIsSaving(true);
     setSavingProgress({ loaded: 0, total: null });
     try {
-      const res = await onSave((progress) => setSavingProgress(progress));
+      const res = await onSave((progress) => {
+        if (loadGenRef.current !== gen) return;
+        const pct =
+          progress.total && progress.total > 0
+            ? Math.min(100, Math.round((progress.loaded / progress.total) * 100))
+            : null;
+        const now = performance.now();
+        if (pct !== 100 && (pct === lastPercent || now - lastEmitAt < 100)) return;
+        lastEmitAt = now;
+        lastPercent = pct;
+        setSavingProgress(progress);
+      });
+      if (loadGenRef.current !== gen) return;
       if (res.status === "saved") {
         // Persist current pan/zoom immediately onto the newly created saved record.
         if (assetRef.current && onViewportChangeRef.current) {
@@ -933,8 +987,10 @@ export function MapViewer({
         if (msg) showToast(msg);
       }
     } finally {
-      setIsSaving(false);
-      setSavingProgress(null);
+      if (loadGenRef.current === gen) {
+        setIsSaving(false);
+        setSavingProgress(null);
+      }
     }
   }, [isSaving, onSave, showToast]);
 
@@ -1068,11 +1124,21 @@ export function MapViewer({
       startY: e.clientY,
       pointerType: e.pointerType,
     });
+    if (pointers.size >= 2) {
+      hadMultiTouchRef.current = true;
+      rawDragOffsetRef.current = null;
+    } else {
+      rawDragOffsetRef.current = { ...transformRef.current.offset };
+    }
     interactingRef.current = true;
     setIsDragging(true);
     if (hdTimerRef.current) {
       clearTimeout(hdTimerRef.current);
       hdTimerRef.current = null;
+    }
+    if (wheelTimerRef.current) {
+      clearTimeout(wheelTimerRef.current);
+      wheelTimerRef.current = null;
     }
   };
 
@@ -1092,11 +1158,21 @@ export function MapViewer({
       prev.y = e.clientY;
       const bounds = calculateMapPanBounds(asset.naturalW, asset.naturalH, visibleW, visibleH, current.scale);
       const reduced = prefersReducedMotion();
+      const prevRaw = rawDragOffsetRef.current ?? current.offset;
+      const rawX = prevRaw.x + dx;
+      const rawY = prevRaw.y + dy;
+      const nextRaw = reduced
+        ? {
+            x: Math.min(bounds.maxPanX, Math.max(-bounds.maxPanX, rawX)),
+            y: Math.min(bounds.maxPanY, Math.max(-bounds.maxPanY, rawY)),
+          }
+        : { x: rawX, y: rawY };
+      rawDragOffsetRef.current = nextRaw;
       transformRef.current = {
         scale: current.scale,
         offset: {
-          x: applyOverscrollResistance(current.offset.x + dx, bounds.maxPanX, MAX_OVERSCROLL_PX, reduced),
-          y: applyOverscrollResistance(current.offset.y + dy, bounds.maxPanY, MAX_OVERSCROLL_PX, reduced),
+          x: applyOverscrollResistance(nextRaw.x, bounds.maxPanX, MAX_OVERSCROLL_PX, reduced),
+          y: applyOverscrollResistance(nextRaw.y, bounds.maxPanY, MAX_OVERSCROLL_PX, reduced),
         },
       };
       scheduleDraw(false);
@@ -1155,16 +1231,24 @@ export function MapViewer({
       }
     }
 
-    if (pointers.size > 0) return;
+    if (pointers.size > 0) {
+      if (pointers.size === 1) {
+        rawDragOffsetRef.current = { ...transformRef.current.offset };
+      }
+      return;
+    }
 
+    const wasMultiTouch = hadMultiTouchRef.current;
+    hadMultiTouchRef.current = false;
+    rawDragOffsetRef.current = null;
     interactingRef.current = false;
     setIsDragging(false);
 
     const asset = assetRef.current;
     if (!asset) return;
 
-    // Touch double-tap detection (mouse uses onDoubleClick).
-    if (!cancelled && ended.pointerType !== "mouse") {
+    // Touch double-tap detection (mouse uses onDoubleClick; skip after a 2-finger pinch).
+    if (!cancelled && !wasMultiTouch && ended.pointerType !== "mouse") {
       const moved = Math.hypot(e.clientX - ended.startX, e.clientY - ended.startY);
       if (moved <= TAP_MAX_DRAG) {
         const now = performance.now();
@@ -1183,6 +1267,8 @@ export function MapViewer({
       } else {
         lastTapRef.current = null;
       }
+    } else if (wasMultiTouch) {
+      lastTapRef.current = null;
     }
 
     // Ease back from any overscroll past pan bounds (instant under reduced motion).

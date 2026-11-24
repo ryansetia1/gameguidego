@@ -5027,10 +5027,13 @@ if (!canRunTsChecks) {
     "invalid size returns empty rect",
   );
 
-  // Overscroll resistance: <=24px elastic past bounds, hard-clamped under reduced motion.
+  // Overscroll resistance: <=24px elastic past bounds, monotonic on cumulative raw drag,
+  // and hard-clamped under reduced motion.
   assert.equal(mv.applyOverscrollResistance(50, 100, 24, false), 50, "within bounds untouched");
+  const overSmall = mv.applyOverscrollResistance(110, 100, 24, false);
+  const overMed = mv.applyOverscrollResistance(150, 100, 24, false);
   const over = mv.applyOverscrollResistance(1000, 100, 24, false);
-  assert.ok(over > 100 && over <= 124, `overscroll damped within 24px: ${over}`);
+  assert.ok(overSmall > 100 && overSmall < overMed && overMed < over && over <= 124, `monotonic damped overscroll: ${overSmall}, ${overMed}, ${over}`);
   const overNeg = mv.applyOverscrollResistance(-1000, 100, 24, false);
   assert.ok(overNeg < -100 && overNeg >= -124, `negative overscroll damped: ${overNeg}`);
   assert.equal(mv.applyOverscrollResistance(1000, 100, 24, true), 100, "reduced motion has no overscroll");
