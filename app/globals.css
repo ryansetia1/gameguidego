@@ -1155,7 +1155,7 @@ details[open] > summary .chevron-toggle .icon {
 .source-list small {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
 }
 
 /* The "?" affordance beside the answer + its on-demand accuracy popover. The
