@@ -20,7 +20,8 @@ export const MAX_PAGE_BYTES = 16 * 1024 * 1024;
 export const MAX_MAP_BYTES = 30 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 const PAGE_TIMEOUT_MS = 15_000;
-const IMAGE_TIMEOUT_MS = 25_000;
+// The timeout covers the body too: 2 min keeps a slow 30 MB map (~250 KB/s) from being cut.
+const IMAGE_TIMEOUT_MS = 120_000;
 const UA = "GameGuideGo/1.0 (+https://gameguidego.vercel.app)";
 /** Raster types only: an image/svg+xml body could run script on our origin. */
 const IMAGE_TYPES = new Set(["image/png", "image/gif", "image/jpeg", "image/webp", "image/bmp", "image/x-ms-bmp"]);
@@ -37,7 +38,6 @@ export class VGMapsError extends Error {
 /** url → its canonical https form, or null when the hop isn't allowed. */
 type HopGuard = (url: string) => string | null;
 
-const pageGuard: HopGuard = (url) => canonicalVGMapsUrl(url);
 const imageGuard: HopGuard = (url) => (isAllowedVGMapsImageUrl(url) ? canonicalVGMapsUrl(url) : null);
 
 /**
@@ -62,7 +62,12 @@ export async function fetchVGMaps(
     if (res.status < 300 || res.status > 399) return res;
     await res.body?.cancel();
     const location: string | null = res.headers.get("location");
-    const next: string | null = location && hop < MAX_REDIRECTS ? guard(new URL(location, url).href) : null;
+    let next: string | null = null;
+    try {
+      if (location && hop < MAX_REDIRECTS) next = guard(new URL(location, url).href);
+    } catch {
+      // Malformed Location: refused below like any other bad hop.
+    }
     if (!next) throw new VGMapsError("VGMaps redirected somewhere we don't follow.", 502);
     url = next;
   }
@@ -129,7 +134,7 @@ function decode(bytes: Uint8Array, contentType: string) {
 
 /** One VGMaps html page as text, capped at MAX_PAGE_BYTES (413) before anything parses it. */
 export async function fetchVGMapsText(url: string): Promise<string> {
-  const res = await fetchVGMaps(url, { guard: pageGuard, accept: "text/html", timeoutMs: PAGE_TIMEOUT_MS });
+  const res = await fetchVGMaps(url, { guard: canonicalVGMapsUrl, accept: "text/html", timeoutMs: PAGE_TIMEOUT_MS });
   if (!res.ok) {
     await res.body?.cancel();
     throw new VGMapsError(`VGMaps returned ${res.status}.`, 502);
@@ -164,7 +169,8 @@ export async function fetchVGMapsImage(imageUrl: string, referer: string) {
   return {
     body: capStream(res.body, MAX_MAP_BYTES),
     contentType,
-    contentLength: res.headers.get("content-length"),
+    // fetch decodes gzip/deflate, so an encoded body's length isn't what we send on.
+    contentLength: res.headers.get("content-encoding") ? null : res.headers.get("content-length"),
   };
 }
 
@@ -256,6 +262,8 @@ export async function getCachedVGMapsDirectory(): Promise<VGMapsGameEntry[]> {
 
 // Raw platform pages run up to ~6 MB, too big for a cache row, so html stays in memory
 // (a few pages per instance) and only each game's parsed map list is stored.
+// ponytail: no single-flight, so concurrent misses on one page fetch it twice, and up to
+// 6 pages (~6 MB of html each) sit in memory per instance. Add a shared promise if it shows.
 const PAGE_MEMORY_LIMIT = 6;
 const pages = new Map<string, Cached<string>>();
 
@@ -282,7 +290,12 @@ export async function getCachedVGMapsMaps(gameUrl: string): Promise<VGMapsMapLin
   const { origin, pathname } = new URL(canonical);
   const maps = await readThrough(
     `maps:${canonical}`,
-    async () => extractVGMapsLinks(await pageHtml(origin + pathname), canonical),
+    async () => {
+      const links = extractVGMapsLinks(await pageHtml(origin + pathname), canonical);
+      // Same as the index: an empty parse likely means changed markup, don't keep it a week.
+      if (!links.length) throw new VGMapsError("No maps found on VGMaps.", 502);
+      return links;
+    },
     isMapList,
   );
   return maps.filter((map) => isAllowedVGMapsImageUrl(map.imageUrl));

@@ -4599,6 +4599,10 @@ if (!canRunTsChecks) {
     assert.equal(await status(vc.fetchVGMapsImage(img, "https://www.vgmaps.com/")), 502, "redirect loop stops");
     assert.equal(calls.length, 4, "at most 3 redirects");
     assert.equal(await status(vc.fetchVGMapsImage("https://evil.example/m.png", "")), 400, "bad start URL is 400");
+    stub(() => new Response(null, { status: 302, headers: { location: "http://[bad" } }));
+    assert.equal(await status(vc.fetchVGMapsImage(img, "")), 502, "malformed Location refused");
+    stub(() => png("x", { "content-length": "1", "content-encoding": "gzip" }));
+    assert.equal((await vc.fetchVGMapsImage(img, "")).contentLength, null, "encoded length not forwarded");
 
     // Image type + size.
     stub(() => png("<svg/>", { "content-type": "image/svg+xml" }));
@@ -4638,6 +4642,9 @@ if (!canRunTsChecks) {
       assert.deepEqual([ff.map((m) => m.imageUrl), zz.map((m) => m.mapName)], [["https://www.vgmaps.com/Atlas/NES/ff1.png"], ["Overworld"]]);
       assert.deepEqual(calls.map((c) => c.url), ["https://www.vgmaps.com/Atlas/NES/index.htm"], "one page fetch shared by both anchors");
       assert.equal(await status(vc.getCachedVGMapsMaps("https://evil.example/Atlas/NES/index.htm#FF")), 400);
+      const noMaps = '<table><tr><td><a name="EE">Empty</a></td></tr></table>';
+      stub(() => new Response(noMaps, { headers: { "content-type": "text/html" } }));
+      assert.equal(await status(vc.getCachedVGMapsMaps("https://www.vgmaps.com/Atlas/GB/index.htm#EE")), 502, "empty map list not cached");
     }
   } finally {
     globalThis.fetch = realFetch;
