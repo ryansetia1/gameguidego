@@ -113,10 +113,10 @@ flowchart LR
    - Uses browser Cache API (`const CACHE_NAME = "gg-maps-v1"`).
    - Functions:
      - `mapProxyUrl(imageUrl, sourceUrl)` → `` `/api/maps/image?${new URLSearchParams({ url: imageUrl, game: sourceUrl })}` `` (as built #36: exactly these two params in this order and encoding, `sourceUrl` = the Atlas game URL with `#fragment`; anything else is 400)
-     - `fetchAndCacheMapBlob(proxyUrl, { signal } = {})` → fetches same-origin proxy response (`res.ok` check), clones into `cache.put(proxyUrl, res.clone())` if `'caches' in window`, returns `{ blob, objectUrl, fromCache }`.
-     - `loadMapObjectUrl(proxyUrl, { signal } = {})` → checks `caches.match(proxyUrl)` first (instant offline hit!), falls back to `fetchAndCacheMapBlob`.
+     - `fetchAndCacheMapBlob(proxyUrl, { signal } = {})` → fetches same-origin proxy response (`res.ok` + `image/*` check, else `MapFetchError` with `status`; 400 = `MAP_UNLISTED_STATUS`), `cache.put(proxyUrl, res.clone())` when the Cache API exists, returns `{ blob, cached }`.
      - `hasCachedMap(proxyUrl)` → boolean.
      - `deleteCachedMap(proxyUrl)` → removes entry from `gg-maps-v1`.
+   - **As built (#37):** `fetchMapBlob(proxyUrl)` fetches without storing (viewing a map that isn't saved never fills the device), `readCachedMapBlob(proxyUrl)` is the offline hit, and `downloadMapOnce(proxyUrl)` / `cancelMapDownload(proxyUrl?)` / `isMapDownloading` give one shared download per proxy URL (rapid taps share it, cancel aborts it for every waiter). `loadMapObjectUrl` was dropped: the viewer uses the hook's `openMap`, which returns `{ status: "ok", blob, objectUrl, fromCache } | { status: "unlisted" | "aborted" | "error" }` (caller revokes `objectUrl`). `unlisted` = not cached and the game page no longer lists it (proxy 400); `isMapListed(item, maps)` in `lib/saved-maps.js` flags a saved map missing from the current `/api/maps/list` result so phase 5 can show "no longer listed".
 
 5. **`lib/vgmaps-cache.ts`** *(new server helper mirroring `lib/hltb-cache.js`)*
    - Read-through cache backed by `public.vgmaps_cache` (7-day TTL) + process-local in-memory `Map` fallback when Supabase env vars are unset.
@@ -223,6 +223,7 @@ flowchart LR
      - `removeMap(item)` → tombstones local metadata, deletes `gg-maps-v1` Cache API entry, syncs delete if signed in.
      - `saveViewport(id, { lastZoom, lastOffsetX, lastOffsetY })` → updates local storage immediately and debounces (600ms) Supabase row update if signed in.
    - Claims anon maps & merges with `public.saved_maps` on sign-in / `online`.
+   - **As built (#37):** the sync pass is `syncSavedMaps(client, owner, store)` in `lib/saved-maps.js` (claim anon → delete tombstones → select → `mergeRemoteMaps` BEFORE push → upsert unsynced snapshots with `onConflict: "user_id,game_key,image_url"` → merge again with the pushed snapshots). `saveMap` downloads into the cache first and saves no metadata if the image couldn't be stored (then calls `navigator.storage.persist()` best-effort). Cached images no live item references are deleted after remove and after each sync (a map removed on another device). Also returns `openMap`, `cancelDownload`, `isDownloading`, `byId`, `syncFailed`, `syncAvailable`.
 
 2. **`app/chat/maps-panel.tsx`** *(new component, mirrors `app/chat/saved-answers-panel.tsx`)*
    - Uses `SPLIT_QUERY` for responsive layout (side column beside chat on wide/Steam Deck screens, drawer on mobile; backdrop + focus trap + `Esc` handling).
@@ -239,7 +240,7 @@ flowchart LR
 3. **`app/chat/map-viewer.tsx`** *(new full-screen `<dialog>` high-res interactive viewer)*
    - Modal `<dialog>` using `showModal()` (similar to `app/lightbox.tsx`) with `onClose`, keyboard shortcuts (`Esc`, `+`/`=`, `-`, `0` reset, Arrow keys pan).
    - **Dual-Layer Canvas Rendering Engine (PixelGuide-inspired):**
-     - Loads image via `loadMapObjectUrl(mapProxyUrl(...))` + `createImageBitmap(blob)` (fallback `HTMLImageElement` if needed).
+     - Loads image via the hook's `openMap(map)` (as built #37) + `createImageBitmap(blob)` (fallback `HTMLImageElement` if needed).
      - Builds an offscreen overview `<canvas>` sized via `computeOverviewDimensions(naturalW, naturalH, 2048)` once after decode.
      - Display `<canvas>` matches CSS viewport × `min(window.devicePixelRatio, 2)` (never allocates a full-resolution DOM canvas!).
      - Render pass on `requestAnimationFrame`:
