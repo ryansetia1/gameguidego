@@ -1,11 +1,11 @@
 "use client";
 
 import type { User } from "@supabase/supabase-js";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { SPOILER_TOGGLE_LABEL } from "@/lib/spoiler-prefs.js";
 import { VOICE_LANGUAGES } from "@/lib/voice.js";
-import { IconArrowLeft, IconPlus, IconStop } from "./icons";
+import { IconArrowLeft, IconCheck, IconPlus, IconStop } from "./icons";
 import { useVoiceInput } from "./voice-input";
 
 type Props = {
@@ -30,6 +30,37 @@ type Props = {
   onListeningChange?: (listening: boolean) => void;
   onSelectImages: (files: FileList | null) => void;
 };
+
+/**
+ * Toggle row in the "+" menu: square checkbox on the right. The menu stays open
+ * so the player sees the box flip (#50).
+ */
+function MenuToggle({
+  role = "menuitemcheckbox",
+  checked,
+  onToggle,
+  children,
+}: {
+  role?: "menuitemcheckbox" | "menuitemradio";
+  checked: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role={role}
+      aria-checked={checked}
+      className="composer-extras-toggle"
+      onClick={onToggle}
+    >
+      {children}
+      <span className={`composer-extras-check${checked ? " checked" : ""}`} aria-hidden="true">
+        {checked && <IconCheck size={14} />}
+      </span>
+    </button>
+  );
+}
 
 /**
  * The single composer "+" control for every user and viewport: one button opens
@@ -81,6 +112,35 @@ export function ComposerExtras({
     setMenuView("main");
   }, [voice.listening]);
 
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Move focus into the menu when it opens or switches view (keyboard access).
+  useEffect(() => {
+    if (!menuOpen) return;
+    menuRef.current?.querySelector<HTMLElement>("[role^='menuitem']:not(:disabled)")?.focus();
+  }, [menuOpen, menuView]);
+
+  function handleMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (!menuOpen) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setMenuOpen(false);
+      setMenuView("main");
+      triggerRef.current?.focus();
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLElement>("[role^='menuitem']:not(:disabled)") ?? [],
+    );
+    if (!items.length) return;
+    event.preventDefault();
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    items[(at + step + items.length) % items.length].focus();
+  }
+
   function handleMainClick() {
     if (voice.listening) {
       voice.stop();
@@ -107,8 +167,9 @@ export function ComposerExtras({
   }
 
   return (
-    <div className="composer-attach-wrap" ref={wrapRef}>
+    <div className="composer-attach-wrap" ref={wrapRef} onKeyDown={handleMenuKeyDown}>
       <button
+        ref={triggerRef}
         type="button"
         className={`composer-attach composer-extras${voice.listening ? " listening" : ""}`}
         title={voice.listening ? "Stop listening" : "More options"}
@@ -122,7 +183,7 @@ export function ComposerExtras({
         {voice.listening ? <IconStop /> : <IconPlus />}
       </button>
       {menuOpen && (
-        <div className="composer-attach-menu" role="menu">
+        <div className="composer-attach-menu" role="menu" ref={menuRef}>
           {menuView === "main" ? (
             <>
               {canAttach && (
@@ -157,97 +218,46 @@ export function ComposerExtras({
                 </button>
               )}
               {showGuideRetrievalToggles && (
-                <>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="composer-extras-toggle"
-                    aria-pressed={guideRetrievalMode === "skip"}
-                    onClick={() => {
-                      onToggleSkipGuide?.();
-                      setMenuOpen(false);
-                      setMenuView("main");
-                    }}
+                <div
+                  className="composer-extras-group"
+                  role="group"
+                  aria-label="Answer source"
+                >
+                  <span
+                    className="composer-extras-group-label"
+                    aria-hidden="true"
+                  >
+                    Answer source
+                  </span>
+                  <MenuToggle
+                    role="menuitemradio"
+                    checked={guideRetrievalMode === "skip"}
+                    onToggle={() => onToggleSkipGuide?.()}
                   >
                     Search web instead
-                    <span
-                      className={`composer-extras-state${guideRetrievalMode === "skip" ? " on" : ""}`}
-                    >
-                      {guideRetrievalMode === "skip" ? "On" : "Off"}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="composer-extras-toggle"
-                    aria-pressed={guideRetrievalMode === "supplement"}
-                    onClick={() => {
-                      onToggleSupplementGuide?.();
-                      setMenuOpen(false);
-                      setMenuView("main");
-                    }}
+                  </MenuToggle>
+                  <MenuToggle
+                    role="menuitemradio"
+                    checked={guideRetrievalMode === "supplement"}
+                    onToggle={() => onToggleSupplementGuide?.()}
                   >
                     Guide + web search
-                    <span
-                      className={`composer-extras-state${guideRetrievalMode === "supplement" ? " on" : ""}`}
-                    >
-                      {guideRetrievalMode === "supplement" ? "On" : "Off"}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="composer-extras-toggle"
-                    aria-pressed={guideRetrievalMode === "knowledge"}
-                    onClick={() => {
-                      onToggleKnowledgeOnly?.();
-                      setMenuOpen(false);
-                      setMenuView("main");
-                    }}
+                  </MenuToggle>
+                  <MenuToggle
+                    role="menuitemradio"
+                    checked={guideRetrievalMode === "knowledge"}
+                    onToggle={() => onToggleKnowledgeOnly?.()}
                   >
                     Knowledge only
-                    <span
-                      className={`composer-extras-state${guideRetrievalMode === "knowledge" ? " on" : ""}`}
-                    >
-                      {guideRetrievalMode === "knowledge" ? "On" : "Off"}
-                    </span>
-                  </button>
-                </>
+                  </MenuToggle>
+                </div>
               )}
-              <button
-                type="button"
-                role="menuitem"
-                className="composer-extras-toggle"
-                aria-pressed={temporary}
-                onClick={() => {
-                  onToggleTemporary?.();
-                  setMenuOpen(false);
-                  setMenuView("main");
-                }}
-              >
+              <MenuToggle checked={!!temporary} onToggle={() => onToggleTemporary?.()}>
                 Temporary chat
-                <span className={`composer-extras-state${temporary ? " on" : ""}`}>
-                  {temporary ? "On" : "Off"}
-                </span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="composer-extras-toggle"
-                aria-pressed={spoilerMajor}
-                onClick={() => {
-                  onToggleSpoiler?.();
-                  setMenuOpen(false);
-                  setMenuView("main");
-                }}
-              >
+              </MenuToggle>
+              <MenuToggle checked={spoilerMajor} onToggle={() => onToggleSpoiler?.()}>
                 {SPOILER_TOGGLE_LABEL}
-                <span
-                  className={`composer-extras-state spoiler-on${spoilerMajor ? " on" : ""}`}
-                >
-                  {spoilerMajor ? "On" : "Off"}
-                </span>
-              </button>
+              </MenuToggle>
             </>
           ) : (
             <>

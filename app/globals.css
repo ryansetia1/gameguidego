@@ -3286,7 +3286,7 @@ details.sources small {
   right: 0;
   bottom: calc(100% + 6px);
   z-index: 10;
-  min-width: 148px;
+  min-width: 212px; /* toggle labels + checkbox on one line (#50) */
   border: 1.5px solid var(--ink);
   background: var(--paper-strong);
   box-shadow: 4px 4px 0 var(--ink);
@@ -3320,25 +3320,45 @@ details.sources small {
   font-weight: 600;
 }
 
-/* Temporary-chat menu item: label left, On/Off state right. */
+/* Toggle rows (#50): label left, square checkbox right. Menu stays open on toggle. */
 .composer-attach-menu button.composer-extras-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-height: 44px;
 }
 
-.composer-extras-state {
-  font-weight: 700;
-  color: var(--text-subtle);
+.composer-extras-check {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--ink);
+  background: var(--paper-strong);
+  color: var(--paper);
 }
 
-.composer-extras-state.on {
-  color: var(--ink);
+.composer-extras-check.checked {
+  background: var(--ink);
 }
 
-.composer-extras-state.spoiler-on.on {
-  color: var(--danger);
+.composer-attach-menu button:disabled .composer-extras-check {
+  border-color: var(--muted);
+}
+
+/* Exclusive answer-source modes: muted label + rule so it reads as one group. */
+.composer-extras-group {
+  border-top: 1px solid var(--line);
+}
+
+.composer-extras-group-label {
+  display: block;
+  padding: 8px 12px 2px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--muted);
 }
 
 @keyframes mic-pulse {

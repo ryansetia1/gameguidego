@@ -450,6 +450,9 @@ do not sync to the cloud or use Storage uploads.
   Photo library / Camera (`canAttach`, signed-in only), Voice input
   (`voiceSupported`), guide retrieval toggles when a preferred guide is attached,
   and the **Temporary chat** toggle (`temporary` / `onToggleTemporary`, all users).
+  Toggle rows show a square checkbox (`MenuToggle`: `menuitemcheckbox`; the three
+  guide modes are `menuitemradio` in an "Answer source" group) and keep the menu
+  open so the box visibly flips; Arrow keys move, Esc closes (#50).
   The "+" turns into a Stop button while dictating. (**Reference images** is no
   longer a `+` menu toggle — see the visual-search note below.)
 - `lib/prompt.js`: exports `SYSTEM_INSTRUCTION` (persona + rules: knowledge-first,
@@ -1069,7 +1072,7 @@ Sound human, not like AI. Specifically avoid these tells:
 ## Android APK (`android/`)
 - **Folder**: `android/` (isolated native Kotlin + Material 3 + WebView + OkHttp + Jsoup project, package `app.gameguidego.android`).
 - **Integrated PWA + PixelGuide Flow**:
-  - **Full-Screen PWA (`MainActivity`)**: Loads `AppPrefs.serverUrl` (`https://gameguidego.vercel.app`) without bottom nav tabs, intercepts Google/Steam OAuth via Chrome Custom Tabs (`gameguidego://auth` + `__ggSetSession`), and exposes `window.GameGuideGoAndroid.openFindGuide(...)` JS bridge.
+  - **Full-Screen PWA (`MainActivity`)**: Loads `AppPrefs.serverUrl` (`https://gameguidego.vercel.app`) without bottom nav tabs, handles `<input capture>` (composer Camera) natively in `onShowFileChooser` via `TakePicture` + FileProvider (`res/xml/file_paths.xml`) + runtime `CAMERA` permission, falling back to the file picker when denied or no camera app (#50), intercepts Google/Steam OAuth via Chrome Custom Tabs (`gameguidego://auth` + `__ggSetSession`), and exposes `window.GameGuideGoAndroid.openFindGuide(...)` JS bridge.
   - **Quick Add Guide (`app/guide-link-field.tsx`)**: When running inside the APK (`GameGuideGoAndroid` present), adds `Find` as the leftmost tab listing GameFAQs, Neoseeker, IGN Wikis, Zelda Dungeon, and Browse Web.
   - **Native Find Browser (`FindGuideActivity`)**: Opens directly on the provider's game search results URL inside an ad-blocked WebView (`AdBlockFilter` + `GuideWebViewClient`), detects actual guide pages (`GuidePageDetector`) before enabling `Download`, extracts TXT / multi-page HTML Markdown / PDF (`GuideExtractor`) with a sample/full choice for multi-page guides, uploads to `POST /api/guide-upload` (`GameGuideGoApi`), and returns the result straight into `GuideLinkField` via `window.__ggOnNativeGuideAdded`.
 - **Version Sync**: `android/app/build.gradle.kts` reads `version` directly from root `package.json` (`versionName` = `package.json` `version`, `versionCode` = semver integer). Whenever `package.json` version is bumped or the PWA is updated, run `npm run build:apk` to rebuild a matching APK at `android/app/build/outputs/apk/debug/app-debug.apk`.
