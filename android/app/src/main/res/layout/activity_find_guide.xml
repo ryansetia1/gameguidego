@@ -163,6 +163,16 @@
                 android:textColor="@color/ink_primary"
                 android:textSize="14sp"
                 android:textStyle="bold" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnCancelIngest"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginTop="16dp"
+                android:text="Cancel"
+                android:textColor="@color/signal"
+                app:strokeColor="@color/border_subtle" />
         </LinearLayout>
     </FrameLayout>
 

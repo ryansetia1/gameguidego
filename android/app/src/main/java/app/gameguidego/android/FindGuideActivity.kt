@@ -1,16 +1,21 @@
 package app.gameguidego.android
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -23,7 +28,9 @@ import app.gameguidego.android.network.GameGuideGoApi
 import app.gameguidego.android.scraper.GuideExtractor
 import app.gameguidego.android.scraper.GuidePageDetector
 import app.gameguidego.android.scraper.PageDetectionResult
+import app.gameguidego.android.service.GuideIngestService
 import app.gameguidego.android.web.GuideWebViewClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -43,6 +50,11 @@ class FindGuideActivity : AppCompatActivity() {
     private var serverUrl: String = ""
     private var currentDetection: PageDetectionResult? = null
     private var detectJob: Job? = null
+    private var ingestJob: Job? = null
+
+    private val notificationPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,6 +62,7 @@ class FindGuideActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         applyInsets()
+        requestNotificationPermissionIfNeeded()
 
         provider = GuideProvider.fromId(intent.getStringExtra(EXTRA_PROVIDER_ID))
         gameName = intent.getStringExtra(EXTRA_GAME_NAME).orEmpty()
@@ -67,6 +80,24 @@ class FindGuideActivity : AppCompatActivity() {
 
         GuideProvider.applyProviderCookies(provider)
         binding.guideBrowserWebView.loadUrl(provider.buildSearchUrl(gameName))
+    }
+
+    override fun onDestroy() {
+        ingestJob?.cancel()
+        GuideIngestService.stop(this)
+        super.onDestroy()
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                notificationPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
     }
 
     private fun applyInsets() {
@@ -116,8 +147,16 @@ class FindGuideActivity : AppCompatActivity() {
 
     private fun setupControls() {
         binding.btnClose.setOnClickListener {
-            setResult(RESULT_CANCELED)
-            finish()
+            if (ingestJob?.isActive == true) {
+                confirmCancelActiveIngest(closeAfterCancel = true)
+            } else {
+                setResult(RESULT_CANCELED)
+                finish()
+            }
+        }
+
+        binding.btnCancelIngest.setOnClickListener {
+            confirmCancelActiveIngest(closeAfterCancel = false)
         }
 
         binding.btnToggleSearch.setOnClickListener {
@@ -165,6 +204,23 @@ class FindGuideActivity : AppCompatActivity() {
         }
     }
 
+    private fun confirmCancelActiveIngest(closeAfterCancel: Boolean) {
+        AlertDialog.Builder(this)
+            .setTitle("Cancel guide upload?")
+            .setMessage("Uploading/indexing is still in progress. Cancel it now?")
+            .setPositiveButton("Cancel upload") { _, _ ->
+                ingestJob?.cancel()
+                GuideIngestService.stop(this)
+                setBusy(false, "")
+                if (closeAfterCancel) {
+                    setResult(RESULT_CANCELED)
+                    finish()
+                }
+            }
+            .setNegativeButton("Keep running", null)
+            .show()
+    }
+
     private fun runSearch() {
         val query = binding.findSearchInput.text?.toString().orEmpty()
         GuideProvider.applyProviderCookies(provider)
@@ -188,8 +244,9 @@ class FindGuideActivity : AppCompatActivity() {
     }
 
     private fun updateNavButtons() {
-        val canBack = binding.guideBrowserWebView.canGoBack()
-        val canForward = binding.guideBrowserWebView.canGoForward()
+        val busy = ingestJob?.isActive == true
+        val canBack = !busy && binding.guideBrowserWebView.canGoBack()
+        val canForward = !busy && binding.guideBrowserWebView.canGoForward()
         binding.btnNavBack.isEnabled = canBack
         binding.btnNavBack.alpha = if (canBack) 1.0f else 0.35f
         binding.btnNavForward.isEnabled = canForward
@@ -197,10 +254,10 @@ class FindGuideActivity : AppCompatActivity() {
     }
 
     private fun renderDetectionState(detection: PageDetectionResult?) {
-        val ready = detection?.canDownload == true
-        binding.btnDownloadGuide.isEnabled = ready
+        val ready = detection != null && detection.canDownload
+        binding.btnDownloadGuide.isEnabled = ready && ingestJob?.isActive != true
 
-        if (ready && detection != null) {
+        if (detection != null && detection.canDownload) {
             binding.txtStatusIcon.text = "✓"
             binding.txtStatusIcon.setTextColor(ContextCompat.getColor(this, R.color.signal_emerald))
             binding.txtDetectionHeadline.text = "Guide page detected"
@@ -225,6 +282,7 @@ class FindGuideActivity : AppCompatActivity() {
     }
 
     private fun onDownloadClicked(detection: PageDetectionResult) {
+        if (ingestJob?.isActive == true) return
         if (detection.tocPageCount > 1) {
             val fullLimit = minOf(detection.tocPageCount, 50)
             val options = arrayOf(
@@ -250,8 +308,9 @@ class FindGuideActivity : AppCompatActivity() {
     }
 
     private fun extractAndIngest(detection: PageDetectionResult, maxPages: Int) {
+        ingestJob?.cancel()
         setBusy(true, "Extracting guide...")
-        lifecycleScope.launch {
+        ingestJob = lifecycleScope.launch {
             var tempFile: File? = null
             try {
                 val extracted = extractor.extractCurrentGuide(
@@ -280,6 +339,10 @@ class FindGuideActivity : AppCompatActivity() {
                 }
 
                 binding.txtProgressMessage.text = "Uploading & indexing into GameGuideGo…"
+                GuideIngestService.start(
+                    this@FindGuideActivity,
+                    "Uploading & indexing ${extracted.title}…"
+                )
                 val uploadRes = api.uploadGuideForIngest(
                     serverUrl = serverUrl,
                     authToken = accessToken,
@@ -296,29 +359,49 @@ class FindGuideActivity : AppCompatActivity() {
                 }
                 setResult(RESULT_OK, data)
                 finish()
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (err: Throwable) {
-                setBusy(false, "")
-                AlertDialog.Builder(this@FindGuideActivity)
-                    .setTitle("Download / Ingest Failed")
-                    .setMessage(err.message ?: "Unexpected error while processing guide.")
-                    .setPositiveButton("OK", null)
-                    .show()
+                if (!isFinishing && !isDestroyed) {
+                    AlertDialog.Builder(this@FindGuideActivity)
+                        .setTitle("Download / Ingest Failed")
+                        .setMessage(err.message ?: "Unexpected error while processing guide.")
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
             } finally {
+                GuideIngestService.stop(this@FindGuideActivity)
                 tempFile?.delete()
+                if (!isFinishing && !isDestroyed) {
+                    setBusy(false, "")
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
             }
         }
     }
 
     private fun setBusy(busy: Boolean, message: String) {
+        if (busy) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
         binding.progressOverlay.visibility = if (busy) View.VISIBLE else View.GONE
         binding.txtProgressMessage.text = message
+        binding.btnToggleSearch.isEnabled = !busy
+        binding.btnToggleAdBlock.isEnabled = !busy
         binding.btnDownloadGuide.isEnabled = !busy && (currentDetection?.canDownload == true)
+        updateNavButtons()
     }
 
     private fun setupBackHandler() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (binding.progressOverlay.visibility == View.VISIBLE) return
+                if (ingestJob?.isActive == true) {
+                    confirmCancelActiveIngest(closeAfterCancel = false)
+                    return
+                }
                 if (binding.guideBrowserWebView.canGoBack()) {
                     binding.guideBrowserWebView.goBack()
                 } else {
