@@ -5132,10 +5132,201 @@ if (!canRunTsChecks) {
       });
     const declaredBig = await bc.fetchMapBlob(pUrl).then(() => 200, (e) => (e instanceof bc.MapFetchError ? e.status : -1));
     assert.equal(declaredBig, bc.MAP_TOO_LARGE_STATUS, "declared >30 MB rejected as 413");
+
+    // cacheMapBlob stores an already-fetched blob for offline Undo.
+    const undoBlob = new Blob([new Uint8Array([9, 8, 7])], { type: "image/png" });
+    await bc.deleteCachedMap(pUrl);
+    assert.equal(await bc.hasCachedMap(pUrl), false, "deleted before Undo restore");
+    assert.equal(await bc.cacheMapBlob(pUrl, undoBlob), true, "cacheMapBlob restores blob");
+    assert.equal(await bc.hasCachedMap(pUrl), true, "cached again after Undo restore");
   } finally {
     globalThis.fetch = realFetch;
     if (!hadCaches) delete globalThis.caches;
   }
+}
+
+// --- Maps panel pure helpers (#39) ---
+{
+  const mp = await import("../lib/maps-panel.js");
+  const sm = await import("../lib/saved-maps.js");
+
+  // Default tab selection + in-memory last-used tab preference.
+  assert.equal(mp.defaultMapsTab(0), "find", "0 saved maps defaults to Find");
+  assert.equal(mp.defaultMapsTab(2), "saved", ">0 saved maps defaults to Saved");
+  assert.equal(mp.defaultMapsTab(2, "find"), "find", "remembered Find tab wins over count");
+  assert.equal(mp.defaultMapsTab(0, "saved"), "saved", "remembered Saved tab wins");
+
+  // Prefilled query + parsing for /api/maps/search.
+  assert.equal(mp.defaultMapsQuery("Chrono Trigger", "SNES"), "Chrono Trigger SNES");
+  assert.equal(mp.defaultMapsQuery("Chrono Trigger", ""), "Chrono Trigger");
+  assert.deepEqual(
+    mp.parseMapsSearchQuery("Chrono Trigger SNES", "Chrono Trigger", "SNES"),
+    { game: "Chrono Trigger", platform: "SNES" },
+    "prefilled query splits back into game + platform",
+  );
+  assert.deepEqual(
+    mp.parseMapsSearchQuery("Final Fantasy VI SNES", "Chrono Trigger", "SNES"),
+    { game: "Final Fantasy VI", platform: "SNES" },
+    "edited query with trailing active platform strips platform",
+  );
+  assert.deepEqual(
+    mp.parseMapsSearchQuery("Link's Awakening GBC", "Chrono Trigger", "SNES"),
+    { game: "Link's Awakening", platform: "Game Boy Color" },
+    "edited query with alternate platform alias resolves platform",
+  );
+  assert.deepEqual(
+    mp.parseMapsSearchQuery("Final Fantasy VII PlayStation (PS1)", "Chrono Trigger", "SNES"),
+    { game: "Final Fantasy VII", platform: "PlayStation (PS1)" },
+    "edited query with multi-word canonical platform strips entire platform label",
+  );
+  assert.deepEqual(
+    mp.parseMapsSearchQuery("Super Mario 64", "Super Mario 64", "Nintendo 64"),
+    { game: "Super Mario 64", platform: "Nintendo 64" },
+    "numeric game title suffix is never stripped as a platform",
+  );
+
+  // Plain-text metadata lines (skip missing parts, no chips/pills).
+  assert.equal(
+    mp.formatSavedMapMeta(
+      { width: 4096, height: 3072, fileSize: "5.2 MB", author: "Rick", synced: true },
+      { cached: true, signedIn: true, syncAvailable: true, syncFailed: false },
+    ),
+    "4096 × 3072 · 5.2 MB · Rick · On this device",
+  );
+  assert.equal(
+    mp.formatSavedMapMeta(
+      { dimensions: "1024 x 768", fileSize: "", author: "", synced: false },
+      { cached: false, signedIn: true, syncAvailable: true, syncFailed: true },
+    ),
+    "1024 × 768 · Not downloaded · Not synced yet",
+  );
+  assert.equal(
+    mp.formatFindMapMeta({
+      width: 4096,
+      height: 3072,
+      fileSize: "5.2 MB",
+      format: "PNG",
+      author: "Rick",
+    }),
+    "4096 × 3072 · 5.2 MB · PNG · Rick",
+  );
+  assert.equal(
+    mp.formatFindMapMeta({ dimensions: "", fileSize: "1.1 MB", format: "GIF", author: "" }),
+    "1.1 MB · GIF",
+  );
+
+  // 30 MB limit and progress formatting/ratio.
+  assert.equal(mp.isMapOverLimit({ fileSizeBytes: 30 * 1024 * 1024 }), false, "exactly 30 MB allowed");
+  assert.equal(mp.isMapOverLimit({ fileSizeBytes: 30 * 1024 * 1024 + 1 }), true, "over 30 MB blocked");
+  assert.equal(mp.isMapOverLimit({ fileSizeBytes: null }), false, "unknown size allowed");
+  assert.equal(
+    mp.formatDownloadProgressText({ loaded: 3.1 * 1024 * 1024, total: 8.4 * 1024 * 1024 }),
+    "Downloading 3.1 / 8.4 MB",
+  );
+  assert.equal(
+    mp.formatDownloadProgressText({ loaded: 2.0 * 1024 * 1024, total: null }),
+    "Downloading 2.0 MB",
+  );
+  assert.equal(mp.formatDownloadProgressText(null), "Downloading…");
+  assert.equal(mp.downloadProgressRatio({ loaded: 50, total: 100 }), 0.5);
+  assert.equal(mp.downloadProgressRatio({ loaded: 200, total: 100 }), 1);
+
+  // Mutual exclusivity between Saved answers and Maps side panels.
+  assert.deepEqual(
+    mp.nextSidePanelState({ savedOpen: true, mapsOpen: false }, "open-maps"),
+    { savedOpen: false, mapsOpen: true },
+    "opening Maps closes Saved answers",
+  );
+  assert.deepEqual(
+    mp.nextSidePanelState({ savedOpen: false, mapsOpen: true }, "open-saved"),
+    { savedOpen: true, mapsOpen: false },
+    "opening Saved answers closes Maps",
+  );
+
+  // Back/forward history: Back closes MapViewer first, then MapsPanel; split chat entries passthrough.
+  assert.deepEqual(
+    mp.mapsPopAction({
+      panelOpen: true,
+      viewerOpen: true,
+      depth: 2,
+      prevDepth: 3,
+      panelDepth: 2,
+      viewerDepth: 3,
+      left: { gggMaps: "viewer" },
+      landing: { gggMaps: "panel" },
+    }),
+    { type: "close-viewer" },
+    "Back from MapViewer closes viewer first",
+  );
+  assert.deepEqual(
+    mp.mapsPopAction({
+      panelOpen: true,
+      viewerOpen: false,
+      depth: 1,
+      prevDepth: 2,
+      panelDepth: 2,
+      viewerDepth: 3,
+      left: { gggMaps: "panel" },
+      landing: null,
+    }),
+    { type: "close-panel" },
+    "Back from MapsPanel closes panel",
+  );
+  assert.deepEqual(
+    mp.mapsPopAction({
+      panelOpen: true,
+      viewerOpen: false,
+      depth: 2,
+      prevDepth: 3,
+      panelDepth: 2,
+      viewerDepth: 0,
+      left: null,
+      landing: { gggMaps: "panel" },
+    }),
+    { type: "passthrough" },
+    "Back off a chat entry pushed above split MapsPanel passes through",
+  );
+  assert.deepEqual(
+    mp.mapsPopAction({
+      panelOpen: false,
+      viewerOpen: false,
+      depth: 1,
+      prevDepth: 2,
+      panelDepth: 0,
+      viewerDepth: 0,
+      left: { gggMaps: "panel" },
+      landing: null,
+    }),
+    { type: "none" },
+    "Leftover gggMaps entry when closed is a no-op",
+  );
+
+  // restoreSavedMap revives removed synced tombstone and avoids duplicates.
+  const baseMap = sm.buildSavedMap({
+    owner: "u1",
+    game: "Chrono Trigger",
+    platform: "SNES",
+    sourceUrl: "https://www.vgmaps.com/Atlas/SNES/index.htm#ChronoTrigger",
+    map: {
+      mapName: "1000 AD",
+      imageUrl: "https://www.vgmaps.com/Atlas/SNES/ChronoTrigger-1000AD.png",
+      dimensions: "4096 x 3072",
+      fileSize: "5.2 MB",
+      format: "PNG",
+      author: "Rick",
+    },
+  });
+  const syncedMap = { ...baseMap, synced: true, lastZoom: 3.5, lastOffsetX: 120, lastOffsetY: -40 };
+  const afterRemove = sm.removeSavedMap([syncedMap], syncedMap.id);
+  assert.equal(afterRemove.length, 1);
+  assert.equal(afterRemove[0].deleted, true, "synced map becomes tombstone");
+  const afterUndo = sm.restoreSavedMap(afterRemove, syncedMap);
+  assert.equal(afterUndo.length, 1);
+  assert.equal(afterUndo[0].deleted, false, "Undo revives tombstone");
+  assert.equal(afterUndo[0].synced, false, "Undo marks unsynced for re-push");
+  assert.equal(afterUndo[0].lastZoom, 3.5, "Undo preserves saved viewport");
+  const afterDupUndo = sm.restoreSavedMap(afterUndo, { ...syncedMap, id: "other-id" });
+  assert.equal(afterDupUndo.length, 1, "Undo skips duplicate when same map already visible");
 }
 
 console.log("Self-check passed.");

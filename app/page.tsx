@@ -12,8 +12,11 @@ import { GamesSidebar } from "./chat/games-sidebar";
 import { HomeSetup } from "./chat/home-setup";
 import { HomeTip } from "./chat/hero-marketing";
 import { MessageList } from "./chat/message-list";
+import { MapsPanel } from "./chat/maps-panel";
+import { MapViewer, type MapViewerItem } from "./chat/map-viewer";
 import { SavedAnswersPanel } from "./chat/saved-answers-panel";
 import { type SavedAnswer, useSavedAnswers } from "./chat/use-saved-answers";
+import { type SavedMap, useSavedMaps } from "./chat/use-saved-maps";
 import { TopicList } from "./chat/topic-list";
 import { TopicTitleTypewriter } from "./chat/topic-title-typewriter";
 import { PromptDialog, usePromptDialog } from "./chat/use-prompt-dialog";
@@ -67,6 +70,9 @@ import {
 import { loadVisualAuto } from "@/lib/visual-search-prefs.js";
 import { consumeAnonSaveHint, isSavableReply } from "@/lib/saved-answers.js";
 import { chatBackPopsHistory, savedPopAction, type SavedEntry } from "@/lib/saved-history.js";
+import { mapProxyUrl, readCachedMapBlob } from "@/lib/map-blob-cache.js";
+import { mapsPopAction, type MapsHistoryEntry } from "@/lib/maps-panel.js";
+import type { VGMapsGameEntry, VGMapsMapLink } from "@/lib/vgmaps-parser.js";
 import { groupChatsByRoom, isTopicColumnDbError, mergeChatsFromServer, normGameKey, syncRoomSharedMeta, syncSharedMetaToLocalGames, topicsForRoom, gameRoomKey, upsertChatInList } from "@/lib/game-room.js";
 import {
   displayTopicTitle,
@@ -160,18 +166,29 @@ let historyDepth =
     ? 0
     : ((window.history.state as { gggDepth?: number } | null)?.gggDepth ?? 0);
 
-// The current entry's state (what a popstate "left") and the depth of the saved pane's
-// "list" entry; both feed savedPopAction (lib/saved-history.js).
-let currentEntry: SavedEntry =
-  typeof window === "undefined" ? null : (window.history.state as SavedEntry);
+// The current entry's state (what a popstate "left") and the depth of the saved / maps
+// pane entries; they feed savedPopAction (lib/saved-history.js) and mapsPopAction (lib/maps-panel.js).
+type AppHistoryEntry = (SavedEntry & MapsHistoryEntry) | null;
+let currentEntry: AppHistoryEntry =
+  typeof window === "undefined" ? null : (window.history.state as AppHistoryEntry);
 let savedListDepth = 0;
+let mapsPanelDepth = 0;
+let mapViewerDepth = 0;
 
 function pushAppHistory(state: Record<string, unknown>) {
   const depth = ((window.history.state as { gggDepth?: number } | null)?.gggDepth ?? 0) + 1;
   const next = { ...state, gggDepth: depth };
   window.history.pushState(next, "");
   historyDepth = depth;
-  currentEntry = next as SavedEntry;
+  currentEntry = next as AppHistoryEntry;
+}
+
+function replaceAppHistory(state: Record<string, unknown>) {
+  const depth = ((window.history.state as { gggDepth?: number } | null)?.gggDepth ?? historyDepth);
+  const next = { ...state, gggDepth: depth };
+  window.history.replaceState(next, "");
+  historyDepth = depth;
+  currentEntry = next as AppHistoryEntry;
 }
 
 
@@ -291,6 +308,20 @@ export default function Home() {
   // The game whose list the pane shows: the one it was opened for, or the open item's
   // game, so a game change in the chat (or reading another game's item) keeps its list.
   const [savedPaneGame, setSavedPaneGame] = useState("");
+  const [mapsPanelOpen, setMapsPanelOpen] = useState(false);
+  const mapsPanelOpenRef = useRef(false);
+  const [mapsPaneGame, setMapsPaneGame] = useState("");
+  const [mapsPanePlatform, setMapsPanePlatform] = useState("");
+  const [mapsCacheVersion, setMapsCacheVersion] = useState(0);
+  type ViewingMapState = {
+    item: MapViewerItem;
+    game: string;
+    platform: string;
+    gameEntry?: VGMapsGameEntry;
+    mapLink?: VGMapsMapLink;
+  };
+  const [viewingMap, setViewingMap] = useState<ViewingMapState | null>(null);
+  const viewingMapRef = useRef<ViewingMapState | null>(null);
   const [lastLibrary, setLastLibrary] = useState<"saved" | "steam">("saved");
   const {
     promptState,
@@ -476,6 +507,7 @@ export default function Home() {
 
   const coverEnabled = Boolean(user);
   const savedAnswers = useSavedAnswers(user);
+  const savedMaps = useSavedMaps(user);
 
   const {
     guideMeta,
@@ -583,22 +615,57 @@ export default function Home() {
     // so re-run to size it to the message being edited (otherwise it stays 1 line).
   }, [input, editSlotEl, composerExpanded]);
 
+  const closeMapViewerState = useCallback(() => {
+    viewingMapRef.current = null;
+    setViewingMap(null);
+    setMapsCacheVersion((v) => v + 1);
+  }, []);
+
+  const closeMapsState = useCallback(() => {
+    mapsPanelOpenRef.current = false;
+    setMapsPanelOpen(false);
+    if (viewingMapRef.current) closeMapViewerState();
+  }, [closeMapViewerState]);
+
   useEffect(() => {
-    /** Pane-aware back/forward; the decision table lives in lib/saved-history.js. */
+    /** Pane-aware back/forward; decision tables live in lib/maps-panel.js & lib/saved-history.js. */
     function onPopState(event: PopStateEvent) {
-      const state = event.state as (SavedEntry & { gggDepth?: number }) | null;
+      const state = event.state as (AppHistoryEntry & { gggDepth?: number }) | null;
       const depth = state?.gggDepth ?? 0;
+      const prevDepth = historyDepth;
+      const left = currentEntry;
+      historyDepth = depth;
+      currentEntry = state;
+
+      const mapsAction = mapsPopAction({
+        panelOpen: mapsPanelOpenRef.current,
+        viewerOpen: viewingMapRef.current !== null,
+        depth,
+        prevDepth,
+        panelDepth: mapsPanelDepth,
+        viewerDepth: mapViewerDepth,
+        left,
+        landing: state,
+      });
+      if (mapsAction.type === "close-viewer") {
+        closeMapViewerState();
+        return;
+      }
+      if (mapsAction.type === "close-panel") {
+        closeMapsState();
+        return;
+      }
+      if (mapsAction.type === "none") return;
+
       const action = savedPopAction({
         paneOpen: savedOpenRef.current,
         readingId: savedReadingId,
         depth,
-        prevDepth: historyDepth,
+        prevDepth,
         listDepth: savedListDepth,
-        left: currentEntry,
+        left,
         landing: state,
       });
-      historyDepth = depth;
-      currentEntry = state;
       if (action.type === "close") closeSavedState();
       else if (action.type === "show") setSavedReadingId(action.readingId);
       else if (action.type === "layer" && !closeTopOverlay()) consumeBackLayer();
@@ -703,6 +770,8 @@ export default function Home() {
     navMenu,
     newGameOpen,
     editingGame,
+    closeMapViewerState,
+    closeMapsState,
   ]);
 
   // Give the browser a history entry to pop when a chat thread is showing (including
@@ -742,7 +811,9 @@ export default function Home() {
       !navMenu &&
       !sidebarOpen &&
       !libraryOpen &&
-      !steamLibraryOpen;
+      !steamLibraryOpen &&
+      !mapsPanelOpen &&
+      viewingMap === null;
     if (!arm) {
       if (messages.length > 0 || newGameOpen || gameView !== null) homeExitPromptAt.current = 0;
       return;
@@ -765,6 +836,8 @@ export default function Home() {
     sidebarOpen,
     libraryOpen,
     steamLibraryOpen,
+    mapsPanelOpen,
+    viewingMap,
   ]);
 
   useEffect(() => {
@@ -1038,6 +1111,8 @@ export default function Home() {
     const THRESHOLD = 60;
     const modalOpen =
       savedOpen ||
+      mapsPanelOpen ||
+      viewingMap !== null ||
       authOpen ||
       navMenu !== null ||
       confirmState !== null ||
@@ -1098,6 +1173,8 @@ export default function Home() {
   }, [
     user,
     savedOpen,
+    mapsPanelOpen,
+    viewingMap,
     sidebarOpen,
     libraryOpen,
     steamLibraryOpen,
@@ -1854,6 +1931,9 @@ export default function Home() {
   function openSavedAnswers() {
     setMenuOpenId(null);
     if (savedOpenRef.current) return;
+    // Mutual exclusivity: never show both Saved answers and Maps panels at once.
+    const replacingMaps = mapsPanelOpenRef.current && currentEntry?.gggMaps === "panel";
+    if (mapsPanelOpenRef.current) closeMapsState();
     // From the toast's View: don't open under the sidebar/libraries (like openSavedLibrary).
     setSidebarOpen(false);
     setLibraryOpen(false);
@@ -1862,9 +1942,132 @@ export default function Home() {
     setSavedPaneGame(game);
     setSavedReadingId(null);
     setSavedOpen(true);
-    pushSavedHistory("list");
+    if (replacingMaps) {
+      replaceAppHistory({ gggOverlay: true, gggSaved: "list" });
+    } else {
+      pushSavedHistory("list");
+    }
     savedListDepth = historyDepth;
   }
+
+  function openMapsPanel() {
+    setMenuOpenId(null);
+    if (mapsPanelOpenRef.current) return;
+    // Mutual exclusivity: never show both Saved answers and Maps panels at once.
+    const replacingSaved = savedOpenRef.current && currentEntry?.gggSaved === "list";
+    if (savedOpenRef.current) closeSavedState();
+    setSidebarOpen(false);
+    setLibraryOpen(false);
+    setSteamLibraryOpen(false);
+    mapsPanelOpenRef.current = true;
+    setMapsPaneGame(game);
+    setMapsPanePlatform(platform);
+    setMapsPanelOpen(true);
+    if (replacingSaved) {
+      replaceAppHistory({ gggOverlay: true, gggMaps: "panel" });
+    } else {
+      pushAppHistory({ gggOverlay: true, gggMaps: "panel" });
+    }
+    mapsPanelDepth = historyDepth;
+  }
+
+  function closeMapsPanel() {
+    const tag = (window.history.state as MapsHistoryEntry)?.gggMaps;
+    if (tag === "panel") {
+      window.history.back();
+      return;
+    }
+    if (tag === "viewer") {
+      window.history.go(-2);
+      return;
+    }
+    closeMapsState();
+  }
+
+  function openSavedMapInViewer(item: SavedMap) {
+    const next: ViewingMapState = {
+      item: {
+        title: item.title,
+        imageUrl: item.imageUrl,
+        sourceUrl: item.sourceUrl,
+        dimensions: item.dimensions,
+        width: item.width,
+        height: item.height,
+        savedId: item.id,
+        lastZoom: item.lastZoom,
+        lastOffsetX: item.lastOffsetX,
+        lastOffsetY: item.lastOffsetY,
+      },
+      game: item.game || mapsPaneGame || game,
+      platform: item.platform || mapsPanePlatform || platform,
+    };
+    viewingMapRef.current = next;
+    setViewingMap(next);
+    pushAppHistory({ gggOverlay: true, gggMaps: "viewer" });
+    mapViewerDepth = historyDepth;
+  }
+
+  function openFindMapInViewer(
+    gameEntry: VGMapsGameEntry,
+    mapLink: VGMapsMapLink,
+    saved?: SavedMap,
+  ) {
+    const next: ViewingMapState = {
+      item: {
+        title: mapLink.mapName,
+        imageUrl: mapLink.imageUrl,
+        sourceUrl: gameEntry.url,
+        dimensions: mapLink.dimensions,
+        width: mapLink.width,
+        height: mapLink.height,
+        savedId: saved?.id ?? null,
+        lastZoom: saved?.lastZoom,
+        lastOffsetX: saved?.lastOffsetX,
+        lastOffsetY: saved?.lastOffsetY,
+      },
+      game: mapsPaneGame || game,
+      platform: mapsPanePlatform || platform,
+      gameEntry,
+      mapLink,
+    };
+    viewingMapRef.current = next;
+    setViewingMap(next);
+    pushAppHistory({ gggOverlay: true, gggMaps: "viewer" });
+    mapViewerDepth = historyDepth;
+  }
+
+  function closeMapViewer() {
+    const tag = (window.history.state as MapsHistoryEntry)?.gggMaps;
+    if (tag === "viewer") {
+      window.history.back();
+      return;
+    }
+    closeMapViewerState();
+  }
+
+  async function removeSavedMapWithUndo(item: SavedMap) {
+    const proxyUrl = mapProxyUrl(item.imageUrl, item.sourceUrl);
+    const cachedBlob = await readCachedMapBlob(proxyUrl).catch(() => null);
+    const ok = await savedMaps.removeMap(item);
+    if (!ok) {
+      setToast("Couldn't remove it on this device.");
+      return;
+    }
+    setMapsCacheVersion((v) => v + 1);
+    showActionToast("Removed from saved maps", "Undo", () => {
+      void savedMaps.restoreMap(item, cachedBlob).then(() => {
+        setMapsCacheVersion((v) => v + 1);
+      });
+    });
+  }
+
+  // Keep the open split-mode Maps panel synced when switching to another game in chat.
+  useEffect(() => {
+    if (mapsPanelOpen && game.trim()) {
+      setMapsPaneGame(game);
+      setMapsPanePlatform(platform);
+    }
+  }, [mapsPanelOpen, game, platform]);
 
   /**
    * Reading view Back arrow: pop our "read" entry when it is on top; if chat entries
@@ -2701,13 +2904,38 @@ export default function Home() {
       onJourneyToast={showJournalToast}
       savedCount={savedAnswers.forGame(game).length}
       onOpenSaved={game.trim() ? openSavedAnswers : undefined}
+      savedMapsCount={savedMaps.forGame(game).length}
+      onOpenMaps={game.trim() ? openMapsPanel : undefined}
     />
   );
 
+  const liveViewingSaved = viewingMap
+    ? savedMaps.findSaved(viewingMap.game, viewingMap.item.imageUrl)
+    : undefined;
+  const resolvedViewerItem: MapViewerItem | null = viewingMap
+    ? {
+        ...viewingMap.item,
+        savedId: liveViewingSaved?.id ?? viewingMap.item.savedId ?? null,
+        lastZoom: liveViewingSaved?.lastZoom ?? viewingMap.item.lastZoom,
+        lastOffsetX: liveViewingSaved?.lastOffsetX ?? viewingMap.item.lastOffsetX,
+        lastOffsetY: liveViewingSaved?.lastOffsetY ?? viewingMap.item.lastOffsetY,
+      }
+    : null;
+
+  const sidePaneInert =
+    sidebarOpen ||
+    libraryOpen ||
+    steamLibraryOpen ||
+    newGameOpen ||
+    authOpen ||
+    navMenu !== null ||
+    confirmState !== null ||
+    promptState !== null;
+
   return (
-    // Two-panel shell: the saved pane becomes a second grid column at the split
-    // breakpoint (CSS only); below it the pane is a fixed overlay and this is one column.
-    <div className={`app-split${savedOpen ? " has-pane" : ""}`}>
+    // Two-panel shell: the open side pane (saved answers or maps) becomes a second grid
+    // column at the split breakpoint (CSS only); below it the pane is a fixed overlay.
+    <div className={`app-split${savedOpen || mapsPanelOpen ? " has-pane" : ""}`}>
     <main>
       <nav className="nav" aria-label="Brand">
         <div className="nav-left">
@@ -3241,16 +3469,7 @@ export default function Home() {
         <SavedAnswersPanel
           game={savedPaneGame}
           items={savedAnswers.forGame(savedPaneGame)}
-          inert={
-            sidebarOpen ||
-            libraryOpen ||
-            steamLibraryOpen ||
-            newGameOpen ||
-            authOpen ||
-            navMenu !== null ||
-            confirmState !== null ||
-            promptState !== null
-          }
+          inert={sidePaneInert}
           readingItem={savedReadingId ? savedAnswers.byId(savedReadingId) : undefined}
           signedIn={Boolean(user)}
           spoilerMajor={spoilerPrefs.major}
@@ -3265,6 +3484,54 @@ export default function Home() {
           onRemove={removeSavedAnswer}
         />
       )}
+      {mapsPanelOpen && (
+        <MapsPanel
+          game={mapsPaneGame}
+          platform={mapsPanePlatform}
+          savedItems={savedMaps.forGame(mapsPaneGame)}
+          inert={sidePaneInert}
+          viewerOpen={viewingMap !== null}
+          cacheVersion={mapsCacheVersion}
+          signedIn={Boolean(user)}
+          online={savedMaps.online}
+          syncFailed={savedMaps.syncFailed}
+          syncAvailable={savedMaps.syncAvailable}
+          findSaved={savedMaps.findSaved}
+          isDownloading={savedMaps.isDownloading}
+          onSaveMap={savedMaps.saveMap}
+          onCancelDownload={savedMaps.cancelDownload}
+          onOpenSavedMap={openSavedMapInViewer}
+          onOpenFindMap={openFindMapInViewer}
+          onRemoveSavedMap={(item) => void removeSavedMapWithUndo(item)}
+          onToast={(message) => {
+            setToastOpensJournal(false);
+            setToastAction(null);
+            setToast(message);
+          }}
+          onClose={closeMapsPanel}
+        />
+      )}
+      <MapViewer
+        map={resolvedViewerItem}
+        online={savedMaps.online}
+        isSaved={Boolean(liveViewingSaved)}
+        openMap={savedMaps.openMap}
+        cancelDownload={savedMaps.cancelDownload}
+        onSave={
+          viewingMap?.gameEntry && viewingMap?.mapLink
+            ? (onProgress) =>
+                savedMaps.saveMap({
+                  game: viewingMap.game,
+                  platform: viewingMap.platform,
+                  gameEntry: viewingMap.gameEntry!,
+                  mapLink: viewingMap.mapLink!,
+                  onProgress,
+                })
+            : undefined
+        }
+        onViewportChange={savedMaps.saveViewport}
+        onClose={closeMapViewer}
+      />
     </div>
   );
 }
