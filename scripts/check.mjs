@@ -4707,6 +4707,7 @@ if (!canRunTsChecks) {
       return {
         async put(key, res) { store.set(key, await res.blob()); },
         async match(key) { return store.has(key) ? new Response(store.get(key)) : undefined; },
+        async keys() { return [...store.keys()].map((k) => ({ url: `http://localhost${k}` })); },
         async delete(key) {
           await new Promise((r) => setTimeout(r, 10)); // slow, like a real 30 MB entry
           return store.delete(key);
@@ -4764,23 +4765,43 @@ if (!canRunTsChecks) {
     assert.equal(await bc.hasCachedMap(proxy), false, "re-save check waits for the running delete");
     assert.equal(await pendingDelete, true);
     // storeMapThenSave: the image is released when the metadata step doesn't save.
+    let live = false;
+    bc.setMapLiveCheck(() => live);
     const cached = async () => bc.hasCachedMap(proxy);
-    let r = await bc.storeMapThenSave(proxy, () => ({ saved: false, why: "cap" }), () => false);
+    let r = await bc.storeMapThenSave(proxy, () => ({ saved: false, why: "cap" }));
     assert.deepEqual([r.why, await cached()], ["cap", false], "cap after download releases the image");
     const quota = await bc
-      .storeMapThenSave(proxy, () => { throw new DOMException("full", "QuotaExceededError"); }, () => false)
+      .storeMapThenSave(proxy, () => { throw new DOMException("full", "QuotaExceededError"); })
       .then(() => null, (e) => e.name);
     assert.deepEqual([quota, await cached()], ["QuotaExceededError", false], "metadata write failure releases the image");
-    r = await bc.storeMapThenSave(proxy, () => ({ saved: false }), () => true);
+    live = true;
+    r = await bc.storeMapThenSave(proxy, () => ({ saved: false }));
     assert.equal(await cached(), true, "kept while another saved item uses it");
     await bc.deleteCachedMap(proxy);
-    r = await bc.storeMapThenSave(proxy, () => ({ saved: true }), () => false);
-    assert.equal(await cached(), true, "saved keeps the image");
+    live = false;
+    r = await bc.storeMapThenSave(proxy, () => ({ saved: true }));
+    assert.equal(await cached(), true, "a running save's claim keeps its own download");
     await bc.deleteCachedMap(proxy);
     mode = "unlisted";
-    assert.equal(await errStatus(bc.storeMapThenSave(proxy, () => ({ saved: true }), () => false)), 400, "failed download rethrows");
+    assert.equal(await errStatus(bc.storeMapThenSave(proxy, () => ({ saved: true }))), 400, "failed download rethrows");
     assert.equal(await cached(), false);
     mode = "ok";
+    // A download that lands after its map was removed (here, or by a sync from another device)
+    // doesn't leave the image behind; one still in use stays.
+    live = false;
+    await bc.downloadMapOnce(proxy);
+    assert.equal(await cached(), false, "late download of a removed map is deleted");
+    live = true;
+    await bc.downloadMapOnce(proxy);
+    assert.equal(await cached(), true, "download of a saved map stays");
+    // Sweep: every cached image nothing uses goes, used ones stay.
+    const stray = bc.mapProxyUrl(`${img}stray.png`, game);
+    await bc.fetchAndCacheMapBlob(stray);
+    bc.setMapLiveCheck((url) => url === proxy);
+    assert.equal(await bc.sweepUnusedMaps(), 1, "one unused entry swept");
+    assert.deepEqual([await bc.hasCachedMap(proxy), await bc.hasCachedMap(stray)], [true, false]);
+    await bc.deleteCachedMap(proxy);
+    bc.setMapLiveCheck(() => true);
     delete globalThis.caches;
     const noCache = await bc.fetchAndCacheMapBlob(proxy);
     assert.equal(noCache.cached, false, "no Cache API still downloads");

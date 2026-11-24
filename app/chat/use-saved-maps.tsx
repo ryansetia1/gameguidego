@@ -7,12 +7,13 @@ import {
   MAP_UNLISTED_STATUS,
   MapFetchError,
   cancelMapDownload,
-  deleteCachedMap,
   downloadMapOnce,
   fetchMapBlob,
   mapProxyUrl,
   readCachedMapBlob,
+  setMapLiveCheck,
   storeMapThenSave,
+  sweepUnusedMaps,
 } from "@/lib/map-blob-cache.js";
 import {
   addSavedMap,
@@ -123,14 +124,11 @@ const proxyOf = (item: MapRef) => mapProxyUrl(item.imageUrl, item.sourceUrl);
 
 /** Whether any saved item on this device (any owner) still uses this image. */
 const isLive = (proxyUrl: string) => load().some((row) => !row.deleted && proxyOf(row) === proxyUrl);
+setMapLiveCheck(isLive);
 
-/** Drop cached images no live item points at any more (removed here or on another device). */
-function dropOrphanedImages(before: SavedMap[], after: SavedMap[]) {
-  const live = new Set(after.filter((row) => !row.deleted).map(proxyOf));
-  const gone = [...new Set(before.filter((row) => !row.deleted).map(proxyOf))].filter((url) => !live.has(url));
-  // Re-checked against the store at delete time: a save may have landed since `after`.
-  return Promise.all(gone.map((url) => (isLive(url) ? false : deleteCachedMap(url).catch(() => false))));
-}
+// Bumped on every sign-out. A sync pass that saw one (even signing back in as the same user,
+// whose select may have run with no session and returned []) stops without writing.
+let signOuts = 0;
 
 function failure(err: unknown): { status: "unlisted" | "aborted" | "error" } {
   if ((err as { name?: string })?.name === "AbortError") return { status: "aborted" };
@@ -161,16 +159,26 @@ export function useSavedMaps(user: User | null) {
   useEffect(() => {
     ownerRef.current = owner;
   }, [owner]);
+  useEffect(() => {
+    const sub = getSupabase()?.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") signOuts += 1;
+    });
+    return () => sub?.data.subscription.unsubscribe();
+  }, []);
 
   const syncOnce = useCallback(async () => {
     const supabase = getSupabase();
     if (!owner || !supabase || serverTableMissing) return;
     try {
+      const generation = signOuts;
       const isCurrent = async () =>
-        ownerRef.current === owner && (await supabase.auth.getSession()).data.session?.user.id === owner;
-      const { start, final, aborted } = await syncSavedMaps(supabase, owner, { load, write: writeStore, isCurrent });
-      if (aborted || !final) return;
-      await dropOrphanedImages(start, final as SavedMap[]);
+        signOuts === generation &&
+        ownerRef.current === owner &&
+        (await supabase.auth.getSession()).data.session?.user.id === owner;
+      const { aborted } = await syncSavedMaps(supabase, owner, { load, write: writeStore, isCurrent });
+      if (aborted) return;
+      // Full sweep, not a before/after diff: also cleans what an earlier aborted pass left.
+      await sweepUnusedMaps().catch(() => 0);
       setSyncFailed(false);
     } catch (error) {
       if (isMissingTableError(error)) {
@@ -268,7 +276,6 @@ export function useSavedMaps(user: User | null) {
               const saved = findSavedMap(added.items, owner, input.game, item.imageUrl) as SavedMap;
               return { saved: true, out: { status: "saved", item: saved } };
             },
-            () => isLive(proxyUrl),
           ),
         );
         if (result.saved) {
@@ -321,16 +328,12 @@ export function useSavedMaps(user: User | null) {
    */
   const removeMap = useCallback(
     async (item: SavedMap) => {
-      let before: SavedMap[];
-      let next: SavedMap[];
       try {
-        before = load();
-        next = removeSavedMap(before, item.id) as SavedMap[];
-        writeStore(next);
+        writeStore(removeSavedMap(load(), item.id) as SavedMap[]);
       } catch {
         return false;
       }
-      await dropOrphanedImages(before, next);
+      await sweepUnusedMaps().catch(() => 0);
       void sync();
       return true;
     },
