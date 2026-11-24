@@ -4229,4 +4229,233 @@ if (!canRunTsChecks) {
   assert.equal((cssSrc.match(/--warn:/g) || []).length, 3, "light + explicit dark + media dark warn tokens");
 }
 
+// VGMaps map viewer phase 1 (#35): parser, viewport math, saved-maps model. Offline fixtures only.
+{
+  const vg = await import("../lib/vgmaps-parser.js");
+  const plat = await import("../lib/platforms.js");
+  assert.equal(plat.platformLabelFor("gba"), "Game Boy Advance");
+  assert.equal(plat.platformLabelFor("Super Nintendo (SNES)"), "SNES");
+  assert.equal(plat.platformLabelFor("NES"), "NES", "exact alias beats substring");
+  assert.equal(plat.platformLabelFor(""), "");
+
+  // Entities + tags.
+  assert.equal(vg.decodeHtmlEntities("A&amp;B&nbsp;&quot;x&quot; &#39;y&#39; &lt;&gt; &#123;&#x7b; &bogus;"), 'A&B "x" \'y\' <> {{ &bogus;');
+  assert.equal(vg.stripHtmlTags("<B>Chrono</B>\n  <i>Trigger</i>&nbsp;"), "Chrono Trigger");
+
+  // URL guard (SSRF): only vgmaps.com over http(s), no creds/ports, https forced, fragment kept.
+  assert.equal(vg.canonicalVGMapsUrl("SNES/index.htm#ChronoTrigger"), "https://www.vgmaps.com/Atlas/SNES/index.htm#ChronoTrigger");
+  assert.equal(vg.canonicalVGMapsUrl("http://vgmaps.com/Atlas/NES/index.htm"), "https://vgmaps.com/Atlas/NES/index.htm");
+  for (const bad of [
+    "https://evil.com/Atlas/SNES/index.htm",
+    "https://www.vgmaps.com.evil.com/x.png",
+    "https://evilvgmaps.com/x.png",
+    "https://user:pw@www.vgmaps.com/x.png",
+    "https://www.vgmaps.com:8080/x.png",
+    "http://127.0.0.1/x.png",
+    "http://169.254.169.254/latest/meta-data",
+    "file:///etc/passwd",
+    "javascript:alert(1)",
+    "//evil.com/x.png",
+    "",
+  ]) {
+    assert.equal(vg.canonicalVGMapsUrl(bad), null, `rejects ${bad}`);
+    assert.equal(vg.isAllowedVGMapsImageUrl(bad), false, `image rejects ${bad}`);
+  }
+  assert.ok(vg.isAllowedVGMapsImageUrl("https://www.vgmaps.com/Atlas/SNES/CT-Map.PNG?x=1#y"));
+  assert.ok(!vg.isAllowedVGMapsImageUrl("https://www.vgmaps.com/Atlas/SNES/index.htm"));
+  assert.ok(!vg.isAllowedVGMapsImageUrl("https://www.vgmaps.com/Atlas/SNES/map.svg"));
+  assert.equal(vg.extractPlatformFromPath("/Atlas/SNES/index.htm"), "SNES");
+  assert.equal(vg.extractPlatformFromPath("/Atlas/index.htm"), "");
+
+  // Atlas directory: nasty HTML (uppercase, unquoted, entities, dupes, off-site, no fragment).
+  const atlas = `<HTML><BODY><TABLE>
+    <TR><TD><A HREF=SNES/index.htm#ChronoTrigger>Chrono Trigger</A>
+    <TR><TD><a href="SNES/index.htm#ChronoTrigger">Chrono</a>
+    <TR><TD><a href='GBA/index.htm#ZeldaMinishCap'>Legend of Zelda, The: The Minish Cap</a></TD>
+    <TR><TD><a href="NES/index.htm#Zelda">The Legend of Zelda (USA)</a>
+    <TR><TD><a href="PS2/index.htm#FFX">Final Fantasy X</a>
+    <TR><TD><a href="NES/index.htm#Metroid">Metroid &amp; Friends</a>
+    <tr><td><a href="SNES/index.htm">SNES index</a>
+    <tr><td><a href="https://evil.com/Atlas/SNES/index.htm#X">Evil</a>
+    <tr><td><a href="../links.htm#top">Links</a>
+  </TABLE></BODY></HTML>`;
+  const entries = vg.parseVGMapsDirectory(atlas);
+  assert.equal(entries.length, 5, "dupes, off-site, fragment-less and non-platform links dropped");
+  assert.deepEqual(entries[0], { title: "Chrono Trigger", platform: "SNES", url: "https://www.vgmaps.com/Atlas/SNES/index.htm#ChronoTrigger" });
+  assert.ok(entries.find((e) => e.title === "Metroid & Friends"), "entity decoded in title");
+
+  // Search normalization + scoring.
+  assert.equal(vg.normalizeSearchText("Pokémon: Platinum!"), "pokemon platinum");
+  assert.equal(vg.canonicalSearchText("The Legend of Zelda (USA)"), "legend zelda");
+  assert.deepEqual(vg.tokenizeSearch("Final Fantasy X (Rev 1)"), ["final", "fantasy", "x"]);
+  assert.deepEqual(vg.findVGMapsGameMatches("chrono trigger", entries).map((e) => e.title), ["Chrono Trigger"], "exact fast-path");
+  assert.deepEqual(vg.findVGMapsGameMatches("Legend of Zelda", entries).map((e) => e.platform), ["NES"], "canonical exact fast-path");
+  assert.deepEqual(vg.findVGMapsGameMatches("Zelda", entries).map((e) => e.platform), ["GBA", "NES"], "substring tier, title order");
+  assert.deepEqual(vg.findVGMapsGameMatches("Zelda", entries, { platform: "NES" }).map((e) => e.platform), ["NES", "GBA"], "platform bonus reorders");
+  assert.deepEqual(vg.findVGMapsGameMatches("Minish Cap Zelda", entries).map((e) => e.platform), ["GBA"], "all-tokens tier");
+  assert.deepEqual(vg.findVGMapsGameMatches("Sonic", entries), [], "no match");
+  assert.deepEqual(vg.findVGMapsGameMatches("  ", entries), [], "blank query");
+  assert.equal(vg.findVGMapsGameMatches("zelda", entries, { limit: 1 }).length, 1, "limit");
+  assert.ok(vg.platformMatchesVGMaps("PlayStation 2", "PS2"));
+  assert.ok(!vg.platformMatchesVGMaps("SNES", "NES"));
+  assert.ok(!vg.platformMatchesVGMaps("", "NES"));
+  // Exact matches across consoles: the player's platform comes first.
+  const twins = [
+    { title: "Zelda", platform: "NES", url: "https://www.vgmaps.com/Atlas/NES/index.htm#A" },
+    { title: "Zelda", platform: "SNES", url: "https://www.vgmaps.com/Atlas/SNES/index.htm#A" },
+  ];
+  assert.equal(vg.findVGMapsGameMatches("zelda", twins, { platform: "Super Nintendo" })[0].platform, "SNES");
+
+  // Sizes + dimensions.
+  assert.equal(vg.parseFileSizeBytes("512 bytes"), 512);
+  assert.equal(vg.parseFileSizeBytes("(300 KB)"), 307200);
+  assert.equal(vg.parseFileSizeBytes("2.5 MiB"), 2621440);
+  assert.equal(vg.parseFileSizeBytes("4096 x 3072"), null);
+  assert.deepEqual(vg.parseDimensions("4096 x 3072 PNG"), { width: 4096, height: 3072 });
+
+  // Platform page: one big table, anchor-to-anchor slicing, grid + row layouts, nested table.
+  const page = `<html><body>
+  <TABLE WIDTH=100%>
+   <TR><TD COLSPAN=3><A NAME="Contra"></A><B>Contra</B>
+   <TR><TD><A HREF="Contra-Stage1.png"><IMG SRC="t/c1.gif"></A><BR>Stage 1<BR>2048 x 240<BR>45 KB PNG<BR>(by Rick N. Bruns)
+   <TR><TD COLSPAN=3><a name="Final%20Fantasy"></a><b>Final Fantasy</b></TD></TR>
+   <TR>
+     <TD><a href="FF-Overworld.png"><img src="t/ff1.gif"></a><br>Overworld<br>4096 x 4096<br>7.5 MB PNG<br>by Ian Elliot</TD>
+     <TD><a href="FF-Coneria.gif"><img src="t/ff2.gif"></a><br>Coneria Castle&nbsp;(1F)<br>512 x 480<br>20 KB</TD>
+   </TR>
+   <TR><TD><TABLE><TR><TD><a href="FF-Temple.png">Temple of Fiends</a></TD></TR></TABLE></TD>
+       <TD>1024 x 1024</TD><TD>300 KB</TD><TD>PNG</TD><TD>Ian Elliot</TD></TR>
+   <TR><TD><a href="FF-Overworld.png">dup</a></TD></TR>
+   <TR><TD><a href="https://evil.com/steal.png">Evil</a> <a href="readme.txt">txt</a></TD></TR>
+   <TR><TD COLSPAN=3><A NAME="Metroid"></A><B>Metroid</B>
+   <TR><TD><A HREF="Metroid-Brinstar.png">Brinstar</A> 3000 x 2000 1.2 MB
+  </TABLE>
+  <TABLE><TR><TD><a href="Footer.png">footer</a></TD></TR></TABLE>
+  </body></html>`;
+  const ffUrl = "https://www.vgmaps.com/Atlas/NES/index.htm#Final%20Fantasy";
+  const ff = vg.extractVGMapsLinks(page, ffUrl);
+  assert.deepEqual(ff.map((m) => m.imageUrl.split("/").pop()), ["FF-Overworld.png", "FF-Coneria.gif", "FF-Temple.png"], "only this game's maps, deduped, off-site + non-image dropped");
+  assert.deepEqual(
+    { name: ff[0].mapName, dims: ff[0].dimensions, w: ff[0].width, size: ff[0].fileSize, fmt: ff[0].format, by: ff[0].author, large: ff[0].isLarge, game: ff[0].guideTitle },
+    { name: "Overworld", dims: "4096 x 4096", w: 4096, size: "7.5 MB", fmt: "PNG", by: "Ian Elliot", large: true, game: "Final Fantasy" },
+  );
+  assert.equal(ff[0].fileSizeBytes, Math.round(7.5 * 1048576));
+  assert.equal(ff[1].mapName, "Coneria Castle (1F)");
+  assert.equal(ff[1].format, "GIF", "format falls back to the URL extension");
+  assert.equal(ff[1].isLarge, false);
+  assert.equal(ff[1].author, "", "no author line");
+  assert.deepEqual(
+    { name: ff[2].mapName, dims: ff[2].dimensions, size: ff[2].fileSize, by: ff[2].author },
+    { name: "Temple of Fiends", dims: "1024 x 1024", size: "300 KB", by: "Ian Elliot" },
+    "row-layout metadata from sibling cells",
+  );
+  assert.equal(ff[0].imageUrl, "https://www.vgmaps.com/Atlas/NES/FF-Overworld.png", "relative href resolved");
+  // Decoded fragment spelling + case-insensitive anchor.
+  assert.equal(vg.extractVGMapsLinks(page, "https://www.vgmaps.com/Atlas/NES/index.htm#final fantasy").length, 3);
+  const contra = vg.extractVGMapsLinks(page, "https://www.vgmaps.com/Atlas/NES/index.htm#Contra");
+  assert.deepEqual(contra.map((m) => [m.mapName, m.author, m.dimensions]), [["Stage 1", "Rick N. Bruns", "2048 x 240"]]);
+  // Last game on the page stops at its table's end (footer table excluded).
+  assert.deepEqual(vg.extractVGMapsLinks(page, "https://www.vgmaps.com/Atlas/NES/index.htm#Metroid").map((m) => m.mapName), ["Brinstar"]);
+  // No fragment / unknown anchor: whole page.
+  assert.equal(vg.extractVGMapsLinks(page, "https://www.vgmaps.com/Atlas/NES/index.htm").length, 6);
+  assert.equal(vg.extractVGMapsLinks(page, "https://www.vgmaps.com/Atlas/NES/index.htm#Nope").length, 6);
+  assert.equal(vg.extractVGMapsLinks(page, "https://www.vgmaps.com/Atlas/NES/index.htm#Nope")[0].guideTitle, "");
+  assert.equal(vg.selectRowsForPage(page, ffUrl).length, 6, "anchor row + its rows (nested table rows split out)");
+  assert.deepEqual(vg.extractVGMapsLinks("", ffUrl), []);
+}
+
+{
+  const mv = await import("../lib/map-viewport.js");
+  const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-6, `${msg}: ${a} vs ${b}`);
+  assert.equal(mv.calculateFitScale(4000, 2000, 400, 400), 0.1);
+  assert.equal(mv.calculateMapMaxZoom(4000, 2000, 400, 400), 40, "huge map capped at 40");
+  assert.equal(mv.calculateMapMaxZoom(400, 400, 400, 400), 8, "1:1 map x8");
+  assert.equal(mv.calculateMapMaxZoom(100, 100, 800, 800), 4, "small map floors at 4");
+  assert.equal(mv.calculateMapMaxZoom(0, 100, 800, 800), 4, "bad size");
+  assert.equal(mv.calculateMapMaxZoom(4000, 2000, 400, 400, { maxAllowedZoom: 60 }), 60, "opts");
+  assert.deepEqual(mv.calculateMapPanBounds(4000, 2000, 400, 400, 1), { maxPanX: 0, maxPanY: 0 }, "fit: no pan");
+  assert.deepEqual(mv.calculateMapPanBounds(4000, 2000, 400, 400, 4), { maxPanX: 600, maxPanY: 200 });
+  assert.deepEqual(mv.clampMapOffset({ x: 999, y: -999 }, { maxPanX: 600, maxPanY: 200 }), { x: 600, y: -200 });
+  // Focal invariant: the map point under the centroid stays under it.
+  const base = { viewportW: 400, viewportH: 400, naturalW: 4000, naturalH: 4000, maxZoom: 40 };
+  const before = { scale: 2, offset: { x: 50, y: -30 } };
+  const centroid = { x: 120, y: 300 };
+  const after = mv.computeFocalZoomTransform({ ...base, ...before, zoomFactor: 1.5, centroid });
+  const fit = mv.calculateFitScale(4000, 4000, 400, 400);
+  const mapPoint = (s, o) => ({ x: (centroid.x - 200 - o.x) / (fit * s), y: (centroid.y - 200 - o.y) / (fit * s) });
+  near(after.scale, 3, "scale");
+  near(mapPoint(after.scale, after.offset).x, mapPoint(before.scale, before.offset).x, "focal x");
+  near(mapPoint(after.scale, after.offset).y, mapPoint(before.scale, before.offset).y, "focal y");
+  const clamped = mv.computeFocalZoomTransform({ ...base, ...before, zoomFactor: 100, centroid, panDelta: { x: 1e6, y: 0 } });
+  assert.equal(clamped.scale, 40, "zoom clamps to max");
+  assert.equal(clamped.offset.x, mv.calculateMapPanBounds(4000, 4000, 400, 400, 40).maxPanX, "pan clamps to bounds");
+  assert.deepEqual(mv.computeFocalZoomTransform({ ...base, ...before, zoomFactor: 0.01, centroid }), { scale: 1, offset: { x: 0, y: 0 } }, "zoom out to fit recentres");
+  assert.deepEqual(mv.computeOverviewDimensions(8192, 4096), { width: 2048, height: 1024, overviewScale: 0.25 });
+  assert.deepEqual(mv.computeOverviewDimensions(300, 200), { width: 300, height: 200, overviewScale: 1 });
+  assert.ok(!mv.shouldRenderHdOverlay(0.25, 0.25));
+  assert.ok(!mv.shouldRenderHdOverlay(0.26, 0.25), "within 5%");
+  assert.ok(mv.shouldRenderHdOverlay(0.27, 0.25));
+  // Visible rect: fit shows everything; 4x zoom at centre shows the middle quarter.
+  assert.deepEqual(mv.computeVisibleSourceRect({ naturalW: 4000, naturalH: 2000, viewportW: 400, viewportH: 400, scale: 1, offset: { x: 0, y: 0 } }),
+    { sx: 0, sy: 0, sw: 4000, sh: 2000, dx: 0, dy: 100, dw: 400, dh: 200 });
+  const r = mv.computeVisibleSourceRect({ naturalW: 4000, naturalH: 4000, viewportW: 400, viewportH: 400, scale: 4, offset: { x: 0, y: 0 } });
+  assert.deepEqual([r.sx, r.sy, r.sw, r.sh, r.dx, r.dy, r.dw, r.dh], [1500, 1500, 1000, 1000, 0, 0, 400, 400]);
+  const panned = mv.computeVisibleSourceRect({ naturalW: 4000, naturalH: 4000, viewportW: 400, viewportH: 400, scale: 4, offset: { x: 600, y: 0 } });
+  assert.equal(panned.sx, 0, "panned to the left edge");
+  assert.equal(mv.computeVisibleSourceRect({ naturalW: 100, naturalH: 100, viewportW: 400, viewportH: 400, scale: 1, offset: { x: 5000, y: 0 } }).sw, 0, "off-screen");
+}
+
+{
+  const sm = await import("../lib/saved-maps.js");
+  const link = (n, extra = {}) => ({ mapName: `Map ${n}`, imageUrl: `https://www.vgmaps.com/Atlas/NES/m${n}.png`, dimensions: "640 x 480", fileSize: "20 KB", format: "PNG", author: "A", ...extra });
+  const mk = (owner, game, n, t, extra) => sm.buildSavedMap({ owner, game, platform: "NES", sourceUrl: "https://www.vgmaps.com/Atlas/NES/index.htm#FF", map: link(n, extra) }, new Date(t));
+  const a = mk(null, "Final Fantasy", 0, 1000);
+  assert.deepEqual([a.width, a.height, a.lastZoom, a.gameKey, a.synced], [640, 480, 1, "final fantasy", false], "dimensions parsed, defaults");
+  let items = sm.addSavedMap([], a).items;
+  assert.equal(sm.addSavedMap(items, mk(null, "final fantasy", 0, 2000)).items.length, 1, "same map twice is a no-op");
+  assert.equal(sm.findSavedMap(items, null, "FINAL FANTASY", a.imageUrl)?.id, a.id);
+  assert.equal(sm.findSavedMap(items, "u1", "Final Fantasy", a.imageUrl), undefined, "owners are separate");
+  for (let i = 1; i < sm.MAPS_PER_GAME_CAP; i++) items = sm.addSavedMap(items, mk(null, "Final Fantasy", i, 1000 + i)).items;
+  assert.equal(sm.addSavedMap(items, mk(null, "Final Fantasy", 99, 9999)).error, "cap", "per-game cap");
+  assert.equal(sm.mapsForGame(items, null, "Final Fantasy")[0].title, `Map ${sm.MAPS_PER_GAME_CAP - 1}`, "newest first");
+  let many = [];
+  for (let i = 0; i < sm.MAPS_DEVICE_CAP; i++) many = sm.addSavedMap(many, mk(null, `Game ${i}`, i, i)).items;
+  assert.equal(sm.addSavedMap(many, mk(null, "New", 1, 1)).error, "cap", "device cap");
+  assert.ok(sm.addSavedMap(many, mk("u1", "New", 1, 1)).items, "caps are per owner");
+  // Viewport memory marks for re-push.
+  const viewed = sm.updateMapViewportState([{ ...a, synced: true }], a.id, { lastZoom: 3.5, lastOffsetX: -12, lastOffsetY: Number.NaN });
+  assert.deepEqual([viewed[0].lastZoom, viewed[0].lastOffsetX, viewed[0].lastOffsetY, viewed[0].synced], [3.5, -12, 0, false]);
+  // Remove: unsynced drops, synced tombstones; re-save revives the tombstone id.
+  assert.equal(sm.removeSavedMap([a], a.id).length, 0);
+  const synced = { ...a, owner: "u1", synced: true };
+  const tombed = sm.removeSavedMap([synced], a.id);
+  assert.equal(tombed[0].deleted, true);
+  assert.equal(sm.visibleMaps(tombed, "u1").length, 0);
+  const revived = sm.addSavedMap(tombed, mk("u1", "Final Fantasy", 0, 5000)).items;
+  assert.deepEqual([revived.length, revived[0].id, revived[0].deleted, revived[0].synced], [1, a.id, false, false], "re-save reuses tombstone id");
+  // Claim anon (dupes of the account's maps dropped) + merge.
+  const anonDup = mk(null, "Final Fantasy", 0, 100);
+  const anonNew = mk(null, "Final Fantasy", 5, 100);
+  const claimed = sm.claimAnonMaps([synced, anonDup, anonNew], "u1");
+  assert.equal(claimed.length, 2, "anon duplicate of an owned map dropped");
+  assert.equal(claimed.find((r) => r.id === anonNew.id).owner, "u1");
+  const remoteNew = sm.toSavedMapRow(mk("u1", "Other", 7, 6000));
+  const remoteViewport = { ...sm.toSavedMapRow(synced), last_zoom: 6 };
+  const gone = { ...mk("u1", "Other", 8, 4000), synced: true };
+  const tomb = { ...mk("u1", "Other", 9, 3000), synced: true, deleted: true };
+  const merged = sm.mergeRemoteMaps([...claimed, gone, tomb], [remoteNew, remoteViewport, sm.toSavedMapRow(tomb)], "u1", [anonNew.id]);
+  assert.ok(merged.find((r) => r.id === remoteNew.id && r.synced), "remote row added");
+  assert.equal(merged.find((r) => r.id === synced.id).lastZoom, 6, "synced item takes the server viewport");
+  assert.ok(merged.find((r) => r.id === anonNew.id && r.synced), "pushed row marked synced");
+  assert.ok(!merged.find((r) => r.id === gone.id), "synced row missing remotely dropped");
+  assert.ok(merged.find((r) => r.id === tomb.id && r.deleted), "pending tombstone kept");
+  assert.equal(sm.mergeRemoteMaps([tomb], [], "u1", [], [tomb.id]).length, 0, "confirmed delete drops tombstone");
+  const editedMidSync = { ...synced, lastZoom: 9, synced: false };
+  assert.equal(sm.mergeRemoteMaps([editedMidSync], [remoteViewport], "u1")[0].lastZoom, 9, "unpushed local edit stays queued");
+  const roundTrip = sm.fromSavedMapRow(sm.toSavedMapRow(a), "u1");
+  assert.deepEqual({ ...roundTrip, owner: null, synced: false }, a, "row round-trip");
+  assert.ok(sm.isMissingTableError({ code: "PGRST205" }));
+  assert.deepEqual(sm.loadSavedMaps(), [], "no window: empty");
+}
+
 console.log("Self-check passed.");
