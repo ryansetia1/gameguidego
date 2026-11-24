@@ -4927,6 +4927,41 @@ if (!canRunTsChecks) {
     await sm.syncSavedMaps(server.client, "u1", e);
     assert.equal(server.rows.length, 0);
   }
+  // Regression: concurrent local mutations during async initial isCurrent() must not be
+  // clobbered by a stale pre-await store.load() written back during the claim step.
+  {
+    const srv = fakeServer();
+    const link2 = { ...link, mapName: "Dungeon", imageUrl: img.replace(/\.png$/i, "-2.png") };
+    const link3 = { ...link, mapName: "Town", imageUrl: img.replace(/\.png$/i, "-3.png") };
+    let seed = sm.addSavedMap([], sm.buildSavedMap({ owner: "u1", game: "Final Fantasy", sourceUrl: game, map: link })).items;
+    seed = sm.addSavedMap(seed, sm.buildSavedMap({ owner: "u1", game: "Final Fantasy", sourceUrl: game, map: link2 })).items;
+    const f = device(seed);
+    await sm.syncSavedMaps(srv.client, "u1", f);
+    assert.equal(srv.rows.length, 2);
+    const m1 = f.items.find((r) => r.imageUrl === link.imageUrl);
+    const m2 = f.items.find((r) => r.imageUrl === link2.imageUrl);
+    let checks = 0;
+    const res = await sm.syncSavedMaps(srv.client, "u1", {
+      load: () => f.items,
+      write: (x) => f.write(x),
+      async isCurrent() {
+        checks += 1;
+        await Promise.resolve();
+        if (checks === 1) {
+          f.write(sm.removeSavedMap(f.items, m1.id));
+          f.write(sm.updateMapViewportState(f.items, m2.id, { lastZoom: 4 }));
+          f.write(sm.addSavedMap(f.items, sm.buildSavedMap({ owner: "u1", game: "Final Fantasy", sourceUrl: game, map: link3 })).items);
+        }
+        return true;
+      },
+    });
+    assert.equal(res.aborted, false);
+    assert.equal(f.items.some((r) => r.id === m1.id), false, "concurrent remove preserved and synced");
+    assert.equal(f.items.find((r) => r.id === m2.id)?.lastZoom, 4, "concurrent viewport edit preserved");
+    assert.equal(f.items.some((r) => r.imageUrl === link3.imageUrl && r.synced), true, "concurrent save preserved and pushed");
+    assert.equal(srv.rows.length, 2, "server reflects concurrent remove + save");
+    assert.equal(srv.rows.find((r) => r.id === m2.id)?.last_zoom, 4, "server received concurrent viewport edit");
+  }
   // Missing table: throws an error isMissingTableError recognises (hook goes quiet).
   server.client.setMissing(true);
   const c = device(sm.addSavedMap([], sm.buildSavedMap({ owner: "u1", game: "FF", sourceUrl: game, map: link })).items);
