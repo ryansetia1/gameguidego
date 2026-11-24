@@ -221,7 +221,11 @@ import {
 import { buildModelInput, isAllowedModel, modelLabel } from "../lib/ai-models.js";
 import { questionLanguage } from "../lib/question-language.js";
 import {
+  fetchNormalizedThread,
+  isResponseModelColumnError,
+  resolveThreadMessages,
   selectMessagesForServerMerge,
+  syncThreadFromMessages,
   tailTurnIndexFromMessages,
 } from "../lib/chat-thread-persist.js";
 import { compareThreadSources } from "../lib/chat-thread-audit.js";
@@ -3812,6 +3816,202 @@ if (!canRunTsChecks) {
     setupSrc.indexOf("onRequestConfirm={onRequestConfirm}"),
   );
   assert.ok(setupCommitBlock.includes("onSetOptPanel(null)"), "HomeSetup auto-collapses guide panel");
+}
+
+// #33: preserve assistant model across server merges, stale caches, and chat_responses.model fallback
+{
+  assert.equal(isResponseModelColumnError({ message: "column chat_responses.model does not exist" }), true);
+  assert.equal(isResponseModelColumnError({ message: "Could not find the 'model' column of 'chat_responses' in the schema cache" }), true);
+  assert.equal(isResponseModelColumnError({ message: "permission denied" }), false);
+
+  const mergedForServer = selectMessagesForServerMerge(
+    [
+      { role: "user", content: "q1" },
+      {
+        role: "assistant",
+        content: "a1-v2",
+        variants: [{ content: "a1-v1" }, { content: "a1-v2" }],
+        activeVariantIndex: 1,
+      },
+      { role: "user", content: "q2" },
+    ],
+    [
+      { role: "user", content: "q1" },
+      {
+        role: "assistant",
+        content: "a1-v2",
+        model: "openai/gpt-5.6-sol",
+        variants: [
+          { content: "a1-v1", model: "google/gemini-3-flash" },
+          { content: "a1-v2", model: "openai/gpt-5.6-sol" },
+        ],
+        activeVariantIndex: 1,
+      },
+      { role: "user", content: "q2" },
+    ],
+  );
+  assert.equal(mergedForServer[1].model, "openai/gpt-5.6-sol");
+  assert.equal(mergedForServer[1].variants[0].model, "google/gemini-3-flash");
+  assert.equal(mergedForServer[1].variants[1].model, "openai/gpt-5.6-sol");
+
+  const makeMockSupabase = ({ hasModelColumn, turns, responses, states, legacyMessages }) => {
+    let writtenResponses = [];
+    let legacyFetches = 0;
+    const client = {
+      from(table) {
+        if (table === "chat_turns") {
+          return {
+            select() {
+              const chain = {
+                eq: () => chain,
+                order: () => Promise.resolve({ data: turns, error: null }),
+              };
+              return chain;
+            },
+            upsert(row) {
+              const tid = `turn-${row.turn_index}`;
+              return {
+                select: () => ({
+                  single: () => Promise.resolve({ data: { id: tid }, error: null }),
+                }),
+              };
+            },
+            delete() {
+              const chain = {
+                eq: () => chain,
+                gte: () => Promise.resolve({ error: null }),
+              };
+              return chain;
+            },
+          };
+        }
+        if (table === "chat_responses") {
+          return {
+            select(cols) {
+              return {
+                in() {
+                  if (!hasModelColumn && /\bmodel\b/.test(cols)) {
+                    return Promise.resolve({
+                      data: null,
+                      error: { message: "Could not find the 'model' column of 'chat_responses' in the schema cache" },
+                    });
+                  }
+                  const stripped = responses.map(({ model, ...rest }) => (hasModelColumn ? { ...rest, model } : rest));
+                  return Promise.resolve({ data: stripped, error: null });
+                },
+              };
+            },
+            upsert(rows) {
+              if (!hasModelColumn && rows.some((r) => "model" in r)) {
+                return Promise.resolve({
+                  error: { message: "Could not find the 'model' column of 'chat_responses' in the schema cache" },
+                });
+              }
+              writtenResponses = rows;
+              return Promise.resolve({ error: null });
+            },
+            delete() {
+              const chain = {
+                eq: () => chain,
+                gte: () => Promise.resolve({ error: null }),
+              };
+              return chain;
+            },
+          };
+        }
+        if (table === "chat_turn_state") {
+          return {
+            select() {
+              return { in: () => Promise.resolve({ data: states, error: null }) };
+            },
+            upsert() {
+              return Promise.resolve({ error: null });
+            },
+            delete() {
+              return { eq: () => Promise.resolve({ error: null }) };
+            },
+          };
+        }
+        if (table === "chats") {
+          return {
+            select() {
+              return {
+                eq() {
+                  return {
+                    single() {
+                      legacyFetches += 1;
+                      return Promise.resolve({ data: { messages: legacyMessages }, error: null });
+                    },
+                  };
+                },
+              };
+            },
+          };
+        }
+        throw new Error(`Unexpected table: ${table}`);
+      },
+      getWrittenResponses: () => writtenResponses,
+      getLegacyFetches: () => legacyFetches,
+    };
+    return client;
+  };
+
+  // Pre-migration (no chat_responses.model column): stale local chat.messages triggers DB legacy refetch and preserves model.
+  {
+    const sbPre = makeMockSupabase({
+      hasModelColumn: false,
+      turns: [{ id: "t0", turn_index: 0, user_content: "q1", user_images: [] }],
+      responses: [{ turn_id: "t0", variant_index: 0, content: "a1", sources: [], model: "openai/gpt-5.6-sol" }],
+      states: [{ turn_id: "t0", active_variant_index: 0 }],
+      legacyMessages: [
+        { role: "user", content: "q1" },
+        { role: "assistant", content: "a1", sources: [], model: "openai/gpt-5.6-sol" },
+      ],
+    });
+    const stalePlaceholderResolved = await resolveThreadMessages(sbPre, {
+      id: "c1",
+      messages: [
+        { role: "user", content: "q1" },
+        { role: "assistant", content: WRITING_ANSWER_PLACEHOLDER },
+      ],
+    });
+    assert.equal(stalePlaceholderResolved[1].model, "openai/gpt-5.6-sol");
+    assert.equal(sbPre.getLegacyFetches(), 1);
+
+    const staleUserOnlyResolved = await resolveThreadMessages(sbPre, {
+      id: "c1",
+      messages: [{ role: "user", content: "q1" }],
+    });
+    assert.equal(staleUserOnlyResolved[1].model, "openai/gpt-5.6-sol");
+    assert.equal(sbPre.getLegacyFetches(), 2);
+
+    const syncFallback = await syncThreadFromMessages(sbPre, "c1", [
+      { role: "user", content: "q1" },
+      { role: "assistant", content: "a1", sources: [], model: "openai/gpt-5.6-sol" },
+    ]);
+    assert.equal(syncFallback.ok, true);
+    assert.equal("model" in sbPre.getWrittenResponses()[0], false, "strips model on pre-migration schema");
+  }
+
+  // Post-migration (chat_responses.model exists): reads and writes model directly even without JSONB cache.
+  {
+    const sbPost = makeMockSupabase({
+      hasModelColumn: true,
+      turns: [{ id: "t0", turn_index: 0, user_content: "q1", user_images: [] }],
+      responses: [{ turn_id: "t0", variant_index: 0, content: "a1", sources: [], model: "google/gemini-3-flash" }],
+      states: [{ turn_id: "t0", active_variant_index: 0 }],
+      legacyMessages: [],
+    });
+    const normalizedWithModel = await fetchNormalizedThread(sbPost, "c1");
+    assert.equal(normalizedWithModel[1].model, "google/gemini-3-flash");
+
+    const syncWithModel = await syncThreadFromMessages(sbPost, "c1", [
+      { role: "user", content: "q1" },
+      { role: "assistant", content: "a1", sources: [], model: "openai/gpt-5.6-sol" },
+    ]);
+    assert.equal(syncWithModel.ok, true);
+    assert.equal(sbPost.getWrittenResponses()[0].model, "openai/gpt-5.6-sol");
+  }
 }
 
 console.log("Self-check passed.");
