@@ -4549,4 +4549,99 @@ if (!canRunTsChecks) {
   assert.deepEqual(sm.loadSavedMaps(), [], "no window: empty");
 }
 
+// VGMaps map viewer phase 2 (#36): server fetch guard, size caps, read-through cache.
+// fetch is stubbed; nothing here reaches VGMaps or Supabase.
+{
+  const vg = await import("../lib/vgmaps-parser.js");
+  // Unclosed <a> tags parse in linear time (was quadratic: 1 MB took ~18 s).
+  const junk = "<a href='x'>".repeat(90_000);
+  let t0 = Date.now();
+  vg.parseVGMapsDirectory(junk);
+  vg.extractVGMapsLinks(`<tr><td>${junk}`, "https://www.vgmaps.com/Atlas/NES/index.htm#X");
+  assert.ok(Date.now() - t0 < 1000, "1 MB of unclosed <a> parses fast");
+  // An unclosed name anchor no longer swallows the next real link.
+  assert.deepEqual(
+    vg.extractVGMapsLinks('<tr><td><a name="G">Game<a href="g1.png">G1</a></td></tr>', "https://www.vgmaps.com/Atlas/NES/index.htm#G").map((m) => m.mapName),
+    ["G1"],
+  );
+
+  const vc = await import("../lib/vgmaps-cache.ts");
+  const realFetch = globalThis.fetch;
+  /** @type {{ url: string, init: RequestInit }[]} */
+  let calls = [];
+  const stub = (/** @type {(url: string) => Response} */ reply) => {
+    calls = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      return reply(String(url));
+    };
+  };
+  const redirect = (location) => new Response(null, { status: 302, headers: { location } });
+  const status = async (p) => p.then(() => 200, (err) => (err instanceof vc.VGMapsError ? err.status : `threw ${err}`));
+  const img = "https://www.vgmaps.com/Atlas/NES/m1.png";
+  const png = (body = "PNG", headers = {}) => new Response(body, { headers: { "content-type": "image/png", ...headers } });
+  try {
+    // Redirects: manual, every hop re-validated, off-site hops refused.
+    stub(() => redirect("https://evil.example/x.png"));
+    assert.equal(await status(vc.fetchVGMapsImage(img, "https://www.vgmaps.com/")), 502, "redirect off VGMaps refused");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].init.redirect, "manual");
+    stub(() => redirect("https://www.vgmaps.com/Atlas/NES/index.htm"));
+    assert.equal(await status(vc.fetchVGMapsImage(img, "https://www.vgmaps.com/")), 502, "image redirect to non-image refused");
+    stub(() => redirect("http://127.0.0.1/m1.png"));
+    assert.equal(await status(vc.fetchVGMapsText("https://www.vgmaps.com/Atlas/NES/index.htm")), 502, "page redirect to localhost refused");
+    stub((url) => (url.endsWith("/m1.png") ? redirect("/Atlas/NES/m2.png") : png()));
+    const followed = await vc.fetchVGMapsImage("https://vgmaps.com/Atlas/NES/m1.png#frag", "https://www.vgmaps.com/Atlas/NES/index.htm");
+    assert.deepEqual(calls.map((c) => c.url), ["https://vgmaps.com/Atlas/NES/m1.png", "https://vgmaps.com/Atlas/NES/m2.png"], "same-host hop followed, fragment dropped");
+    assert.equal(calls[0].init.headers.Referer, "https://www.vgmaps.com/Atlas/NES/index.htm");
+    assert.equal(followed.contentType, "image/png");
+    stub(() => redirect("/Atlas/NES/m1.png"));
+    assert.equal(await status(vc.fetchVGMapsImage(img, "https://www.vgmaps.com/")), 502, "redirect loop stops");
+    assert.equal(calls.length, 4, "at most 3 redirects");
+    assert.equal(await status(vc.fetchVGMapsImage("https://evil.example/m.png", "")), 400, "bad start URL is 400");
+
+    // Image type + size.
+    stub(() => png("<svg/>", { "content-type": "image/svg+xml" }));
+    assert.equal(await status(vc.fetchVGMapsImage(img, "")), 502, "svg refused");
+    stub(() => new Response("<html>", { headers: { "content-type": "text/html" } }));
+    assert.equal(await status(vc.fetchVGMapsImage(img, "")), 502, "html refused");
+    stub(() => png("x", { "content-length": String(vc.MAX_MAP_BYTES + 1) }));
+    assert.equal(await status(vc.fetchVGMapsImage(img, "")), 413, "declared oversize is 413");
+    const capped = vc.capStream(new Response("123456").body, 4);
+    assert.equal(await status(new Response(capped).arrayBuffer()), 413, "undeclared oversize stream errors");
+    assert.equal(new TextDecoder().decode(await new Response(vc.capStream(new Response("1234").body, 4)).arrayBuffer()), "1234");
+
+    // Page cap is enforced on the bytes before anything parses them.
+    assert.equal(await status(vc.readCappedBody(new Response("12345"), 4)), 413);
+    stub(() => new Response("x", { headers: { "content-type": "text/html", "content-length": String(vc.MAX_PAGE_BYTES + 1) } }));
+    assert.equal(await status(vc.fetchVGMapsText("https://www.vgmaps.com/Atlas/NES/index.htm")), 413, "oversized page never parsed");
+    stub(() => new Response("gone", { status: 404 }));
+    assert.equal(await status(vc.fetchVGMapsText("https://www.vgmaps.com/Atlas/NES/index.htm")), 502);
+    stub(() => new Response(new Uint8Array([0x50, 0x6f, 0x6b, 0xe9]), { headers: { "content-type": "text/html; charset=iso-8859-1" } }));
+    assert.equal(await vc.fetchVGMapsText("https://www.vgmaps.com/Atlas/NES/index.htm"), "Poké", "page charset honoured");
+
+    // Read-through cache, memory only (skipped when Supabase env is set so the check never touches it).
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      stub(() => new Response("<p>nothing</p>", { headers: { "content-type": "text/html" } }));
+      assert.equal(await status(vc.getCachedVGMapsDirectory()), 502, "empty index is an error");
+      const atlas = '<a href="NES/index.htm#FF">Final Fantasy</a><a href="https://evil.example/NES/index.htm#X">X</a>';
+      stub(() => new Response(atlas, { headers: { "content-type": "text/html" } }));
+      assert.deepEqual((await vc.getCachedVGMapsDirectory()).map((e) => e.url), ["https://www.vgmaps.com/Atlas/NES/index.htm#FF"]);
+      await vc.getCachedVGMapsDirectory();
+      assert.equal(calls.length, 1, "index served from memory, empty parse wasn't cached");
+      const page = '<table><tr><td><a name="FF">Final Fantasy</a></td></tr><tr><td><a href="ff1.png">World</a> 256 x 256</td></tr>' +
+        '<tr><td><a name="ZZ">Zelda</a></td></tr><tr><td><a href="z1.png">Overworld</a></td></tr></table>';
+      stub(() => new Response(page, { headers: { "content-type": "text/html" } }));
+      const ff = await vc.getCachedVGMapsMaps("https://www.vgmaps.com/Atlas/NES/index.htm#FF");
+      const zz = await vc.getCachedVGMapsMaps("https://www.vgmaps.com/Atlas/NES/index.htm#ZZ");
+      await vc.getCachedVGMapsMaps("https://www.vgmaps.com/Atlas/NES/index.htm#FF");
+      assert.deepEqual([ff.map((m) => m.imageUrl), zz.map((m) => m.mapName)], [["https://www.vgmaps.com/Atlas/NES/ff1.png"], ["Overworld"]]);
+      assert.deepEqual(calls.map((c) => c.url), ["https://www.vgmaps.com/Atlas/NES/index.htm"], "one page fetch shared by both anchors");
+      assert.equal(await status(vc.getCachedVGMapsMaps("https://evil.example/Atlas/NES/index.htm#FF")), 400);
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 console.log("Self-check passed.");

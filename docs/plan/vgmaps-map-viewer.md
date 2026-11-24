@@ -122,7 +122,8 @@ flowchart LR
    - Read-through cache backed by `public.vgmaps_cache` (7-day TTL) + process-local in-memory `Map` fallback when Supabase env vars are unset.
    - Cache keys:
      - `"atlas:index"` → stores `{ fetchedAt, entries: VGMapsGameEntry[] }` (parsed entries instead of raw 500KB+ HTML keeps Postgres rows compact and search fast!).
-     - `"page:" + canonicalPageUrlWithoutFragment` → stores `{ fetchedAt, html }` so any game anchor on e.g. `/Atlas/SNES/index.htm` hits the same cached HTML document.
+     - `"maps:" + canonicalGameUrl` → stores that game's parsed `VGMapsMapLink[]`. **As built (#36):** raw platform pages run up to ~6 MB (NES), too big for a cache row, so page html lives only in a small per-instance memory cache (6 pages) shared by every anchor on that page.
+   - **As built (#36):** memory is an L1 in front of Supabase, so a missing table still caches. Writes use the service-role client (`vgmaps_cache` has a read-only public policy, no anon writes); without `SUPABASE_SERVICE_ROLE_KEY` only the memory copy is kept. Pages are capped at 16 MiB before parsing, and every upstream request (pages and images) uses `redirect: "manual"` with each hop re-validated against the VGMaps allowlist. `/api/maps/list` only accepts game URLs present in the Atlas index.
    - `fetchVGMapsText(url)` uses `User-Agent: GameGuideGo/1.0 (+https://gameguidego.vercel.app)`, `Accept: text/html`, 15s `AbortSignal.timeout`.
 
 ---
