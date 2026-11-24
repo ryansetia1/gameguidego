@@ -39,7 +39,9 @@ import {
 } from "@/lib/guide-urls.js";
 import { compressImage, coverStoragePath } from "@/lib/image.js";
 import {
+  collectUploadedGuideUrls,
   coverUrlsToStoragePaths,
+  purgeUploadedGuides,
   removeCoverStoragePaths,
   threadImageStoragePaths,
 } from "@/lib/chat-delete.js";
@@ -350,6 +352,24 @@ export default function Home() {
   // Path of a previously-uploaded cover that a new pick will replace, deleted once
   // the replacement is saved so the bucket doesn't keep the orphan.
   const replacedCoverRef = useRef<string | null>(null);
+  const unsavedSetupRef = useRef<{
+    started: boolean;
+    editingGame: boolean;
+    preferredUrls: string[];
+    game: string;
+    platform: string;
+    cover: string;
+    user: User | null;
+  }>({
+    started: false,
+    editingGame: false,
+    preferredUrls: [],
+    game: "",
+    platform: "",
+    cover: "",
+    user: null,
+  });
+  const discardPromptOpenRef = useRef(false);
   function pushOverlayHistory() {
     if (typeof window === "undefined") return;
     pushAppHistory({ gggOverlay: true });
@@ -481,6 +501,66 @@ export default function Home() {
     setIndexingGuideCount,
   });
 
+  function getUnsavedSetupUploads(): string[] {
+    const cur = unsavedSetupRef.current;
+    if (cur.started || cur.editingGame || !cur.user) return [];
+    return collectUploadedGuideUrls(cur.preferredUrls);
+  }
+
+  async function confirmDiscardUnsavedSetup(): Promise<boolean> {
+    const uploads = getUnsavedSetupUploads();
+    if (!uploads.length) return true;
+    if (discardPromptOpenRef.current) return false;
+    discardPromptOpenRef.current = true;
+    const confirmed = await askConfirm(
+      "Discard this new game? Your uploaded guide will be removed unless you click Save for later first.",
+      "Discard",
+      true,
+    ).finally(() => {
+      discardPromptOpenRef.current = false;
+    });
+    if (!confirmed) return false;
+    const cur = unsavedSetupRef.current;
+    unsavedSetupRef.current = { ...cur, preferredUrls: [] };
+    setPreferredUrls([]);
+    resetGuideMeta();
+    void purgeUploadedGuides({
+      supabase: getSupabase(),
+      urls: uploads,
+      game: cur.game,
+      platform: cur.platform,
+    });
+    return true;
+  }
+
+  function guardUnsavedSetup(next: () => void) {
+    if (!getUnsavedSetupUploads().length) {
+      next();
+      return;
+    }
+    void confirmDiscardUnsavedSetup().then((ok) => {
+      if (ok) next();
+    });
+  }
+
+  function cancelNewGameSetup() {
+    if (!getUnsavedSetupUploads().length) {
+      closeNewGameForm();
+      return;
+    }
+    void confirmDiscardUnsavedSetup().then((ok) => {
+      if (!ok) return;
+      const curCover = unsavedSetupRef.current.cover;
+      if (curCover.startsWith("blob:")) URL.revokeObjectURL(curCover);
+      setGame("");
+      setPlatform("");
+      setCover("");
+      setPendingCover(null);
+      setReleaseYear("");
+      closeNewGameForm();
+    });
+  }
+
   // Grow the composer to fit its text (down to one line when empty), capped by
   // the CSS max-height which then scrolls. Runs on every input + after clearing.
   // Layout expands once scrollHeight passes one line; stays expanded until empty
@@ -558,6 +638,12 @@ export default function Home() {
     /** An ordinary back press with no overlay or saved pane open. */
     function consumeBackLayer() {
       if (newGameOpen) {
+        if (getUnsavedSetupUploads().length > 0) {
+          newGameHistoryPushed.current = true;
+          pushOverlayHistory();
+          cancelNewGameSetup();
+          return;
+        }
         newGameHistoryPushed.current = false;
         setNewGameOpen(false);
         return;
@@ -1695,8 +1781,10 @@ export default function Home() {
 
   function editGame(chat: Chat, event: MouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
-    openGameRoom(chat);
-    setEditingGame(true);
+    guardUnsavedSetup(() => {
+      openGameRoom(chat);
+      setEditingGame(true);
+    });
   }
 
   function scrollToTop() {
@@ -2152,6 +2240,13 @@ export default function Home() {
       setChats(loadLocalGames());
       return;
     }
+    const uploadedGuideUrls = collectUploadedGuideUrls([
+      ...guideUrlsFromChat(chat),
+      ...roomTopics.flatMap((row) => guideUrlsFromChat(row)),
+      ...(gameRoomKey(chat.game, chat.platform) === gameRoomKey(game, platform)
+        ? preferredUrls
+        : []),
+    ]);
     const paths = new Set<string>();
     for (const row of roomTopics) {
       const thread = await resolveThreadMessages(supabase, row);
@@ -2172,6 +2267,14 @@ export default function Home() {
       }
     }
     await removeCoverStoragePaths(supabase, [...paths]);
+    if (uploadedGuideUrls.length) {
+      await purgeUploadedGuides({
+        supabase,
+        urls: uploadedGuideUrls,
+        game: chat.game,
+        platform: chat.platform || "",
+      });
+    }
     if (forgetMemory && user) {
       try {
         await forgetGameMemory(supabase, user.id, normGameKey(chat.game), chat.platform || "");
@@ -2407,6 +2510,69 @@ export default function Home() {
     messages.length > 0 ||
     Boolean(activeChatId && game.trim()) ||
     editingGame;
+  unsavedSetupRef.current = { started, editingGame, preferredUrls, game, platform, cover, user };
+
+  const handlePreferredUrlsChange = useCallback(
+    (nextUrls: string[]) => {
+      const urls = normalizeGuideUrlList(nextUrls);
+      setPreferredUrls(urls);
+      if (temporary || (!started && !editingGame)) return;
+      const roomGame = (conversationGame.current || game).trim();
+      const roomPlatform = conversationPlatform.current || platform;
+      if (!roomGame) return;
+      const roomKey = gameRoomKey(roomGame, roomPlatform);
+      const existingRoom = chatsRef.current.find(
+        (row) => gameRoomKey(row.game, row.platform) === roomKey,
+      );
+      if (!existingRoom) return;
+      const payload = guideUrlsPayload(urls);
+      const supabase = getSupabase();
+      if (!supabase || !user) {
+        const synced = syncSharedMetaToLocalGames(
+          loadLocalGames(),
+          roomGame,
+          roomPlatform,
+          payload,
+        );
+        setChats(setLocalGames(synced));
+        return;
+      }
+      setChats((prev) =>
+        syncSharedMetaToLocalGames(prev, roomGame, roomPlatform, payload),
+      );
+      void syncRoomSharedMeta(
+        supabase,
+        user.id,
+        existingRoom.game,
+        existingRoom.platform,
+        payload,
+      )
+        .then(() => {
+          void loadChats();
+        })
+        .catch((caught) => {
+          console.error("Failed to save guide links:", caught);
+        });
+    },
+    [started, editingGame, game, platform, temporary, user, loadChats],
+  );
+
+  useEffect(() => {
+    if (
+      started ||
+      editingGame ||
+      !user ||
+      collectUploadedGuideUrls(preferredUrls).length === 0
+    ) {
+      return;
+    }
+    function onBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [started, editingGame, user, preferredUrls]);
   const hasGame = Boolean(game.trim());
   const showTopicList = gameView === "topics" && hasGame && !editingGame;
   const showThread =
@@ -2508,7 +2674,7 @@ export default function Home() {
       onDeleteActiveChat={() => void deleteActiveChat()}
       onDeleteAllTopics={() => void deleteAllTopics()}
       onSetShowQuickAdd={setShowQuickAdd}
-      onPreferredUrlsChange={setPreferredUrls}
+      onPreferredUrlsChange={handlePreferredUrlsChange}
       onGuideMetaChange={setGuideMeta}
       onGuideCheckChange={setGuideChecking}
       onGuidePendingChange={setGuidePending}
@@ -2555,7 +2721,7 @@ export default function Home() {
             aria-label="Game Guide Go, home"
             onClick={(event) => {
               event.preventDefault();
-              goHome();
+              guardUnsavedSetup(() => goHome());
             }}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -2619,7 +2785,7 @@ export default function Home() {
           // ponytail: the pushed chat/overlay entries linger in history, so a
           // hardware-back from home can dead-click once; fix with an explicit
           // history unwind if it ever bothers anyone.
-          newGame();
+          guardUnsavedSetup(() => newGame());
         }}
         showBackToGame={showThread}
         onBackToGame={() => {
@@ -2630,15 +2796,15 @@ export default function Home() {
         onOpenSavedLibrary={openSavedLibrary}
         onConnectSteam={connectSteam}
         onOpenSteamLibrary={openSteamLibrary}
-        onOpenChat={openGameRoom}
+        onOpenChat={(chat) => guardUnsavedSetup(() => openGameRoom(chat))}
         onToggleRowMenu={toggleRowMenu}
         onEditGame={editGame}
         onDeleteChat={deleteChat}
-        onStartNewGame={startNewGame}
+        onStartNewGame={() => guardUnsavedSetup(() => startNewGame())}
         onLibrarySearchChange={setLibrarySearch}
-        onOpenFromLibrary={openFromLibrary}
-        onEditFromLibrary={editFromLibrary}
-        onPickSteamGame={startFromSteamGame}
+        onOpenFromLibrary={(chat) => guardUnsavedSetup(() => openFromLibrary(chat))}
+        onEditFromLibrary={(chat) => guardUnsavedSetup(() => editFromLibrary(chat))}
+        onPickSteamGame={(steamGame) => guardUnsavedSetup(() => startFromSteamGame(steamGame))}
       />
 
       {(showThread || showTopicList) && showStickyHeader && (
@@ -2762,13 +2928,13 @@ export default function Home() {
         guidePending={guidePending}
         gameSpoilerMajor={gameSpoilerMajor}
         user={user}
-        onOpenChat={openGameRoom}
+        onOpenChat={(chat) => guardUnsavedSetup(() => openGameRoom(chat))}
         onOpenSavedLibrary={openSavedLibrary}
         onStartNewGame={startNewGame}
         onOpenSteamLibrary={openSteamLibrary}
         onSetNewGameOpen={(open) => {
           if (open) setNewGameOpen(true);
-          else closeNewGameForm();
+          else cancelNewGameSetup();
         }}
         onSetOptPanel={setOptPanel}
         onGameChange={handleGameChange}
@@ -2777,7 +2943,7 @@ export default function Home() {
         onSelectCover={selectCover}
         onPickCoverUrl={pickCoverUrl}
         onClearCover={clearCover}
-        onPreferredUrlsChange={setPreferredUrls}
+        onPreferredUrlsChange={handlePreferredUrlsChange}
         onGuideMetaChange={setGuideMeta}
         onGuideCheckChange={setGuideChecking}
         onGuidePendingChange={setGuidePending}

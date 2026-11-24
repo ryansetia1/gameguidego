@@ -1499,6 +1499,9 @@ assert.match(REWRITE_INSTRUCTION, /under 15 words/);
 assert.match(REWRITE_RAG_INSTRUCTION, /standalone retrieval query/);
 assert.match(REWRITE_RAG_INSTRUCTION, /up to about 120 words/);
 assert.match(REWRITE_RAG_INSTRUCTION, /walkthrough to look up/);
+assert.match(REWRITE_RAG_INSTRUCTION, /boss, character, mission, item, or location vaguely/i);
+assert.match(REWRITE_RAG_INSTRUCTION, /concrete in-game name/i);
+assert.match(REWRITE_RAG_INSTRUCTION, /Never invent or assert a name when unsure/i);
 const rewritePrompt = buildRewritePrompt({
   question: "Setelah poin 3 ngapain",
   history: [
@@ -3727,6 +3730,45 @@ if (!canRunTsChecks) {
   const css = (await import("node:fs")).readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(css, /\.turn\.guide \.turn-action-icon \{\s*position: static;/);
   assert.match(css, /\.turn\.guide \.turn-action-icon\.save-answer \{\s*position: relative;/);
+}
+
+// Upload orphan cleanup & room auto-persist wiring
+{
+  const { collectUploadedGuideUrls } = await import("../lib/chat-delete.js");
+  assert.deepEqual(
+    collectUploadedGuideUrls([
+      "https://gamefaqs.gamespot.com/g/faqs/1",
+      "upload://u1/a.txt",
+      null,
+      undefined,
+      123,
+      "",
+      "upload://u1/a.txt",
+      "upload://u1/b.md",
+    ]),
+    ["upload://u1/a.txt", "upload://u1/b.md"],
+    "collectUploadedGuideUrls keeps unique upload:// keys only",
+  );
+  assert.deepEqual(collectUploadedGuideUrls(null), []);
+
+  const fs = await import("node:fs");
+  const pageSrc = fs.readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const delRoomBlock = pageSrc.slice(
+    pageSrc.indexOf("async function deleteGameRoom"),
+    pageSrc.indexOf("async function deleteChat"),
+  );
+  assert.ok(
+    delRoomBlock.includes("purgeUploadedGuides("),
+    "deleteGameRoom purges uploaded guides on room deletion",
+  );
+  const autoSaveBlock = pageSrc.slice(
+    pageSrc.indexOf("const handlePreferredUrlsChange"),
+    pageSrc.indexOf("const composerLocked"),
+  );
+  assert.ok(
+    autoSaveBlock.includes("syncRoomSharedMeta("),
+    "handlePreferredUrlsChange immediately syncs saved room guides",
+  );
 }
 
 console.log("Self-check passed.");
