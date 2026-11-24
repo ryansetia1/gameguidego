@@ -1,5 +1,4 @@
 import { readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
 
 import { logLlmCallToDb, type LlmDbLogEntry } from "@/lib/llm-db-log";
 import { getTraceId } from "@/lib/trace";
@@ -44,7 +43,7 @@ export function logLlmCall(entry: LlmLogEntry): void {
       try {
         let log: unknown[] = [];
         try {
-          const raw = await readFile(LOG_PATH, "utf8");
+          const raw = await readFile(/*turbopackIgnore: true*/ LOG_PATH, "utf8");
           const parsed: unknown = JSON.parse(raw);
           if (Array.isArray(parsed)) log = parsed;
         } catch {
@@ -58,7 +57,7 @@ export function logLlmCall(entry: LlmLogEntry): void {
           inputTokens: entry.inputTokens ?? null,
           outputTokens: entry.outputTokens ?? null,
         });
-        await writeFile(LOG_PATH, JSON.stringify(log.slice(-MAX_ENTRIES), null, 2));
+        await writeFile(/*turbopackIgnore: true*/ LOG_PATH, JSON.stringify(log.slice(-MAX_ENTRIES), null, 2));
       } catch {
         // Best-effort: never let logging break a request.
       }
