@@ -8,6 +8,8 @@ export type SolveStreamPayload = {
   pipelineType?: string;
   model?: string;
   guideHint?: string;
+  guideStatusChanged?: boolean;
+  guideRefreshing?: boolean;
   illustration?: Illustration;
   topicTitle?: string;
 };

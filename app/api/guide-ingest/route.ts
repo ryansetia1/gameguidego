@@ -9,7 +9,11 @@ import {
   ensureGuideIngested,
   isGuideIndexed,
   isGuideRagAvailable,
+  normalizeGuideUrl,
+  refreshGuideEmbeddings,
 } from "@/lib/guide-ingest";
+import { bearerToken, createAuthedSupabase } from "@/lib/player-memory-server";
+import { ownsUploadKey } from "@/lib/upload-auth.js";
 import { logIngestJourneyToDb } from "@/lib/solve-log";
 import { runWithTrace, logTraceEvent } from "@/lib/trace";
 
@@ -65,6 +69,7 @@ export async function POST(request: Request) {
 
   const record = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
   const urls = coerceGuideUrlsFromBody(record);
+  const refreshEmbeddings = record.refreshEmbeddings === true;
   const game = typeof record.game === "string" ? record.game.slice(0, 120) : undefined;
   const platform = typeof record.platform === "string" ? record.platform.slice(0, 80) : undefined;
   const userId =
@@ -90,7 +95,81 @@ export async function POST(request: Request) {
     });
   }
 
+  if (refreshEmbeddings && urls.some((url) => url.startsWith("upload://"))) {
+    const supabase = createAuthedSupabase(bearerToken(request));
+    if (!supabase) {
+      return NextResponse.json({ error: "Sign in to refresh this guide." }, { status: 401 });
+    }
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError && (!authError.status || authError.status >= 500)) {
+      return NextResponse.json(
+        { error: "Couldn't check your sign-in. Try again in a moment." },
+        { status: 503 },
+      );
+    }
+    const uid = authData?.user?.id ?? "";
+    if (!uid) {
+      return NextResponse.json({ error: "Sign in to refresh this guide." }, { status: 401 });
+    }
+    for (const url of urls) {
+      if (!url.startsWith("upload://")) continue;
+      let normalized = "";
+      try {
+        normalized = normalizeGuideUrl(url);
+      } catch {}
+      if (!ownsUploadKey(uid, normalized)) {
+        return NextResponse.json({ error: "That upload does not belong to your account." }, { status: 403 });
+      }
+    }
+  }
+
   const traceId = request.headers.get("X-Trace-Id") || crypto.randomUUID();
+
+  if (refreshEmbeddings) {
+    return runWithTrace(traceId, async () => {
+      await logTraceEvent("guide_refresh_start", `Refreshing guide vectors for ${urls.length} URL(s)`, undefined, {
+        game,
+        platform,
+        userId,
+      });
+      const results: Array<Record<string, unknown>> = [];
+      let anyError = false;
+
+      for (const url of urls) {
+        try {
+          const r = await refreshGuideEmbeddings(url, request.signal, ingestCtx);
+          results.push({
+            url,
+            indexed: r.indexed,
+            refreshed: r.refreshed,
+            status: r.refreshed ? "indexed" : r.embedFailed ? "limited" : "failed",
+            ...(r.embedFailed ? { embedFailed: true } : {}),
+            chunkCount: r.chunkCount,
+          });
+        } catch (err: unknown) {
+          anyError = true;
+          const msg = err instanceof Error ? err.message : String(err);
+          results.push({ url, indexed: true, refreshed: false, status: "limited", error: msg });
+        }
+      }
+
+      if (anyError) {
+        return NextResponse.json(
+          { error: "One or more guides failed to refresh.", results },
+          { status: 500 },
+        );
+      }
+
+      const indexedCount = results.filter((row) => row.refreshed === true).length;
+      return NextResponse.json({
+        available: true,
+        indexed: indexedCount === urls.length,
+        indexedCount,
+        total: urls.length,
+        results,
+      });
+    });
+  }
 
   return runWithTrace(traceId, async () => {
     await logTraceEvent("ingest_start", `Starting guide ingest for ${urls.length} URLs`, undefined, {

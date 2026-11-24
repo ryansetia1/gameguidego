@@ -8,6 +8,36 @@ export function GuideStatusChip({ state }: { state: string }) {
       </span>
     );
   }
+  if (state === "limited") {
+    return (
+      <span
+        className="guide-status-chip is-limited"
+        title="Smart search is temporarily limited for this guide. Refresh to restore full search."
+      >
+        <IconAlert size={12} /> Keyword only
+      </span>
+    );
+  }
+  if (state === "refreshing") {
+    return (
+      <span
+        className="guide-status-chip is-refreshing"
+        title="Refreshing guide index in the background."
+      >
+        <IconClock size={12} /> Refreshing…
+      </span>
+    );
+  }
+  if (state === "paused") {
+    return (
+      <span
+        className="guide-status-chip is-paused"
+        title="Guide search is temporarily limited right now."
+      >
+        <IconAlert size={12} /> Paused
+      </span>
+    );
+  }
   if (state === "failed") {
     return (
       <span className="guide-status-chip is-failed">

@@ -142,6 +142,8 @@ export function ActiveGameCard({
     (url) => guideIndexState[url] === "blocked" || guideMeta[url]?.isBlocked,
   );
   const hasFailed = preferredUrls.some((url) => guideIndexState[url] === "failed");
+  const hasLimited = preferredUrls.some((url) => guideIndexState[url] === "limited");
+  const hasRefreshing = preferredUrls.some((url) => guideIndexState[url] === "refreshing");
   const isCollapsible = preferredUrls.length > 2;
 
   const openQuickAdd = (event: MouseEvent) => {
@@ -228,8 +230,59 @@ export function ActiveGameCard({
     );
   };
 
+  const renderRowAction = (url: string, state: string) => {
+    if (state === "limited") {
+      return (
+        <button
+          type="button"
+          className="guide-refresh-action"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onRetryGuideIngest(url);
+          }}
+          disabled={retryingUrl === url || isReindexingAll}
+          title="Restore full search for this guide"
+          aria-label="Refresh this guide"
+        >
+          <IconRefresh size={12} className={retryingUrl === url ? "spin" : ""} />
+          Refresh
+        </button>
+      );
+    }
+    if (!state || state === "pending" || state === "failed" || state === "blocked" || state === "unknown") {
+      return (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onRetryGuideIngest(url);
+          }}
+          disabled={retryingUrl === url || isReindexingAll}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            color: "var(--muted)",
+            display: "flex",
+            padding: "2px",
+            flexShrink: 0,
+            opacity: retryingUrl === url || isReindexingAll ? 0.5 : 1,
+          }}
+          title="Reindex this guide"
+          aria-label="Reindex this guide"
+        >
+          <IconRefresh size={14} className={retryingUrl === url ? "spin" : ""} />
+        </button>
+      );
+    }
+    return null;
+  };
+
   const renderGuideStack = (url: string) => {
     const row = gameCardGuideRow(url, guideMeta[url], guideIndexState[url]);
+    const rowAction = renderRowAction(url, row.state);
     return (
       <div key={guideUrlDedupeKey(url)} className="game-card-guide-stack">
         <div className="game-card-guide-row">
@@ -255,31 +308,7 @@ export function ActiveGameCard({
                   <GuideStatusChip state={row.state} />
                 </span>
               )}
-              {(!row.state || row.state === "pending" || row.state === "failed" || row.state === "blocked" || row.state === "unknown") && (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onRetryGuideIngest(url);
-                  }}
-                  disabled={retryingUrl === url || isReindexingAll}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    cursor: "pointer",
-                    color: "var(--muted)",
-                    display: "flex",
-                    padding: "2px",
-                    flexShrink: 0,
-                    opacity: retryingUrl === url || isReindexingAll ? 0.5 : 1,
-                  }}
-                  title="Reindex this guide"
-                  aria-label="Reindex this guide"
-                >
-                  <IconRefresh size={14} className={retryingUrl === url ? "spin" : ""} />
-                </button>
-              )}
+              {rowAction}
               <span style={{ flexShrink: 0, width: "20px", display: "flex" }} />
             </span>
           </div>
@@ -289,7 +318,7 @@ export function ActiveGameCard({
             href={url}
             target="_blank"
             rel="noreferrer"
-            aria-busy={row.state === "checking" ? true : undefined}
+            aria-busy={row.state === "checking" || row.state === "refreshing" ? true : undefined}
           >
             <span
               className="icon-inline"
@@ -310,31 +339,7 @@ export function ActiveGameCard({
                   <GuideStatusChip state={row.state} />
                 </span>
               )}
-              {(!row.state || row.state === "pending" || row.state === "failed" || row.state === "blocked" || row.state === "unknown") && (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onRetryGuideIngest(url);
-                  }}
-                  disabled={retryingUrl === url || isReindexingAll}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    cursor: "pointer",
-                    color: "var(--muted)",
-                    display: "flex",
-                    padding: "2px",
-                    flexShrink: 0,
-                    opacity: retryingUrl === url || isReindexingAll ? 0.5 : 1,
-                  }}
-                  title="Reindex this guide"
-                  aria-label="Reindex this guide"
-                >
-                  <IconRefresh size={14} className={retryingUrl === url ? "spin" : ""} />
-                </button>
-              )}
+              {rowAction}
               <span style={{ flexShrink: 0, display: "flex" }}>
                 <IconArrowUpRight />
               </span>
@@ -492,7 +497,7 @@ export function ActiveGameCard({
             <span className="game-card-guides-summary-label">Guides ({preferredUrls.length})</span>
             {preferredUrls.some((url) => {
               const st = guideIndexState[url];
-              return !st || st === "pending" || st === "failed" || st === "blocked" || st === "unknown";
+              return !st || st === "pending" || st === "limited" || st === "failed" || st === "blocked" || st === "unknown";
             }) && (
               <button
                 type="button"
@@ -512,8 +517,8 @@ export function ActiveGameCard({
                   flexShrink: 0,
                   opacity: isReindexingAll ? 0.5 : 1,
                 }}
-                title="Reindex all pending guides"
-                aria-label="Reindex all pending guides"
+                title="Reindex or refresh guides"
+                aria-label="Reindex or refresh guides"
               >
                 <IconRefresh size={14} className={isReindexingAll ? "spin" : ""} />
               </button>
@@ -528,6 +533,8 @@ export function ActiveGameCard({
                 <IconX size={10} /> Failed
               </span>
             )}
+            {hasLimited && <GuideStatusChip state="limited" />}
+            {!hasLimited && hasRefreshing && <GuideStatusChip state="refreshing" />}
             {isCollapsible && !showQuickAdd
               ? renderAddGuideLink("game-card-quick-add-summary")
               : null}

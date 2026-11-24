@@ -2,7 +2,13 @@ import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { chunkGuideWithMeta, formatEmbedPrefix } from "@/lib/chunk-guide.js";
-import { embedTexts, isEmbedConfigured, SUMOPOD_MODEL_TAG } from "@/lib/embed";
+import {
+  embedTexts,
+  isEmbedConfigured,
+  preferredEmbedModel,
+  SUMOPOD_MODEL_TAG,
+  syncSumopodHealth,
+} from "@/lib/embed";
 import type { EmbedLogMeta } from "@/lib/embed-log";
 import { toVectorString } from "@/lib/embed-cache";
 import { cleanSnippet } from "@/lib/clean.js";
@@ -214,6 +220,292 @@ export async function isGuideIndexed(guideUrl: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+const inflightRefreshes = new Set<string>();
+const DUAL_RPC_TRUE_TTL_MS = 5 * 60_000;
+const DUAL_RPC_FALSE_TTL_MS = 30_000;
+let dualRpcMemo: { ready: boolean; at: number } | null = null;
+
+/** True while this server instance is currently refreshing backup vectors for `rawUrl`. */
+export function isGuideRefreshing(rawUrl: string): boolean {
+  try {
+    return inflightRefreshes.has(guideStorageKey(rawUrl));
+  } catch {
+    return false;
+  }
+}
+
+/** True when `match_guide_chunks_dual` RPC is deployed in Supabase. */
+export async function isDualVectorRpcReady(supabase?: SupabaseClient | null): Promise<boolean> {
+  const client = supabase ?? getServerClient();
+  if (!client) return false;
+  if (dualRpcMemo) {
+    const ttl = dualRpcMemo.ready ? DUAL_RPC_TRUE_TTL_MS : DUAL_RPC_FALSE_TTL_MS;
+    if (Date.now() - dualRpcMemo.at < ttl) return dualRpcMemo.ready;
+  }
+  try {
+    const { error } = await client.rpc("match_guide_chunks_dual", {
+      p_guide_urls: [],
+      p_embedding: null,
+      p_limit: 1,
+      p_lexical_query: "",
+      p_embed_model: null,
+    });
+    if (error) {
+      const missing = /Could not find the function|match_guide_chunks_dual|42883|PGRST202/i.test(
+        `${error.code ?? ""} ${error.message ?? ""}`,
+      );
+      if (missing) dualRpcMemo = { ready: false, at: Date.now() };
+      return false;
+    }
+    dualRpcMemo = { ready: true, at: Date.now() };
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export type GuideEmbedSummary = {
+  indexed: boolean;
+  chunkCount: number;
+  embedModel: string | null;
+  embedModelNext: string | null;
+};
+
+/** Inspect chunk 0 model tags and chunk count for a guide URL. */
+export async function getGuideEmbedSummary(rawUrl: string): Promise<GuideEmbedSummary> {
+  const empty: GuideEmbedSummary = {
+    indexed: false,
+    chunkCount: 0,
+    embedModel: null,
+    embedModelNext: null,
+  };
+  const supabase = getServerClient();
+  if (!supabase) return empty;
+  let storageUrl: string;
+  try {
+    storageUrl = guideStorageKey(rawUrl);
+  } catch {
+    return empty;
+  }
+
+  try {
+    const [chunk0Res, totalCount] = await Promise.all([
+      supabase
+        .from("guide_chunks")
+        .select("embed_model, embed_model_next")
+        .eq("guide_url", storageUrl)
+        .eq("chunk_index", 0)
+        .maybeSingle(),
+      countGuideRows(supabase, storageUrl),
+    ]);
+
+    let row = chunk0Res.data as { embed_model?: string | null; embed_model_next?: string | null } | null;
+    if (chunk0Res.error && /embed_model_next|embed_model/.test(chunk0Res.error.message)) {
+      const fallback = await supabase
+        .from("guide_chunks")
+        .select("embed_model")
+        .eq("guide_url", storageUrl)
+        .eq("chunk_index", 0)
+        .maybeSingle();
+      if (!fallback.error) {
+        row = fallback.data as { embed_model?: string | null } | null;
+      } else if (/embed_model/.test(fallback.error.message)) {
+        const present = await guideIndexedIn(supabase, storageUrl);
+        return present
+          ? { indexed: true, chunkCount: totalCount ?? 0, embedModel: SUMOPOD_MODEL_TAG, embedModelNext: null }
+          : empty;
+      }
+    }
+
+    if (!row) return empty;
+    return {
+      indexed: true,
+      chunkCount: totalCount ?? 0,
+      embedModel: (typeof row.embed_model === "string" && row.embed_model) || SUMOPOD_MODEL_TAG,
+      embedModelNext: typeof row.embed_model_next === "string" && row.embed_model_next ? row.embed_model_next : null,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+export type RefreshGuideResult = {
+  indexed: boolean;
+  chunkCount: number;
+  refreshed: boolean;
+  alreadyCurrent?: boolean;
+  embedFailed?: boolean;
+  model?: string;
+};
+
+/**
+ * Re-embed stored `chunk_text` rows into `embedding_next` / `embed_model_next` using the
+ * currently active embedding model, preserving primary vectors untouched. Chunk 0 updates LAST.
+ */
+export async function refreshGuideEmbeddings(
+  rawUrl: string,
+  _signal?: AbortSignal,
+  ctx?: IngestContext,
+): Promise<RefreshGuideResult> {
+  let guideUrl: string;
+  try {
+    guideUrl = guideStorageKey(rawUrl);
+  } catch {
+    return { indexed: false, chunkCount: 0, refreshed: false };
+  }
+
+  return singleFlight(`refresh:${guideUrl}`, async () => {
+    inflightRefreshes.add(guideUrl);
+    try {
+      const startMs = Date.now();
+      const service = getServiceClient();
+      if (!service) {
+        return { indexed: false, chunkCount: 0, refreshed: false, embedFailed: true };
+      }
+
+      await syncSumopodHealth();
+      const targetModel = preferredEmbedModel();
+      if (!targetModel) {
+        return { indexed: true, chunkCount: 0, refreshed: false, embedFailed: true };
+      }
+
+      type RefreshRow = {
+        id: number;
+        chunk_index: number;
+        chunk_text: string;
+        section_path: string[] | null;
+        section_confidence: number | null;
+        embed_model?: string | null;
+        embed_model_next?: string | null;
+      };
+      const rows: RefreshRow[] = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await service
+          .from("guide_chunks")
+          .select("id, chunk_index, chunk_text, section_path, section_confidence, embed_model, embed_model_next")
+          .eq("guide_url", guideUrl)
+          .order("chunk_index", { ascending: true })
+          .range(from, from + 999);
+        if (error) {
+          console.error("Guide refresh read failed:", error);
+          return { indexed: false, chunkCount: 0, refreshed: false, embedFailed: true };
+        }
+        const batch = (data ?? []) as RefreshRow[];
+        rows.push(...batch);
+        if (batch.length < 1000) break;
+      }
+
+      const chunk0 = rows.find((row) => row.chunk_index === 0);
+      if (!chunk0) return { indexed: false, chunkCount: 0, refreshed: false };
+
+      if (
+        (chunk0.embed_model || SUMOPOD_MODEL_TAG) === targetModel ||
+        chunk0.embed_model_next === targetModel
+      ) {
+        return {
+          indexed: true,
+          chunkCount: rows.length,
+          refreshed: true,
+          alreadyCurrent: true,
+          model: targetModel,
+        };
+      }
+
+      const embedTimeoutMs = ingestEmbedTimeoutMs(startMs);
+      if (embedTimeoutMs === null) {
+        return { indexed: true, chunkCount: rows.length, refreshed: false, embedFailed: true };
+      }
+
+      const embedInputs = rows.map(
+        (row) =>
+          `${formatEmbedPrefix({
+            section_path: row.section_path ?? [],
+            section_confidence: row.section_confidence ?? 0,
+          })}${row.chunk_text}`,
+      );
+
+      let vectors: number[][];
+      let usedModel: string;
+      try {
+        ({ vectors, model: usedModel } = await embedTexts(
+          embedInputs,
+          undefined,
+          { purpose: "ingest", guideUrl, ...embedLogFromContext(ctx) },
+          { model: targetModel, ingestTimeoutMs: embedTimeoutMs },
+        ));
+      } catch (error) {
+        void logTraceEvent(
+          "refresh_embed_error",
+          `Guide refresh embed failed for ${guideUrl}: ${error instanceof Error ? error.message : String(error)}`,
+          Date.now() - startMs,
+          { guideUrl, targetModel, error: true },
+        );
+        console.error("Guide refresh embed failed:", error);
+        return { indexed: true, chunkCount: rows.length, refreshed: false, embedFailed: true };
+      }
+
+      if (vectors.length !== rows.length) {
+        return { indexed: true, chunkCount: rows.length, refreshed: false, embedFailed: true };
+      }
+
+      const paired = rows.map((row, idx) => ({ row, vector: toVectorString(vectors[idx]) }));
+      const nonZero = paired
+        .filter((item) => item.row.chunk_index !== 0)
+        .sort((a, b) => b.row.chunk_index - a.row.chunk_index);
+      const chunk0Pair = paired.find((item) => item.row.chunk_index === 0)!;
+
+      const UPDATE_CONCURRENCY = 10;
+      for (let i = 0; i < nonZero.length; i += UPDATE_CONCURRENCY) {
+        const slice = nonZero.slice(i, i + UPDATE_CONCURRENCY);
+        const results = await Promise.all(
+          slice.map((item) =>
+            service
+              .from("guide_chunks")
+              .update({ embedding_next: item.vector, embed_model_next: usedModel })
+              .eq("id", item.row.id),
+          ),
+        );
+        const failed = results.find((res) => res.error);
+        if (failed?.error) {
+          void logTraceEvent(
+            "guide_refresh_error",
+            `Guide refresh DB update failed for ${guideUrl}: ${failed.error.message}`,
+            Date.now() - startMs,
+            { guideUrl, error: failed.error.message },
+          );
+          console.error("Guide refresh DB update failed:", failed.error);
+          return { indexed: true, chunkCount: rows.length, refreshed: false, embedFailed: true };
+        }
+      }
+
+      const { error: chunk0Err } = await service
+        .from("guide_chunks")
+        .update({ embedding_next: chunk0Pair.vector, embed_model_next: usedModel })
+        .eq("id", chunk0Pair.row.id);
+      if (chunk0Err) {
+        void logTraceEvent(
+          "guide_refresh_error",
+          `Guide refresh chunk 0 update failed for ${guideUrl}: ${chunk0Err.message}`,
+          Date.now() - startMs,
+          { guideUrl, error: chunk0Err.message },
+        );
+        console.error("Guide refresh chunk 0 update failed:", chunk0Err);
+        return { indexed: true, chunkCount: rows.length, refreshed: false, embedFailed: true };
+      }
+
+      void logTraceEvent(
+        "guide_refresh_complete",
+        `Refreshed backup vectors (${rows.length} chunks) for ${guideUrl}`,
+        Date.now() - startMs,
+        { guideUrl, chunkCount: rows.length, model: usedModel },
+      );
+      return { indexed: true, chunkCount: rows.length, refreshed: true, model: usedModel };
+    } finally {
+      inflightRefreshes.delete(guideUrl);
+    }
+  });
 }
 
 async function guideNeedsOutlineReingest(

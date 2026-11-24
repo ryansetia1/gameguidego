@@ -11,12 +11,17 @@ import { getCachedSearch, setCachedSearch } from "@/lib/search-cache";
 import { censorSpoilers, resolveQuestion, summarize, type Turn } from "@/lib/replicate";
 import {
   guideIngestHint,
+  guideLimitedHint,
+  guideRefreshingHint,
   guideSearchFallbackHint,
+  guideSearchPausedHint,
   guideSkippedForWebHint,
   guideWebSupplementHint,
   GUIDE_WEB_KNOWLEDGE_FALLBACK_HINT,
   WEB_KNOWLEDGE_FALLBACK_HINT,
 } from "@/lib/guide-hints.js";
+import { selectAutoRefreshTargets } from "@/lib/guide-embed-state.js";
+import { refreshGuideEmbeddings } from "@/lib/guide-ingest";
 import { coerceGuideRetrievalFlags } from "@/lib/guide-retrieval-mode.js";
 import {
   coerceRagGuideUrls,
@@ -369,6 +374,9 @@ export async function POST(request: Request) {
 
         const retrievalStart = Date.now();
         let rag: Awaited<ReturnType<typeof retrieveFromPreferredGuides>> = null;
+        let autoRefreshUrls: string[] = [];
+        let guideStatusChanged = false;
+        let guideRefreshing = false;
         if (retryContext?.sources) {
           sources = retryContext.sources;
           pipelineType = retryContext.pipelineType as SolveJourneyEntry["pipelineType"] || "knowledge_only";
@@ -418,6 +426,24 @@ export async function POST(request: Request) {
               }) ?? undefined;
           }
 
+          if (rag?.degradedGuides?.length) {
+            guideStatusChanged = true;
+            const autoTargets = selectAutoRefreshTargets(rag.degradedGuides);
+            autoRefreshUrls = autoTargets.map((target) => target.guideUrl);
+            guideRefreshing = autoRefreshUrls.length > 0;
+            const hasManual = rag.degradedGuides.some((g) => g.canRefresh && !g.autoRefreshable);
+            const hasPaused = rag.degradedGuides.some((g) => !g.canRefresh);
+            if (!guideHint && (rag.lexicalOnly || !rag.skipWebSearch)) {
+              if (guideRefreshing) {
+                guideHint = guideRefreshingHint(Boolean(rag.skipWebSearch));
+              } else if (hasManual) {
+                guideHint = guideLimitedHint();
+              } else if (hasPaused) {
+                guideHint = guideSearchPausedHint();
+              }
+            }
+          }
+
           if (rag?.skipWebSearch && alsoSearchWeb && hasSearchProvider) {
             sendEvent("status", { text: "Searching the web..." });
             void logTraceEvent("web_search_start", "Starting tiered web search (guide supplement)");
@@ -428,7 +454,7 @@ export async function POST(request: Request) {
             });
             sources = [...rag.sources, ...web];
             pipelineType = web.length > 0 ? "rag_supplemented" : "rag";
-            if (web.length > 0) guideHint = guideWebSupplementHint();
+            if (web.length > 0 && !guideHint) guideHint = guideWebSupplementHint();
           } else if (rag?.skipWebSearch) {
             sources = rag.sources;
             pipelineType = "rag";
@@ -441,7 +467,7 @@ export async function POST(request: Request) {
               : [];
             sources = web;
             pipelineType = web.length > 0 ? "fallback_web" : "knowledge_only";
-            if (pipelineType === "fallback_web" && rag.indexedCount > 0) {
+            if (pipelineType === "fallback_web" && rag.indexedCount > 0 && !guideHint) {
               guideHint = guideSearchFallbackHint();
             }
           } else if (hasSearchProvider) {
@@ -688,6 +714,8 @@ export async function POST(request: Request) {
           pipelineType,
           model: answerModel,
           ...(guideHint ? { guideHint } : {}),
+          ...(guideStatusChanged ? { guideStatusChanged: true } : {}),
+          ...(guideRefreshing ? { guideRefreshing: true } : {}),
           ...(illustration ? { illustration } : {}),
           ...(topicTitle ? { topicTitle } : {}),
         });
@@ -873,6 +901,16 @@ export async function POST(request: Request) {
               platform,
             },
           );
+        }
+
+        if (autoRefreshUrls.length > 0) {
+          for (const refreshUrl of autoRefreshUrls) {
+            try {
+              await refreshGuideEmbeddings(refreshUrl, undefined, { game, platform, userId });
+            } catch (refreshError) {
+              console.error("Background guide refresh failed:", refreshError);
+            }
+          }
         }
       } catch (error) {
         console.error("Guide generation failed:", error);

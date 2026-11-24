@@ -6,9 +6,11 @@ import { guideIngestHintFromResponse } from "@/lib/guide-hints.js";
 import {
   type GuideIndexState,
   guideIndexStateFromIngest,
+  guideIndexStateFromStatus,
 } from "@/lib/guide-index-state";
 import { isSamePreferredGuide } from "@/lib/guide-urls.js";
 import { displayNameFromMetadata } from "@/lib/profile.js";
+import { getSupabase } from "@/lib/supabase";
 import type { GuideMeta } from "../guide-link-field";
 
 export type { GuideIndexState } from "@/lib/guide-index-state";
@@ -35,6 +37,8 @@ export function useGuideBundle({
   const [guideChecking, setGuideChecking] = useState(false);
   const [guidePending, setGuidePending] = useState(false);
   const [retryingUrl, setRetryingUrl] = useState<string | null>(null);
+  const retryingUrlRef = useRef<string | null>(null);
+  retryingUrlRef.current = retryingUrl;
   const [isReindexingAll, setIsReindexingAll] = useState(false);
   const [statusRev, setStatusRev] = useState(0);
 
@@ -54,7 +58,7 @@ export function useGuideBundle({
         if (!response.ok) return;
         const data: {
           available: boolean;
-          results: { url: string; indexed: boolean; title?: string }[];
+          results: { url: string; indexed: boolean; status?: string; title?: string }[];
         } = await response.json();
 
         if (cancelled) return;
@@ -77,12 +81,17 @@ export function useGuideBundle({
           for (const url of preferredUrls) {
             const current = prev[url];
             const item = data.results.find((r) => isSamePreferredGuide(r.url, url));
+            const serverState = !data.available
+              ? "unavailable"
+              : guideIndexStateFromStatus(item);
             if (!data.available) {
               next[url] = "unavailable";
             } else if (current === "checking" || current === "failed" || current === "blocked") {
-              next[url] = item?.indexed ? "indexed" : current;
+              next[url] = item?.indexed ? serverState : current;
+            } else if (retryingUrlRef.current === url && serverState === "limited") {
+              next[url] = "refreshing";
             } else {
-              next[url] = item?.indexed ? "indexed" : "pending";
+              next[url] = serverState;
             }
           }
           return next;
@@ -98,6 +107,21 @@ export function useGuideBundle({
       cancelled = true;
     };
   }, [preferredUrls, statusRev]);
+
+  const hasRefreshing = preferredUrls.some((url) => guideIndexState[url] === "refreshing");
+  useEffect(() => {
+    if (!hasRefreshing) return;
+    let ticks = 0;
+    const timer = setInterval(() => {
+      ticks += 1;
+      if (ticks > 20) {
+        clearInterval(timer);
+        return;
+      }
+      setStatusRev((rev) => rev + 1);
+    }, 6000);
+    return () => clearInterval(timer);
+  }, [hasRefreshing]);
 
   const applyIngestRowToMeta = useCallback(
     (url: string, row: Record<string, unknown>, existing?: GuideMeta): GuideMeta | undefined => {
@@ -116,14 +140,25 @@ export function useGuideBundle({
 
   const retryGuideIngest = useCallback(
     async (url: string) => {
+      const isLimitedRefresh = guideIndexState[url] === "limited";
+      retryingUrlRef.current = url;
       setRetryingUrl(url);
-      setGuideIndexState((prev) => ({ ...prev, [url]: "checking" }));
+      setGuideIndexState((prev) => ({
+        ...prev,
+        [url]: isLimitedRefresh ? "refreshing" : "checking",
+      }));
       try {
+        const sessionRes = isLimitedRefresh ? await getSupabase()?.auth.getSession() : null;
+        const accessToken = sessionRes?.data?.session?.access_token;
         const response = await fetch("/api/guide-ingest", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
           body: JSON.stringify({
             preferredUrls: [url],
+            ...(isLimitedRefresh ? { refreshEmbeddings: true } : {}),
             game,
             platform,
             userId: user?.id ?? null,
@@ -131,17 +166,36 @@ export function useGuideBundle({
           }),
         });
         if (!response.ok) {
-          setGuideIndexState((prev) => ({
-            ...prev,
-            [url]: guideIndexStateFromIngest(undefined, guideMeta[url]),
-          }));
-          setToast("Indexing paused, try again later.");
+          if (isLimitedRefresh) {
+            setGuideIndexState((prev) => ({ ...prev, [url]: "limited" }));
+            setToast("Couldn't refresh right now. Try again in a moment.");
+          } else {
+            setGuideIndexState((prev) => ({
+              ...prev,
+              [url]: guideIndexStateFromIngest(undefined, guideMeta[url]),
+            }));
+            setToast("Indexing paused, try again later.");
+          }
           return;
         }
         const ingestData = (await response.json()) as {
           results?: Array<Record<string, unknown>>;
         };
         const row = ingestData.results?.[0];
+        if (isLimitedRefresh) {
+          if (row?.refreshed) {
+            setGuideIndexState((prev) => ({ ...prev, [url]: "indexed" }));
+            setToast("Guide refreshed — full search restored.");
+          } else {
+            setGuideIndexState((prev) => ({
+              ...prev,
+              [url]: guideIndexStateFromIngest(row, guideMeta[url]),
+            }));
+            setToast("Couldn't refresh right now. Try again in a moment.");
+          }
+          setStatusRev((rev) => rev + 1);
+          return;
+        }
         if (row) {
           setGuideMeta((prev) => {
             const updated = applyIngestRowToMeta(url, row, prev[url]);
@@ -167,13 +221,19 @@ export function useGuideBundle({
         console.error("Guide retry ingest failed:", error);
         setGuideIndexState((prev) => ({
           ...prev,
-          [url]: guideIndexStateFromIngest(undefined, guideMeta[url]),
+          [url]: isLimitedRefresh
+            ? "limited"
+            : guideIndexStateFromIngest(undefined, guideMeta[url]),
         }));
+        if (isLimitedRefresh) {
+          setToast("Couldn't refresh right now. Try again in a moment.");
+        }
       } finally {
+        retryingUrlRef.current = null;
         setRetryingUrl(null);
       }
     },
-    [applyIngestRowToMeta, game, platform, user, guideMeta, setToast],
+    [applyIngestRowToMeta, game, platform, user, guideMeta, guideIndexState, setToast],
   );
 
   const reindexAllPending = useCallback(async () => {
@@ -182,7 +242,14 @@ export function useGuideBundle({
     try {
       const pendingUrls = preferredUrls.filter((url) => {
         const state = guideIndexState[url];
-        return !state || state === "pending" || state === "failed" || state === "blocked" || state === "unknown";
+        return (
+          !state ||
+          state === "pending" ||
+          state === "limited" ||
+          state === "failed" ||
+          state === "blocked" ||
+          state === "unknown"
+        );
       });
       for (const url of pendingUrls) {
         await retryGuideIngest(url);

@@ -99,17 +99,23 @@ export function GuideSourceStrip({
             const status =
               row.state === "indexed"
                 ? null
-                : row.state === "checking"
-                  ? "Indexing…"
-                  : row.state === "pending"
-                    ? "Pending"
-                    : row.state === "failed"
-                      ? "Failed"
-                      : row.state === "blocked"
-                        ? "Blocked"
-                        : row.state === "unavailable"
-                          ? "Unavailable"
-                          : "Not indexed";
+                : row.state === "limited"
+                  ? "Keyword only"
+                  : row.state === "refreshing"
+                    ? "Refreshing…"
+                    : row.state === "paused"
+                      ? "Paused"
+                      : row.state === "checking"
+                        ? "Indexing…"
+                        : row.state === "pending"
+                          ? "Pending"
+                          : row.state === "failed"
+                            ? "Failed"
+                            : row.state === "blocked"
+                              ? "Blocked"
+                              : row.state === "unavailable"
+                                ? "Unavailable"
+                                : "Not indexed";
             return (
               <label
                 key={url}

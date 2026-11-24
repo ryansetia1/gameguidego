@@ -287,6 +287,22 @@ export async function executeChatTurn({
       throw new Error("Couldn't build a guide. Please try again.");
     }
 
+    if (data.guideStatusChanged) {
+      if (data.guideRefreshing) {
+        d.setGuideIndexState((prev) => {
+          const next = { ...prev };
+          for (const url of ingestTargets) {
+            if (prev[url] === "limited" || prev[url] === "indexed" || !prev[url]) {
+              next[url] = "refreshing";
+            }
+          }
+          return next;
+        });
+      } else {
+        d.setStatusRev((rev) => rev + 1);
+      }
+    }
+
     const sources = Array.isArray(data.sources) ? (data.sources as Source[]) : [];
     const pipelineType = typeof data.pipelineType === "string" ? data.pipelineType : undefined;
     const finalToast = solveTurnToast({

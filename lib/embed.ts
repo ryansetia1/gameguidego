@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { embedCacheKey, getCachedEmbedding, setCachedEmbedding } from "@/lib/embed-cache";
 import { getReplicate } from "@/lib/replicate";
 import { logEmbedCall, type EmbedLogMeta } from "@/lib/embed-log";
+import { getServiceClient } from "@/lib/supabase-server";
 import { logTraceEvent } from "@/lib/trace";
 
 const DEFAULT_EMBED_MODEL = "text-embedding-3-large";
@@ -50,6 +51,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 export const SUMOPOD_MODEL_TAG = "sumopod";
 // Provider + short version hash; the full hash pins the Replicate call below.
 export const QWEN_MODEL_TAG = "replicate:qwen3-embedding-8b@42d9684";
+export const EMBED_MODEL_PREFERENCE = [SUMOPOD_MODEL_TAG, QWEN_MODEL_TAG];
 const QWEN_VERSION =
   "42d968487820032a1535d81ea20df16f442ea308ec5abae6b5d6cf4675eb3e2f";
 const QWEN_BATCH = 16;
@@ -62,20 +64,118 @@ const QWEN_QUERY_TIMEOUT_MS = 20_000;
 const SUMOPOD_QUERY_TIMEOUT_MS = 8_000;
 const QWEN_QUERY_INSTRUCTION =
   "Instruct: Given a player's question about a video game, retrieve the walkthrough passages that answer it\nQuery:";
-const BREAKER_COOLDOWN_MS = 5 * 60_000;
+const EMBED_HEALTH_SETTING_KEY = "embed_sumopod_health";
+const HEALTH_MEMO_MS = 30_000;
+const HEALTH_OK_TTL_MS = 5 * 60_000;
+const HEALTH_FAIL_TTL_MS = 5 * 60_000;
+const PROBE_TIMEOUT_MS = 3_000;
 
-// Circuit breaker: after a Sumopod credit/auth failure skip it for a few minutes
-// instead of paying a failing round trip per embed.
-// ponytail: per-instance memory, resets on cold start; move to a shared table if it matters
+// Circuit breaker + shared health memo across serverless instances via app_settings.
 let sumopodSkipUntil = 0;
 // Short trip for network errors, timeouts and 5xx: self-expires, and a success clears it.
 // Kept separate so it can never shorten the long credit/auth cooldown above.
 const TRANSIENT_COOLDOWN_MS = 60_000;
 let sumopodTransientUntil = 0;
+let healthMemo: { ok: boolean; until: number; fetchedAt: number } | null = null;
+let inflightProbe: Promise<boolean> | null = null;
 
 function sumopodCircuitOpen(): boolean {
   const now = Date.now();
   return now < sumopodSkipUntil || now < sumopodTransientUntil;
+}
+
+function isSumopodDisabledByEnv(): boolean {
+  return !process.env.SUMOPOD_API_KEY || process.env.SUMOPOD_EMBED_DISABLED === "1";
+}
+
+function persistSumopodHealth(ok: boolean, ttlMs: number): void {
+  const now = Date.now();
+  const until = now + ttlMs;
+  healthMemo = { ok, until, fetchedAt: now };
+  if (ok) {
+    sumopodSkipUntil = 0;
+    sumopodTransientUntil = 0;
+  } else {
+    sumopodSkipUntil = Math.max(sumopodSkipUntil, until);
+  }
+  const supabase = getServiceClient();
+  if (!supabase) return;
+  void (async () => {
+    try {
+      await supabase.from("app_settings").upsert(
+        {
+          key: EMBED_HEALTH_SETTING_KEY,
+          value: JSON.stringify({ ok, checkedAt: now, until }),
+          updated_at: new Date(now).toISOString(),
+        },
+        { onConflict: "key" },
+      );
+    } catch {
+      // Best-effort cross-instance hint; local breaker still guards this instance.
+    }
+  })();
+}
+
+async function readCachedSumopodHealth(): Promise<boolean | null> {
+  if (isSumopodDisabledByEnv()) return false;
+  if (sumopodCircuitOpen()) return false;
+  const now = Date.now();
+  if (healthMemo && now - healthMemo.fetchedAt < HEALTH_MEMO_MS && now < healthMemo.until) {
+    return healthMemo.ok;
+  }
+  const supabase = getServiceClient();
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase
+      .from("app_settings")
+      .select("value")
+      .eq("key", EMBED_HEALTH_SETTING_KEY)
+      .maybeSingle();
+    if (error || typeof (data as { value?: unknown } | null)?.value !== "string") return null;
+    const parsed = JSON.parse((data as { value: string }).value) as { ok?: unknown; until?: unknown };
+    if (typeof parsed?.ok !== "boolean" || typeof parsed?.until !== "number") return null;
+    if (now >= parsed.until) return null;
+    healthMemo = { ok: parsed.ok, until: parsed.until, fetchedAt: now };
+    if (!parsed.ok) sumopodSkipUntil = Math.max(sumopodSkipUntil, parsed.until);
+    return parsed.ok;
+  } catch {
+    return null;
+  }
+}
+
+/** Sync shared Sumopod health from app_settings without triggering an outbound API probe. */
+export async function syncSumopodHealth(): Promise<boolean> {
+  const cached = await readCachedSumopodHealth();
+  return cached ?? true;
+}
+
+/** Return cached Sumopod health or run one deduplicated probe when expired. */
+export async function ensureSumopodHealth(): Promise<boolean> {
+  const cached = await readCachedSumopodHealth();
+  if (cached !== null) return cached;
+  if (inflightProbe) return inflightProbe;
+  const client = getOpenAIEmbed();
+  if (!client) return false;
+  inflightProbe = (async () => {
+    try {
+      await runEmbedBatch(client, resolveEmbedModel(), ["ok"], {
+        timeout: PROBE_TIMEOUT_MS,
+        maxRetries: 0,
+      });
+      persistSumopodHealth(true, HEALTH_OK_TTL_MS);
+      return true;
+    } catch (error) {
+      if (isCreditOrAuthError(error)) {
+        persistSumopodHealth(false, HEALTH_FAIL_TTL_MS);
+      } else {
+        sumopodTransientUntil = Date.now() + TRANSIENT_COOLDOWN_MS;
+      }
+      return false;
+    }
+  })().finally(() => {
+    inflightProbe = null;
+  });
+  return inflightProbe;
 }
 
 export function isTransientSumopodError(error: unknown): boolean {
@@ -105,6 +205,7 @@ function resolveEmbedModel(): string {
 let openaiInstance: OpenAI | null = null;
 
 function getOpenAIEmbed(): OpenAI | null {
+  if (isSumopodDisabledByEnv()) return null;
   const apiKey = process.env.SUMOPOD_API_KEY;
   if (!apiKey) return null;
   if (!openaiInstance) {
@@ -120,16 +221,24 @@ function getOpenAIEmbed(): OpenAI | null {
 
 /** True when at least one embedding provider is configured. */
 export function isEmbedConfigured(): boolean {
-  return Boolean(process.env.SUMOPOD_API_KEY || process.env.REPLICATE_API_TOKEN);
+  return Boolean(!isSumopodDisabledByEnv() || process.env.REPLICATE_API_TOKEN);
 }
 
 /** Whether `model` can be used right now (key set, breaker closed). */
 export function isEmbedModelAvailable(model: string): boolean {
   if (model === QWEN_MODEL_TAG) return Boolean(process.env.REPLICATE_API_TOKEN);
   if (model === SUMOPOD_MODEL_TAG) {
-    return Boolean(process.env.SUMOPOD_API_KEY) && !sumopodCircuitOpen();
+    return !isSumopodDisabledByEnv() && !sumopodCircuitOpen();
   }
   return false;
+}
+
+/** Set of embedding models currently available on this server. */
+export function getUsableEmbedModels(): Set<string> {
+  const usable = new Set<string>();
+  if (isEmbedModelAvailable(SUMOPOD_MODEL_TAG)) usable.add(SUMOPOD_MODEL_TAG);
+  if (isEmbedModelAvailable(QWEN_MODEL_TAG)) usable.add(QWEN_MODEL_TAG);
+  return usable;
 }
 
 /** The model a fresh index would use right now (Sumopod first, else Qwen). */
@@ -137,6 +246,12 @@ export function preferredEmbedModel(): string | null {
   if (isEmbedModelAvailable(SUMOPOD_MODEL_TAG)) return SUMOPOD_MODEL_TAG;
   if (isEmbedModelAvailable(QWEN_MODEL_TAG)) return QWEN_MODEL_TAG;
   return null;
+}
+
+/** Sync cross-instance provider health, then pick the active model for new/refreshed embeds. */
+export async function preferredEmbedModelAsync(): Promise<string | null> {
+  await syncSumopodHealth();
+  return preferredEmbedModel();
 }
 
 function errorMessage(error: unknown): string {
@@ -185,14 +300,19 @@ async function embedViaSumopod(
   opts: EmbedOptions,
   signal?: AbortSignal,
 ): Promise<{ vectors: number[][]; inputTokens: number | null }> {
+  if (isSumopodDisabledByEnv()) throw new Error("Sumopod disabled");
   if (sumopodCircuitOpen()) throw new Error("Sumopod circuit open");
   try {
     const result = await embedViaSumopodBatches(cleaned, opts, signal);
-    sumopodTransientUntil = 0;
+    if (!healthMemo || !healthMemo.ok || Date.now() >= healthMemo.until) {
+      persistSumopodHealth(true, HEALTH_OK_TTL_MS);
+    } else {
+      sumopodTransientUntil = 0;
+    }
     return result;
   } catch (error) {
     if (!isAbort(error, signal)) {
-      if (isCreditOrAuthError(error)) sumopodSkipUntil = Date.now() + BREAKER_COOLDOWN_MS;
+      if (isCreditOrAuthError(error)) persistSumopodHealth(false, HEALTH_FAIL_TTL_MS);
       else if (isTransientSumopodError(error)) sumopodTransientUntil = Date.now() + TRANSIENT_COOLDOWN_MS;
     }
     throw error;
@@ -364,11 +484,13 @@ export async function embedTexts(
   };
 
   if (opts.model) {
+    if (opts.model === SUMOPOD_MODEL_TAG) await syncSumopodHealth();
     const r = await runProvider(opts.model, cleaned, opts, kind, signal);
     return finish(opts.model, r.inputTokens, r.vectors);
   }
 
-  const sumopodConfigured = Boolean(process.env.SUMOPOD_API_KEY);
+  await syncSumopodHealth();
+  const sumopodConfigured = !isSumopodDisabledByEnv();
   const circuitOpen = sumopodCircuitOpen();
   let sumopodError: unknown = null;
   if (sumopodConfigured && !circuitOpen) {

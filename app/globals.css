@@ -12,6 +12,9 @@
   --spoiler-hint: #8f4a44;
   --spoiler-surface: #f6eeec;
   --danger: #b83a2f;
+  --warn: #7c4a03;
+  --warn-bg: rgba(217, 155, 38, 0.16);
+  --warn-border: rgba(180, 115, 16, 0.38);
   --disabled-bg: #e0e2d9;
   --disabled-text: #5f6762;
   --font-sans: var(--font-rubik), "Rubik", system-ui, sans-serif;
@@ -3956,6 +3959,64 @@ details.sources small {
   border-color: color-mix(in srgb, var(--signal) 40%, transparent);
 }
 
+.guide-status-chip.is-limited,
+.guide-status-chip.is-paused {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+}
+
+.guide-status-chip.is-refreshing {
+  color: var(--signal-dark);
+  background: color-mix(in srgb, var(--signal) 12%, transparent);
+  border-color: color-mix(in srgb, var(--signal) 36%, transparent);
+  animation: guide-chip-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .guide-status-chip.is-refreshing,
+  .guide-status-chip.is-checking {
+    animation: none;
+  }
+}
+
+.guide-refresh-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  min-height: 28px;
+  font-family: var(--font-sans);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--warn);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.guide-refresh-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--warn) 22%, transparent);
+}
+
+.guide-refresh-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.game-card-link.is-limited,
+.game-card-link.is-paused {
+  color: var(--warn);
+}
+
+.game-card-link.is-refreshing {
+  color: var(--signal-dark);
+}
+
 .guide-status-chip.is-failed,
 .guide-status-chip.is-blocked {
   color: var(--danger);
@@ -5720,6 +5781,9 @@ details.sources small {
   --spoiler-hint: #c99a95;
   --spoiler-surface: #221a19;
   --danger: #f08070;
+  --warn: #f5c35e;
+  --warn-bg: rgba(245, 195, 94, 0.14);
+  --warn-border: rgba(245, 195, 94, 0.36);
   --disabled-bg: #2a3134;
   --disabled-text: #a8b0ab;
 }
@@ -5801,6 +5865,9 @@ details.sources small {
     --spoiler-hint: #c99a95;
     --spoiler-surface: #221a19;
     --danger: #f08070;
+    --warn: #f5c35e;
+    --warn-bg: rgba(245, 195, 94, 0.14);
+    --warn-border: rgba(245, 195, 94, 0.36);
     --disabled-bg: #2a3134;
     --disabled-text: #a8b0ab;
   }

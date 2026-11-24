@@ -118,7 +118,10 @@ import { sourcesForSolveLog } from "../lib/solve-log-sources.js";
 import {
   guideIngestHint,
   guideIngestHintFromResponse,
+  guideLimitedHint,
+  guideRefreshingHint,
   guideSearchFallbackHint,
+  guideSearchPausedHint,
   guideSkippedForWebHint,
   guideWebSupplementHint,
   GUIDE_WEB_KNOWLEDGE_FALLBACK_HINT,
@@ -126,6 +129,18 @@ import {
   solveTurnToast,
   WEB_KNOWLEDGE_FALLBACK_HINT,
 } from "../lib/guide-hints.js";
+import {
+  AUTO_REFRESH_MAX_CHUNKS,
+  classifyGuideIndexStatus,
+  resolveGuideModelChoice,
+  selectAutoRefreshTargets,
+} from "../lib/guide-embed-state.js";
+import {
+  guideIndexStateFromIngest,
+  guideIndexStateFromStatus,
+  guideUrlNeedsIngest,
+  resolveGuideDisplayState,
+} from "../lib/guide-index-state.ts";
 import {
   coerceGuideRetrievalFlags,
   coerceGuideRetrievalMode,
@@ -178,6 +193,7 @@ import {
   effectiveRagGuideUrls,
   guideSourceSendBlockReason,
   guideUrlsBlockingComposer,
+  isGuideUrlSelectable,
 } from "../lib/guide-source-selection.js";
 import {
   steamIdFromClaimedId,
@@ -4012,6 +4028,205 @@ if (!canRunTsChecks) {
     assert.equal(syncWithModel.ok, true);
     assert.equal(sbPost.getWrittenResponses()[0].model, "openai/gpt-5.6-sol");
   }
+}
+
+// --- Dual-vector fallback, hybrid auto-heal & zero-jargon status UX ---
+{
+  const pref = ["sumopod", "replicate:qwen3-embedding-8b@42d9684"];
+  const bothUsable = new Set(pref);
+  const qwenOnly = new Set([pref[1]]);
+  const noneUsable = new Set();
+
+  assert.deepEqual(
+    resolveGuideModelChoice({
+      embedModel: pref[0],
+      embedModelNext: null,
+      usableModels: bothUsable,
+      preferredOrder: pref,
+    }),
+    { activeModel: pref[0], degraded: false, canRefresh: false, refreshTarget: null },
+  );
+  assert.deepEqual(
+    resolveGuideModelChoice({
+      embedModel: pref[0],
+      embedModelNext: pref[1],
+      usableModels: qwenOnly,
+      preferredOrder: pref,
+    }),
+    { activeModel: pref[1], degraded: false, canRefresh: false, refreshTarget: null },
+  );
+  assert.deepEqual(
+    resolveGuideModelChoice({
+      embedModel: pref[0],
+      embedModelNext: null,
+      usableModels: qwenOnly,
+      preferredOrder: pref,
+    }),
+    { activeModel: null, degraded: true, canRefresh: true, refreshTarget: pref[1] },
+  );
+  assert.deepEqual(
+    resolveGuideModelChoice({
+      embedModel: pref[0],
+      embedModelNext: pref[1],
+      usableModels: noneUsable,
+      preferredOrder: pref,
+    }),
+    { activeModel: null, degraded: true, canRefresh: false, refreshTarget: null },
+  );
+  assert.deepEqual(
+    resolveGuideModelChoice({
+      embedModel: pref[0],
+      embedModelNext: pref[1],
+      usableModels: bothUsable,
+      preferredOrder: pref,
+    }),
+    { activeModel: pref[0], degraded: false, canRefresh: false, refreshTarget: null },
+    "primary recovery keeps primary Sumopod vector priority over backup",
+  );
+
+  assert.deepEqual(
+    classifyGuideIndexStatus({
+      indexed: false,
+      chunkCount: 0,
+      usableModels: qwenOnly,
+      preferredOrder: pref,
+    }),
+    { status: "pending", canRefresh: false, autoRefreshable: false },
+  );
+  assert.deepEqual(
+    classifyGuideIndexStatus({
+      indexed: true,
+      chunkCount: 50,
+      embedModel: pref[0],
+      embedModelNext: null,
+      usableModels: bothUsable,
+      preferredOrder: pref,
+      dualRpcReady: true,
+    }),
+    { status: "indexed", canRefresh: false, autoRefreshable: false },
+  );
+  assert.deepEqual(
+    classifyGuideIndexStatus({
+      indexed: true,
+      chunkCount: AUTO_REFRESH_MAX_CHUNKS,
+      embedModel: pref[0],
+      embedModelNext: null,
+      usableModels: qwenOnly,
+      preferredOrder: pref,
+      dualRpcReady: true,
+    }),
+    { status: "limited", canRefresh: true, autoRefreshable: true },
+  );
+  assert.deepEqual(
+    classifyGuideIndexStatus({
+      indexed: true,
+      chunkCount: AUTO_REFRESH_MAX_CHUNKS + 1,
+      embedModel: pref[0],
+      embedModelNext: null,
+      usableModels: qwenOnly,
+      preferredOrder: pref,
+      dualRpcReady: true,
+    }),
+    { status: "limited", canRefresh: true, autoRefreshable: false },
+  );
+  assert.deepEqual(
+    classifyGuideIndexStatus({
+      indexed: true,
+      chunkCount: 100,
+      embedModel: pref[0],
+      embedModelNext: null,
+      usableModels: qwenOnly,
+      preferredOrder: pref,
+      isRefreshing: true,
+      dualRpcReady: true,
+    }),
+    { status: "refreshing", canRefresh: false, autoRefreshable: false },
+  );
+  assert.deepEqual(
+    classifyGuideIndexStatus({
+      indexed: true,
+      chunkCount: 100,
+      embedModel: pref[0],
+      embedModelNext: pref[1],
+      usableModels: noneUsable,
+      preferredOrder: pref,
+      dualRpcReady: true,
+    }),
+    { status: "paused", canRefresh: false, autoRefreshable: false },
+  );
+  assert.equal(
+    classifyGuideIndexStatus({
+      indexed: true,
+      chunkCount: 100,
+      embedModel: pref[0],
+      embedModelNext: pref[1],
+      usableModels: qwenOnly,
+      preferredOrder: pref,
+      dualRpcReady: false,
+    }).status,
+    "limited",
+    "never claims backup vector is active before match_guide_chunks_dual is deployed",
+  );
+
+  assert.deepEqual(
+    selectAutoRefreshTargets([
+      { guideUrl: "https://a.example", chunkCount: 80, canRefresh: true },
+      { guideUrl: "https://a.example", chunkCount: 80, canRefresh: true },
+      { guideUrl: "https://big.example", chunkCount: 400, canRefresh: true },
+      { guideUrl: "https://paused.example", chunkCount: 50, canRefresh: false },
+    ]),
+    [{ guideUrl: "https://a.example", chunkCount: 80 }],
+  );
+
+  for (const s of ["indexed", "limited", "refreshing", "paused"]) {
+    assert.equal(guideUrlNeedsIngest("https://a.example", s), false, `no pre-turn ingest for ${s}`);
+  }
+  for (const s of ["pending", "failed", "blocked", "unknown"]) {
+    assert.equal(guideUrlNeedsIngest("https://a.example", s), true, `ingest triggers for ${s}`);
+  }
+  for (const s of ["indexed", "limited", "refreshing"]) {
+    assert.equal(isGuideUrlSelectable("https://a.example", { "https://a.example": s }), true);
+  }
+  for (const s of ["pending", "checking", "failed", "blocked", "paused"]) {
+    assert.equal(isGuideUrlSelectable("https://a.example", { "https://a.example": s }), false);
+  }
+  assert.equal(guideIndexStateFromStatus({ status: "limited", indexed: true }), "limited");
+  assert.equal(guideIndexStateFromStatus({ indexed: false }), "pending");
+  assert.equal(guideIndexStateFromIngest({ indexed: true, refreshed: false, status: "limited" }), "limited");
+  assert.equal(guideIndexStateFromIngest({ indexed: true, refreshed: true, status: "indexed" }), "indexed");
+  assert.equal(resolveGuideDisplayState("limited", { isBlocked: true }), "limited");
+
+  const hints = [
+    guideRefreshingHint(true),
+    guideRefreshingHint(false),
+    guideLimitedHint(),
+    guideSearchPausedHint(),
+  ];
+  for (const h of hints) {
+    assert.ok(h.length > 10);
+    assert.equal(isPreferredGuideHint(h), true, `recognized as guide hint: ${h}`);
+    assert.equal(
+      /sumopod|qwen|replicate|embed|vector|credit/i.test(h),
+      false,
+      `zero provider jargon in hint: ${h}`,
+    );
+  }
+
+  const fsMod = await import("node:fs");
+  const dualSql = fsMod.readFileSync(new URL("../db/guide-chunks-dual-embed.sql", import.meta.url), "utf8");
+  const ragSrc = fsMod.readFileSync(new URL("../lib/guide-rag.ts", import.meta.url), "utf8");
+  const ingSrc = fsMod.readFileSync(new URL("../lib/guide-ingest.ts", import.meta.url), "utf8");
+  const embedSrc = fsMod.readFileSync(new URL("../lib/embed.ts", import.meta.url), "utf8");
+  const statusSrc = fsMod.readFileSync(new URL("../app/api/guide-ingest/status/route.ts", import.meta.url), "utf8");
+  const chipSrc = fsMod.readFileSync(new URL("../app/chat/guide-status-chip.tsx", import.meta.url), "utf8");
+  const cssSrc = fsMod.readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.ok(dualSql.includes("match_guide_chunks_dual"));
+  assert.ok(ragSrc.includes("match_guide_chunks_dual"));
+  assert.ok(ingSrc.includes("export async function refreshGuideEmbeddings"));
+  assert.ok(embedSrc.includes("export async function ensureSumopodHealth"));
+  assert.ok(statusSrc.includes("ensureSumopodHealth"));
+  assert.ok(chipSrc.includes('state === "limited"') && chipSrc.includes('state === "refreshing"') && chipSrc.includes('state === "paused"'));
+  assert.equal((cssSrc.match(/--warn:/g) || []).length, 3, "light + explicit dark + media dark warn tokens");
 }
 
 console.log("Self-check passed.");
