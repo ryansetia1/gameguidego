@@ -24,8 +24,9 @@ export const MAX_MAP_BYTES = 30 * 1024 * 1024;
 export const MAX_VIEW_MAP_BYTES = 100 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 const PAGE_TIMEOUT_MS = 15_000;
-// The timeout covers the body too: 2 min keeps a slow 30 MB map (~250 KB/s) from being cut.
-const IMAGE_TIMEOUT_MS = 120_000;
+// The timeout covers the body too, and the phone paces it: 270 s lets a 100 MB view-only map
+// through at ~3 Mbps (48 MB at ~1.5 Mbps). Kept under the route's maxDuration (300 s).
+const IMAGE_TIMEOUT_MS = 270_000;
 const UA = "GameGuideGo/1.0 (+https://gameguidego.vercel.app)";
 /** After a network error or 5xx, skip VGMaps for this long (stale cache still serves). */
 const BACKOFF_MS = 60_000;

@@ -77,6 +77,8 @@ export type OpenMapResult =
   | { status: "too_large" }
   /** Not in the device cache and no longer on the game's VGMaps list. */
   | { status: "unlisted" }
+  /** VGMaps refused or failed the image (403/404/5xx through the proxy). */
+  | { status: "unavailable" }
   | { status: "aborted" }
   | { status: "error" };
 
@@ -152,10 +154,14 @@ function saveFailure(err: unknown): { status: "unlisted" | "too_large" | "quota"
   return { status: "error" };
 }
 
-function openFailure(err: unknown): { status: "unlisted" | "too_large" | "aborted" | "error" } {
+function openFailure(err: unknown): { status: "unlisted" | "too_large" | "unavailable" | "aborted" | "error" } {
   if ((err as { name?: string })?.name === "AbortError") return { status: "aborted" };
   if (err instanceof MapFetchError && err.status === MAP_UNLISTED_STATUS) return { status: "unlisted" };
   if (err instanceof MapFetchError && err.status === MAP_TOO_LARGE_STATUS) return { status: "too_large" };
+  // Proxy answers 502 for any upstream block/failure; 0 is the phone's own network error.
+  if (err instanceof MapFetchError && (err.status === 403 || err.status === 404 || err.status >= 500)) {
+    return { status: "unavailable" };
+  }
   return { status: "error" };
 }
 

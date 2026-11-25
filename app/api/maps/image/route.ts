@@ -3,8 +3,8 @@ import { NextResponse } from "next/server";
 import { VGMapsError, fetchVGMapsImage, resolveMapImageRequest } from "@/lib/vgmaps-cache";
 
 export const runtime = "nodejs";
-// Covers the 120s upstream image timeout in lib/vgmaps-cache.ts.
-export const maxDuration = 130;
+// Covers the 270s upstream image timeout in lib/vgmaps-cache.ts (Fluid allows 300s).
+export const maxDuration = 300;
 
 // Same-origin proxy for a VGMaps map image (no canvas tainting, cacheable offline).
 // GET ?url=<imageUrl>&game=<atlas game url>, exactly that: the image must be one the game's

@@ -11,7 +11,7 @@ import {
 
 import type { MapDownloadProgress, MapRef, MapViewport, OpenMapResult } from "./use-saved-maps";
 import { MAX_MAP_BLOB_BYTES } from "@/lib/map-blob-cache.js";
-import { formatSavingText, formatVeryLargeWarning, vgmapsExternalUrl } from "@/lib/maps-panel.js";
+import { formatSavingText, formatVeryLargeWarning, isLargeLoad, vgmapsExternalUrl } from "@/lib/maps-panel.js";
 import { IconArrowUpRight } from "../icons";
 import {
   actualSizeScale,
@@ -81,6 +81,8 @@ type ViewerState =
   | { kind: "too_large" }
   /** 404/400 from the proxy: VGMaps no longer lists this map. */
   | { kind: "unlisted" }
+  /** VGMaps blocked or failed the image. */
+  | { kind: "unavailable" }
   /** Downloaded, but this device couldn't decode it (memory, corrupt file). */
   | { kind: "decode_failed" }
   | { kind: "failed" };
@@ -703,7 +705,7 @@ export function MapViewer({
     renderNow(false);
 
     // Over 30 MB: confirm before any bytes move (once per map per session).
-    if (currentMap.overLimit && !confirmedLarge.has(mapImageUrl)) {
+    if (currentMap.overLimit && !currentMap.savedId && !confirmedLarge.has(mapImageUrl)) {
       setViewerState({ kind: typeof navigator !== "undefined" && !navigator.onLine ? "warn_offline" : "warn" });
       return;
     }
@@ -768,6 +770,9 @@ export function MapViewer({
           if (res.status === "offline") setViewerState({ kind: "offline" });
           else if (res.status === "too_large") setViewerState({ kind: "too_large" });
           else if (res.status === "unlisted") setViewerState({ kind: "unlisted" });
+          else if (res.status === "unavailable") setViewerState({ kind: "unavailable" });
+          // A view-only load never offers "Try again": it would re-download it all and fail alike.
+          else if (isLargeLoad(Boolean(currentMap.overLimit), latestProgress)) setViewerState({ kind: "too_large" });
           else setViewerState({ kind: "failed" });
           return;
         }
@@ -783,7 +788,7 @@ export function MapViewer({
 
         decoding = true;
         const asset = await decodeMapAsset(res.blob, openedUrl);
-        if (loadGenRef.current === gen && !res.fromCache) blobRef.current = res.blob;
+        if (loadGenRef.current === gen && !res.fromCache && !viewOnly) blobRef.current = res.blob;
         openedUrl = null; // Asset owns or already revoked it.
 
         if (!active || loadGenRef.current !== gen) {
@@ -831,7 +836,14 @@ export function MapViewer({
         }
         if (!active || loadGenRef.current !== gen) return;
         if ((err as { name?: string })?.name === "AbortError") return;
-        setViewerState({ kind: decoding || looksLikeMemoryDecodeError(err) ? "decode_failed" : "failed" });
+        setViewerState({
+          kind:
+            decoding || looksLikeMemoryDecodeError(err)
+              ? "decode_failed"
+              : isLargeLoad(Boolean(currentMap.overLimit), latestProgress)
+                ? "too_large"
+                : "failed",
+        });
       }
     };
 
@@ -1002,10 +1014,15 @@ export function MapViewer({
   // Warning and failure screens put focus on their main action (#55).
   const stateKind = viewerState.kind;
   useEffect(() => {
-    if (stateKind === "warn" || stateKind === "too_large" || stateKind === "decode_failed" || stateKind === "unlisted" || stateKind === "failed") {
+    if (stateKind !== "loading" && stateKind !== "ready" && stateKind !== "offline" && stateKind !== "warn_offline") {
       primaryActionRef.current?.focus();
     }
   }, [stateKind]);
+
+  // Back online on the offline warning: show the real warning.
+  useEffect(() => {
+    if (stateKind === "warn_offline" && online) setRetryToken((n) => n + 1);
+  }, [stateKind, online]);
 
   // Right after a save lands, keep the current pan/zoom on the new saved record.
   const savedId = map?.savedId ?? null;
@@ -1464,7 +1481,7 @@ export function MapViewer({
           <div className="map-viewer-status-block">
             <p id="mv-warn-title" className="map-viewer-status-title">{map.title}</p>
             <p id="mv-warn-text" className="map-viewer-status-text">
-              {viewerState.kind === "warn_offline" ? "You're offline." : formatVeryLargeWarning(map.sizeBytes)}
+              {viewerState.kind === "warn_offline" ? "You're offline." : formatVeryLargeWarning(map.sizeBytes ?? 0)}
             </p>
             {viewerState.kind === "warn" && (
               <div className="map-viewer-status-actions map-viewer-status-stack">
@@ -1492,15 +1509,18 @@ export function MapViewer({
           <div
             className="map-viewer-status"
             role={viewerState.kind === "offline" ? "status" : "alertdialog"}
+            aria-label={viewerState.kind === "offline" ? undefined : "Can't open this map"}
             aria-describedby="mv-fail-text"
           >
             <div className="map-viewer-status-block">
               <p id="mv-fail-text" className="map-viewer-status-text">
                 {viewerState.kind === "offline"
                   ? "You're offline and this map isn't saved."
-                  : viewerState.kind === "unlisted"
+                  : viewerState.kind === "unlisted" || viewerState.kind === "unavailable"
                     ? "This map isn't available from VGMaps right now."
-                    : "This device couldn't open this map."}
+                    : viewerState.kind === "failed"
+                      ? "Couldn't open this map."
+                      : "This device couldn't open this map."}
               </p>
               {(viewerState.kind === "too_large" || viewerState.kind === "decode_failed") && (
                 <p className="map-viewer-status-text">It may be too large for this device&apos;s memory.</p>
@@ -1510,6 +1530,7 @@ export function MapViewer({
               )}
               <div className="map-viewer-status-actions map-viewer-status-stack">
                 {viewerState.kind !== "offline" && externalLink}
+                {(viewerState.kind === "offline" || !externalHref) && backButton}
                 {viewerState.kind === "failed" && (
                   <button
                     type="button"

@@ -5183,6 +5183,12 @@ if (!canRunTsChecks) {
     const viewBig = await bc.fetchMapBlob(pUrl).then(() => 200, (e) => (e instanceof bc.MapFetchError ? e.status : -1));
     assert.equal(viewBig, bc.MAP_TOO_LARGE_STATUS, "declared >100 MB rejected for viewing as 413");
 
+    // Save cap holds inside the store path too (a view-only blob must never be stored).
+    const bigBlob = { size: bc.MAX_MAP_BLOB_BYTES + 1, type: "image/png" };
+    assert.equal(await bc.cacheMapBlob(pUrl, bigBlob), false, "cacheMapBlob refuses over 30 MB");
+    const bigSave = await bc.storeMapThenSave(pUrl, () => ({ saved: true }), { blob: bigBlob }).then(() => 200, (e) => e.status);
+    assert.equal(bigSave, bc.MAP_TOO_LARGE_STATUS, "storeMapThenSave refuses an over-30 MB blob");
+
     // cacheMapBlob stores an already-fetched blob for offline Undo.
     const undoBlob = new Blob([new Uint8Array([9, 8, 7])], { type: "image/png" });
     await bc.deleteCachedMap(pUrl);
@@ -5371,7 +5377,14 @@ if (!canRunTsChecks) {
   assert.equal(mp.isMapOverLimit({ fileSizeBytes: null }), false, "unknown size allowed");
   assert.equal(mp.formatVeryLargeRow(48 * 1024 * 1024), "Very large file, 48 MB. Opens without saving.");
   assert.match(mp.formatVeryLargeWarning(48 * 1024 * 1024), /^Very large map, about 48 MB\. It may be slow/);
-  assert.match(mp.formatVeryLargeWarning(null), /Size unknown/, "unknown size copy");
+  assert.equal(mp.formatFindMapMeta({ fileSize: "", author: "Ann" }), "Size unknown · Ann", "unlisted size says so");
+  assert.equal(mp.formatFindMapMeta({ fileSize: "", author: "Ann" }, { saved: true }), "Ann · On this device", "saved row skips it");
+  assert.equal(mp.formatFindMapMeta({ fileSize: "5.2 MB" }), "5.2 MB");
+  assert.equal(mp.isLargeLoad(true, null), true, "listed over cap is a large load");
+  assert.equal(mp.isLargeLoad(false, { loaded: 31 * 1024 * 1024, total: null }), true, "stream past 30 MB");
+  assert.equal(mp.isLargeLoad(false, { loaded: 1, total: 48 * 1024 * 1024 }), true, "declared total over 30 MB");
+  assert.equal(mp.isLargeLoad(false, { loaded: 1, total: 5 * 1024 * 1024 }), false, "normal map can retry");
+  assert.equal(mp.isLargeLoad(false, null), false);
   assert.equal(mp.vgmapsExternalUrl("https://www.vgmaps.com/Atlas/NES/Zelda.htm#a"), "https://www.vgmaps.com/Atlas/NES/Zelda.htm#a");
   assert.equal(mp.vgmapsExternalUrl("javascript:alert(1)"), "", "non-https refused");
   assert.equal(mp.vgmapsExternalUrl("https://evil.example/x"), "", "foreign host refused");
