@@ -124,6 +124,7 @@ do not sync to the cloud or use Storage uploads.
   no gap. "+ New game" collapses the hero (`.hero-shell--exit`) and reveals the
   setup form below the carousel with a push-up entrance (`.setup--from-quick`).
   Sidebar + library are ungated for anon (Steam/profile controls stay `user`-only).
+- `lib/deep-link.js`: opt-in entry deep link (#67) `/?game=&platform=&igdb=&q=&rlog_item=&step=`. `parseDeepLink` validates/caps every param (no `<>`/control chars, platform via `platformLabelFor`, igdb digits only, offset by `IGDB_ID_OFFSET`); null without a valid `game`. The session-hydration effect in `page.tsx` matches a room by `catalog_game_id` then name+platform, else starts an unsaved one, prefills the composer with `q` (never submits) and strips the params. `rlog_item`/`step` are parsed but not stored yet (Phase 2). No UI.
 - `app/platform-select.tsx`: custom themed, searchable, keyboard-accessible
   platform combobox. Delegates filtering to `lib/platforms.js`.
 - `lib/platforms.js`: owns the `PLATFORMS` list and `matchPlatforms(query)`, a
