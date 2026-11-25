@@ -28,6 +28,7 @@ import { type Message, parseStoredMessages } from "./chat/types";
 import {
   IconChevronDown,
   IconIncognito,
+  IconMap,
   IconX,
 } from "./icons";
 import {
@@ -3398,7 +3399,7 @@ export default function Home() {
               // The bar itself scrolls to top on Enter/Space; keep keys on this button.
               onKeyDown={(event) => event.stopPropagation()}
             >
-              Maps
+              <IconMap size={18} />
             </button>
           )}
           {activeChatId && !temporary && (
