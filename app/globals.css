@@ -8740,6 +8740,35 @@ details.sources small {
   cursor: pointer;
 }
 
+.map-viewer-status-btn {
+  gap: 6px;
+  text-decoration: none;
+}
+
+.map-viewer-status-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.map-viewer-status-btn.map-viewer-status-primary {
+  background: var(--signal);
+  border-color: var(--signal);
+  color: var(--on-signal);
+}
+
+.map-viewer-status-btn.map-viewer-status-primary:hover {
+  background: var(--signal);
+  filter: brightness(0.94);
+}
+
+@media (max-width: 420px) {
+  .map-viewer-status-stack {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+}
+
 .map-viewer-status-btn:hover {
   background: rgba(243, 240, 231, 0.12);
 }
@@ -9043,6 +9072,13 @@ details.sources small {
   margin: 0;
   color: var(--danger);
   font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.maps-row-note {
+  color: var(--ink);
+  font-size: 0.76rem;
   font-weight: 600;
   line-height: 1.35;
 }

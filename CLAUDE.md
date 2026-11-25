@@ -528,7 +528,7 @@ do not sync to the cloud or use Storage uploads.
   to `public.saved_maps` (`db/saved-maps.sql`) via `syncSavedMaps` in `lib/saved-maps.js`
   (merge before push, upsert on `user_id,game_key,image_url`; quiet when the table is
   missing). `openMap` returns `unlisted` when a map is neither cached nor on its game's list;
-  `isMapListed` flags saved maps missing from the current list. Binaries never go to Supabase.
+  `isMapListed` flags saved maps missing from the current list. Binaries never go to Supabase. **Large maps (#55):** saving stays capped at 30 MB (`MAX_MAP_BLOB_BYTES`), but *viewing* is allowed up to `MAX_VIEW_MAP_BYTES` (100 MB, streamed by the proxy, cut at the cap; `fetchMapBlob` uses `MAX_VIEW_BLOB_BYTES`, never the Cache API). A row over 30 MB opens the viewer's warning screen first (`confirmedLarge`, once per map per session; offline shows only "You're offline."), then view-only with "Can't save: over 30 MB.". The proxy image timeout is 270 s (`maxDuration` 300) so a slow phone can finish a 100 MB map; a failed over-30 MB load never offers Try again (it goes to the fallback). A map with no listed size shows "Size unknown" in its row and opens without the warning. Decode/memory/too-big/unlisted/unavailable (upstream 403/404/5xx) failures always offer **Open on VGMaps** (`vgmapsExternalUrl`, https vgmaps.com only). No new history layer: it lives inside the viewer dialog's existing `gggMaps: "viewer"` entry.
   `app/chat/maps-panel.tsx` and `app/chat/map-viewer.tsx` implement the mutually exclusive
   side pane and modal dual-layer canvas viewer. **Maps v2 (#56):** one list, no tabs:
   "Saved on this device" then "On VGMaps" (game auto-resolved by `resolveMapsGame` in

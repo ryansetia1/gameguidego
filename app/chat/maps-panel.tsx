@@ -23,6 +23,7 @@ import {
   formatFindMapMeta,
   formatSavedMapMeta,
   formatSavingText,
+  formatVeryLargeRow,
   isMapOverLimit,
   MAPS_SLOW_MS,
   mapsChoiceKey,
@@ -801,7 +802,7 @@ export function MapsPanel({
             {progress ? formatSavingText(progress) : formatFindMapMeta(mapLink, { saved: Boolean(saved) })}
           </span>
           {overLimit ? (
-            <span className="maps-row-error">Over 30 MB. Too large to open here.</span>
+            <span className="maps-row-note">{formatVeryLargeRow(mapLink.fileSizeBytes)}</span>
           ) : mapLink.isLarge && !saved ? (
             <span className="map-meta-warn">
               Large file, {mapLink.fileSize || "over 6 MB"}. May take a while on mobile data.

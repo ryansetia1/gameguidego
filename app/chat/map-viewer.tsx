@@ -11,7 +11,8 @@ import {
 
 import type { MapDownloadProgress, MapRef, MapViewport, OpenMapResult } from "./use-saved-maps";
 import { MAX_MAP_BLOB_BYTES } from "@/lib/map-blob-cache.js";
-import { formatSavingText } from "@/lib/maps-panel.js";
+import { formatSavingText, formatVeryLargeWarning, isLargeLoad, vgmapsExternalUrl } from "@/lib/maps-panel.js";
+import { IconArrowUpRight } from "../icons";
 import {
   actualSizeScale,
   applyOverscrollResistance,
@@ -42,8 +43,10 @@ export type MapViewerItem = {
   lastZoom?: number;
   lastOffsetX?: number;
   lastOffsetY?: number;
-  /** Listed by VGMaps as over 30 MB: shown as a viewer state, never downloaded (#55 adds a fallback). */
+  /** Listed by VGMaps as over 30 MB: warning screen first, then view-only (#55). */
   overLimit?: boolean;
+  /** Size VGMaps lists, for the warning copy. */
+  sizeBytes?: number | null;
 };
 
 export type MapViewerProps = {
@@ -62,17 +65,24 @@ export type MapViewerProps = {
   onSave?: (blob: Blob | null) => void;
   onViewportChange?: (savedId: string, state: MapViewport) => void;
   onClose: () => void;
+  /** The player canceled a big download from the viewer (page shows its toast). */
+  onCanceled?: () => void;
   /** Rendered inside the dialog's top layer (the page toast while the viewer is open). */
   children?: ReactNode;
 };
 
 type ViewerState =
-  | { kind: "loading"; big: boolean; phase: "downloading" | "preparing"; progress: MapDownloadProgress | null }
-  | { kind: "ready"; naturalW: number; naturalH: number }
+  | { kind: "loading"; big: boolean; slow?: boolean; phase: "downloading" | "preparing"; progress: MapDownloadProgress | null }
+  /** Over 30 MB: nothing downloads until the player confirms (#55). */
+  | { kind: "warn" }
+  | { kind: "warn_offline" }
+  | { kind: "ready"; naturalW: number; naturalH: number; viewOnly?: boolean }
   | { kind: "offline" }
   | { kind: "too_large" }
   /** 404/400 from the proxy: VGMaps no longer lists this map. */
   | { kind: "unlisted" }
+  /** VGMaps blocked or failed the image. */
+  | { kind: "unavailable" }
   /** Downloaded, but this device couldn't decode it (memory, corrupt file). */
   | { kind: "decode_failed" }
   | { kind: "failed" };
@@ -93,6 +103,9 @@ type PointerRecord = { x: number; y: number; startX: number; startY: number; poi
 
 const PIXEL_CRISP_KEY = "gg:map-pixel-crisp";
 const BIG_LOAD_DELAY_MS = 400;
+const SLOW_LOAD_MS = 6000;
+// Maps over 30 MB the player already chose to open this session (warning shows once per map).
+const confirmedLarge = new Set<string>();
 const HD_SETTLE_DELAY_MS = 85;
 const WHEEL_SETTLE_DELAY_MS = 140;
 const ZOOM_ANIM_MS = 160;
@@ -274,6 +287,7 @@ export function MapViewer({
   onSave,
   onViewportChange,
   onClose,
+  onCanceled,
   children,
 }: MapViewerProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -281,6 +295,7 @@ export function MapViewer({
   const topBarRef = useRef<HTMLElement>(null);
   const bottomBarRef = useRef<HTMLDivElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const primaryActionRef = useRef<HTMLElement | null>(null);
   const invokerRef = useRef<HTMLElement | null>(null);
 
   const [viewerState, setViewerState] = useState<ViewerState>({
@@ -322,6 +337,7 @@ export function MapViewer({
   const isSavedRef = useRef(isSaved);
   const onViewportChangeRef = useRef(onViewportChange);
   const onCloseRef = useRef(onClose);
+  const onCanceledRef = useRef(onCanceled);
   const openMapRef = useRef(openMap);
   const cancelDownloadRef = useRef(cancelDownload);
 
@@ -337,6 +353,9 @@ export function MapViewer({
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
+  useEffect(() => {
+    onCanceledRef.current = onCanceled;
+  }, [onCanceled]);
   useEffect(() => {
     openMapRef.current = openMap;
   }, [openMap]);
@@ -685,8 +704,9 @@ export function MapViewer({
     // Clear previous map pixels immediately before showing the next map's loading/status overlay.
     renderNow(false);
 
-    if (currentMap.overLimit) {
-      setViewerState({ kind: "too_large" });
+    // Over 30 MB: confirm before any bytes move (once per map per session).
+    if (currentMap.overLimit && !currentMap.savedId && !confirmedLarge.has(mapImageUrl)) {
+      setViewerState({ kind: typeof navigator !== "undefined" && !navigator.onLine ? "warn_offline" : "warn" });
       return;
     }
 
@@ -709,6 +729,11 @@ export function MapViewer({
         prev.kind === "loading" ? { ...prev, big: true, progress: prev.phase === "downloading" ? latestProgress : null } : prev,
       );
     }, BIG_LOAD_DELAY_MS);
+
+    const slowTimer = setTimeout(() => {
+      if (!active || loadGenRef.current !== gen) return;
+      setViewerState((prev) => (prev.kind === "loading" ? { ...prev, slow: true } : prev));
+    }, SLOW_LOAD_MS);
 
     const run = async () => {
       try {
@@ -740,22 +765,22 @@ export function MapViewer({
 
         if (res.status !== "ok") {
           clearTimeout(bigTimer);
+          clearTimeout(slowTimer);
           if (res.status === "aborted") return;
           if (res.status === "offline") setViewerState({ kind: "offline" });
           else if (res.status === "too_large") setViewerState({ kind: "too_large" });
           else if (res.status === "unlisted") setViewerState({ kind: "unlisted" });
+          else if (res.status === "unavailable") setViewerState({ kind: "unavailable" });
+          // A view-only load never offers "Try again": it would re-download it all and fail alike.
+          else if (isLargeLoad(Boolean(currentMap.overLimit), latestProgress)) setViewerState({ kind: "too_large" });
           else setViewerState({ kind: "failed" });
           return;
         }
 
         openedUrl = res.objectUrl;
-        if (res.blob.size > MAX_MAP_BLOB_BYTES) {
-          URL.revokeObjectURL(openedUrl);
-          openedUrl = null;
-          clearTimeout(bigTimer);
-          setViewerState({ kind: "too_large" });
-          return;
-        }
+        clearTimeout(slowTimer);
+        // Past the save cap (declared or discovered mid-stream): view only, never stored.
+        const viewOnly = res.blob.size > MAX_MAP_BLOB_BYTES;
 
         setViewerState((prev) =>
           prev.kind === "loading" ? { ...prev, phase: "preparing", progress: null } : prev,
@@ -763,7 +788,7 @@ export function MapViewer({
 
         decoding = true;
         const asset = await decodeMapAsset(res.blob, openedUrl);
-        if (loadGenRef.current === gen && !res.fromCache) blobRef.current = res.blob;
+        if (loadGenRef.current === gen && !res.fromCache && !viewOnly) blobRef.current = res.blob;
         openedUrl = null; // Asset owns or already revoked it.
 
         if (!active || loadGenRef.current !== gen) {
@@ -799,18 +824,26 @@ export function MapViewer({
           transformRef.current = { scale: 1, offset: { x: 0, y: 0 } };
         }
 
-        setViewerState({ kind: "ready", naturalW: asset.naturalW, naturalH: asset.naturalH });
+        setViewerState({ kind: "ready", naturalW: asset.naturalW, naturalH: asset.naturalH, viewOnly });
         renderNow(true);
         syncZoomUi();
       } catch (err) {
         clearTimeout(bigTimer);
+        clearTimeout(slowTimer);
         if (openedUrl) {
           URL.revokeObjectURL(openedUrl);
           openedUrl = null;
         }
         if (!active || loadGenRef.current !== gen) return;
         if ((err as { name?: string })?.name === "AbortError") return;
-        setViewerState({ kind: decoding || looksLikeMemoryDecodeError(err) ? "decode_failed" : "failed" });
+        setViewerState({
+          kind:
+            decoding || looksLikeMemoryDecodeError(err)
+              ? "decode_failed"
+              : isLargeLoad(Boolean(currentMap.overLimit), latestProgress)
+                ? "too_large"
+                : "failed",
+        });
       }
     };
 
@@ -819,6 +852,7 @@ export function MapViewer({
     return () => {
       active = false;
       clearTimeout(bigTimer);
+      clearTimeout(slowTimer);
       controller.abort();
       if (abortRef.current === controller) abortRef.current = null;
       if (openedUrl) {
@@ -967,7 +1001,28 @@ export function MapViewer({
       cancelDownloadRef.current?.({ imageUrl: currentMap.imageUrl, sourceUrl: currentMap.sourceUrl });
     }
     onCloseRef.current();
+    onCanceledRef.current?.();
   }, []);
+
+  const confirmLarge = useCallback(() => {
+    const url = mapRef.current?.imageUrl;
+    if (!url) return;
+    confirmedLarge.add(url);
+    setRetryToken((n) => n + 1);
+  }, []);
+
+  // Warning and failure screens put focus on their main action (#55).
+  const stateKind = viewerState.kind;
+  useEffect(() => {
+    if (stateKind !== "loading" && stateKind !== "ready" && stateKind !== "offline" && stateKind !== "warn_offline") {
+      primaryActionRef.current?.focus();
+    }
+  }, [stateKind]);
+
+  // Back online on the offline warning: show the real warning.
+  useEffect(() => {
+    if (stateKind === "warn_offline" && online) setRetryToken((n) => n + 1);
+  }, [stateKind, online]);
 
   // Right after a save lands, keep the current pan/zoom on the new saved record.
   const savedId = map?.savedId ?? null;
@@ -1291,10 +1346,36 @@ export function MapViewer({
       : null;
 
   const backButton = (
-    <button type="button" className="map-viewer-status-btn" onClick={handleClose}>
+    <button
+      type="button"
+      className="map-viewer-status-btn"
+      onClick={handleClose}
+      ref={(el) => {
+        // With no external link this is the screen's main action, so it takes focus.
+        if (!vgmapsExternalUrl(map?.sourceUrl)) primaryActionRef.current = el;
+      }}
+    >
       ‹ Maps
     </button>
   );
+
+  const externalHref = vgmapsExternalUrl(map?.sourceUrl);
+  // Primary on failure screens; secondary beside "Open anyway". Never a screen with no way out.
+  const externalLink = externalHref ? (
+    <a
+      className={`map-viewer-status-btn${viewerState.kind === "warn" ? "" : " map-viewer-status-primary"}`}
+      href={externalHref}
+      target="_blank"
+      rel="noopener noreferrer"
+      ref={(el) => {
+        if (viewerState.kind !== "warn") primaryActionRef.current = el;
+      }}
+    >
+      Open on VGMaps
+      <IconArrowUpRight />
+      <span className="visually-hidden"> (opens in a new tab)</span>
+    </a>
+  ) : null;
 
   let saveSlot: ReactNode = null;
   if (isSaved) {
@@ -1305,8 +1386,10 @@ export function MapViewer({
         {formatSavingText(saveProgress)}
       </span>
     );
-  } else if (viewerState.kind === "too_large") {
-    saveSlot = <span className="map-viewer-save-reason">Over 30 MB</span>;
+  } else if (viewerState.kind === "loading" && map.overLimit) {
+    saveSlot = <span className="map-viewer-save-reason">Not saved</span>;
+  } else if (map.overLimit || (viewerState.kind === "ready" && viewerState.viewOnly)) {
+    saveSlot = <span className="map-viewer-save-reason">Can&apos;t save: over 30 MB.</span>;
   } else if ((online || blobRef.current) && onSave && viewerState.kind === "ready") {
     saveSlot = (
       <button type="button" className="map-viewer-save" onClick={() => onSave(blobRef.current)}>
@@ -1375,6 +1458,9 @@ export function MapViewer({
           ) : (
             <div className="map-viewer-status-block">
               <p className="map-viewer-status-title">{map.title}</p>
+              {viewerState.slow && (
+                <p className="map-viewer-status-text">Still downloading… large maps take a while.</p>
+              )}
               <p className="map-viewer-status-text">
                 {viewerState.progress && viewerState.progress.total
                   ? `Downloading ${formatMegabytes(viewerState.progress.loaded)} / ${formatMegabytes(viewerState.progress.total)} MB`
@@ -1398,35 +1484,74 @@ export function MapViewer({
         </div>
       )}
 
-      {viewerState.kind !== "loading" && viewerState.kind !== "ready" && (
-        <div className="map-viewer-status" role="status">
+      {(viewerState.kind === "warn" || viewerState.kind === "warn_offline") && (
+        <div className="map-viewer-status" role="alertdialog" aria-labelledby="mv-warn-title" aria-describedby="mv-warn-text">
           <div className="map-viewer-status-block">
-            <p className="map-viewer-status-text">
-              {viewerState.kind === "offline"
-                ? "You're offline and this map isn't saved."
-                : viewerState.kind === "too_large"
-                  ? "This map is too large to open here (over 30 MB)."
-                  : viewerState.kind === "unlisted"
-                    ? "This map is no longer on VGMaps."
-                    : viewerState.kind === "decode_failed"
-                      ? "This device couldn't open this map."
-                      : "Couldn't open this map."}
+            <p id="mv-warn-title" className="map-viewer-status-title">{map.title}</p>
+            <p id="mv-warn-text" className="map-viewer-status-text">
+              {viewerState.kind === "warn_offline" ? "You're offline." : formatVeryLargeWarning(map.sizeBytes ?? 0)}
             </p>
-            <div className="map-viewer-status-actions">
-              {viewerState.kind === "failed" && (
+            {viewerState.kind === "warn" && (
+              <div className="map-viewer-status-actions map-viewer-status-stack">
                 <button
                   type="button"
-                  className="map-viewer-status-btn"
-                  onClick={() => setRetryToken((n) => n + 1)}
+                  className="map-viewer-status-btn map-viewer-status-primary"
+                  ref={(el) => {
+                    primaryActionRef.current = el;
+                  }}
+                  onClick={confirmLarge}
                 >
-                  Try again
+                  Open anyway
                 </button>
-              )}
-              {backButton}
-            </div>
+                {externalLink}
+              </div>
+            )}
           </div>
         </div>
       )}
+
+      {viewerState.kind !== "loading" &&
+        viewerState.kind !== "ready" &&
+        viewerState.kind !== "warn" &&
+        viewerState.kind !== "warn_offline" && (
+          <div
+            className="map-viewer-status"
+            role={viewerState.kind === "offline" ? "status" : "alertdialog"}
+            aria-label={viewerState.kind === "offline" ? undefined : "Can't open this map"}
+            aria-describedby="mv-fail-text"
+          >
+            <div className="map-viewer-status-block">
+              <p id="mv-fail-text" className="map-viewer-status-text">
+                {viewerState.kind === "offline"
+                  ? "You're offline and this map isn't saved."
+                  : viewerState.kind === "unlisted" || viewerState.kind === "unavailable"
+                    ? "This map isn't available from VGMaps right now."
+                    : viewerState.kind === "failed"
+                      ? "Couldn't open this map."
+                      : "This device couldn't open this map."}
+              </p>
+              {(viewerState.kind === "too_large" || viewerState.kind === "decode_failed") && (
+                <p className="map-viewer-status-text">It may be too large for this device&apos;s memory.</p>
+              )}
+              {viewerState.kind === "failed" && (
+                <p className="map-viewer-status-text">Check your connection and try again.</p>
+              )}
+              <div className="map-viewer-status-actions map-viewer-status-stack">
+                {viewerState.kind !== "offline" && externalLink}
+                {(viewerState.kind === "offline" || !externalHref) && backButton}
+                {viewerState.kind === "failed" && (
+                  <button
+                    type="button"
+                    className="map-viewer-status-btn"
+                    onClick={() => setRetryToken((n) => n + 1)}
+                  >
+                    Try again
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
       <div ref={bottomBarRef} className="map-viewer-zoom" role="toolbar" aria-label="Map zoom controls">
         <button
