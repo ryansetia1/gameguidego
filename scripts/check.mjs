@@ -4736,6 +4736,9 @@ if (!canRunTsChecks) {
   const proxy = bc.mapProxyUrl(img, game);
   assert.equal(proxy, `/api/maps/image?${new URLSearchParams({ url: img, game })}`, "exact ?url=&game= contract");
   assert.ok(proxy.indexOf("url=") < proxy.indexOf("game="), "url before game");
+  // #62: the Firewall rate limit (429) lands in the viewer's "unavailable" state, like upstream 403/404/5xx.
+  for (const st of [403, 404, 429, 500, 502]) assert.ok(bc.isMapUnavailableStatus(st), `${st} is unavailable`);
+  for (const st of [0, 200, 400, 413]) assert.ok(!bc.isMapUnavailableStatus(st), `${st} is not unavailable`);
 
   const realFetch = globalThis.fetch;
   const hadCaches = "caches" in globalThis;

@@ -519,6 +519,13 @@ do not sync to the cloud or use Storage uploads.
   30 MB cap, CDN-cached; query must be exactly `?url=<listed map>&game=<atlas game url>`
   via `URLSearchParams` so cache keys can't be busted). 60s upstream backoff after a
   VGMaps network error/5xx; Supabase cache reads time out at 3s. No login.
+  **Rate limit (#62):** a Vercel Firewall custom rule "Maps image rate limit" (path
+  `eq /api/maps/image`, 30 requests / 60 s per IP, fixed window) lives in the Vercel
+  project, NOT in the repo: `vercel.json` `mitigate` only supports deny/challenge, so it is
+  set with `vercel firewall rules add ... --action rate_limit` (see #62). Rollout: first
+  `--rate-limit-action log`, then `rate_limit` (429) after reviewing traffic. Counters are
+  per region. A 429 maps to the viewer's "unavailable" state with Open on VGMaps
+  (`isMapUnavailableStatus` in `lib/map-blob-cache.js`, covered by `npm run check`).
   `lib/map-blob-cache.js` keeps saved map images in the Cache API `gg-maps-v1` keyed by
   `mapProxyUrl` (one shared download per URL via
   `downloadMapOnce`; viewing an unsaved map uses `fetchMapBlob` and stores nothing).
