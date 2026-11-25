@@ -11,6 +11,7 @@ import {
   cancelMapDownload,
   downloadMapOnce,
   fetchMapBlob,
+  isMapUnavailableStatus,
   mapProxyUrl,
   readCachedMapBlob,
   setMapLiveCheck,
@@ -158,9 +159,9 @@ function openFailure(err: unknown): { status: "unlisted" | "too_large" | "unavai
   if ((err as { name?: string })?.name === "AbortError") return { status: "aborted" };
   if (err instanceof MapFetchError && err.status === MAP_UNLISTED_STATUS) return { status: "unlisted" };
   if (err instanceof MapFetchError && err.status === MAP_TOO_LARGE_STATUS) return { status: "too_large" };
-  // The proxy answers 502 for any upstream block/failure, so 403/404/5xx mean VGMaps is the problem.
-  // Status 0 (the phone's own network error) and anything else fall through to "error".
-  if (err instanceof MapFetchError && (err.status === 403 || err.status === 404 || err.status >= 500)) {
+  // Upstream block/failure (403/404/5xx) or the Firewall rate limit (429). Status 0 (the phone's
+  // own network error) and anything else fall through to "error".
+  if (err instanceof MapFetchError && isMapUnavailableStatus(err.status)) {
     return { status: "unavailable" };
   }
   return { status: "error" };
