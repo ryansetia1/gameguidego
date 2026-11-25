@@ -58,6 +58,8 @@ import { coerceVisualAuto } from "@/lib/visual-search-prefs.js";
 import { logSolveJourneyToDb, sourcesForSolveLog, type SolveJourneyEntry } from "@/lib/solve-log";
 import { isAutoDerivedTopicTitle, topicTitleForPersist } from "@/lib/topic-title.js";
 import { proxifyIllustration } from "@/lib/visual-image-proxy.js";
+import { rlogConfig, rlogProgressForSolve } from "@/lib/rlog-bridge.js";
+import { IGDB_ID_OFFSET } from "@/lib/games.js";
 import { runWithTrace, logTraceEvent } from "@/lib/trace";
 
 export const runtime = "nodejs";
@@ -238,6 +240,7 @@ export async function POST(request: Request) {
         let playerMemory = null;
         let authedSupabase = null;
         let journeyEnabled = false;
+        let authUser: { email?: string; email_confirmed_at?: string } | null = null;
 
         if (authHeader && userId) {
           authedSupabase = createAuthedSupabase(authHeader.replace(/^Bearer\s+/i, ""));
@@ -245,6 +248,7 @@ export async function POST(request: Request) {
             try {
               const auth = await getAuthedUser(authedSupabase);
               if (!("error" in auth)) {
+                authUser = auth.user;
                 journeyEnabled = playerJourneyEnabledFromMetadata(auth.user.user_metadata);
               }
               playerMemory = await loadMemoryForSolve(authedSupabase, userId, game, platform);
@@ -253,6 +257,21 @@ export async function POST(request: Request) {
             }
           }
         }
+
+        // RLog anti-spoiler context (#73): same bridge + verified session email as
+        // /api/rlog/*; runs beside rewrite/retrieval, short timeout, "" on any failure.
+        const rlogProgressPromise =
+          authUser && rlogConfig(process.env)
+            ? rlogProgressForSolve({
+                user: authUser,
+                env: process.env,
+                room: {
+                  igdb: catalogGameId != null && catalogGameId > IGDB_ID_OFFSET ? catalogGameId - IGDB_ID_OFFSET : null,
+                  game,
+                  platform,
+                },
+              })
+            : Promise.resolve("");
 
         await logTraceEvent("solve_start", "Started solve generation", undefined, {
           question,
@@ -588,6 +607,7 @@ export async function POST(request: Request) {
             }
           }
         }
+        const rlogProgress = await rlogProgressPromise;
         let {
           answer,
           highlights,
@@ -609,6 +629,7 @@ export async function POST(request: Request) {
           spoilerPrefs,
           playerName,
           playerMemory,
+          rlogProgress,
           userId,
           webSupplement: pipelineType === "rag_supplemented",
           isFirstTurn: shouldGenerateTitle,

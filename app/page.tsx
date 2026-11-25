@@ -16,7 +16,7 @@ import { MapsPanel } from "./chat/maps-panel";
 import { MapViewer, type MapViewerItem } from "./chat/map-viewer";
 import { SavedAnswersPanel } from "./chat/saved-answers-panel";
 import { ChecklistPanel, ChecklistStepBanner } from "./chat/checklist-panel";
-import { type RlogGame, useRlogChecklist, useRlogPlaying } from "./chat/use-rlog";
+import { type RlogGame, useRlogChecklist, useRlogPlaying, useRlogStatus } from "./chat/use-rlog";
 import { type SavedAnswer, useSavedAnswers } from "./chat/use-saved-answers";
 import { type MapDownloadProgress, type SavedMap, useSavedMaps } from "./chat/use-saved-maps";
 import { TopicList } from "./chat/topic-list";
@@ -58,6 +58,7 @@ import { ProfileMenu, type NavMenu } from "./profile-menu";
 import { Lightbox } from "./lightbox";
 import { platformLabelFor, tgdbPlatformToLabel } from "@/lib/platforms.js";
 import { IGDB_ID_OFFSET } from "@/lib/games.js";
+import { activeRooms } from "@/lib/rlog-bridge.js";
 import {
   effectiveSpoilerPrefs,
   loadGameSpoilerPrefs,
@@ -546,6 +547,7 @@ export default function Home() {
   const savedAnswers = useSavedAnswers(user);
   const savedMaps = useSavedMaps(user);
   const rlogPlaying = useRlogPlaying(user?.id ?? null);
+  const rlogStatus = useRlogStatus(user?.id ?? null);
   const checklist = useRlogChecklist({
     userId: user?.id ?? null,
     playing: rlogPlaying,
@@ -3570,6 +3572,11 @@ export default function Home() {
         editingGame={editingGame}
         topRef={topRef}
         savedGames={gameRooms.map((room) => room.representative)}
+        jumpGames={activeRooms(
+          gameRooms.map((room) => room.representative),
+          user ? rlogStatus : null,
+          IGDB_ID_OFFSET,
+        )}
         steamConnected={steamConnected}
         coverEnabled={coverEnabled}
         cover={cover}

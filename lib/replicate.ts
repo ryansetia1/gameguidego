@@ -233,6 +233,8 @@ export type SummarizeInput = {
   spoilerPrefs?: SpoilerPrefs;
   playerName?: string;
   playerMemory?: import("@/lib/player-memory.js").PlayerMemoryPromptInput | null;
+  /** RLog checklist anti-spoiler block (#73); "" when not matched. */
+  rlogProgress?: string;
   webSupplement?: boolean;
   userId?: string | null;
   signal?: AbortSignal;

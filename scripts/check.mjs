@@ -11,8 +11,11 @@ import {
   rlogConfig,
   rlogPlaying,
   rlogToggle,
+  rlogStatus,
+  rlogProgressForSolve,
+  activeRooms,
 } from "../lib/rlog-bridge.js";
-import { firstOpenGroup, groupChecklist } from "../lib/rlog-checklist.js";
+import { buildRlogProgressContext, firstOpenGroup, groupChecklist, PROGRESS_MAX_CHARS } from "../lib/rlog-checklist.js";
 import { cleanSnippet, focusSection } from "../lib/clean.js";
 import {
   IGDB_GAME_TYPES,
@@ -5783,6 +5786,147 @@ if (!canRunTsChecks) {
   assert.deepEqual(g.map((x) => [x.id, x.title, x.done, x.total]), [["general", "General", 1, 2], ["c1", "Act 1", 1, 1]], "orphans + untitled share one General");
   assert.equal(firstOpenGroup(g), "general");
   assert.equal(firstOpenGroup(groupChecklist(chapters, items.map((s) => ({ ...s, done: true })))), null);
+}
+
+// RLog phase 3 (#73): anti-spoiler context builder (pure).
+{
+  const C1 = "c1", C2 = "c2";
+  const chapters = [{ id: C1, title: "Act 1" }, { id: C2, title: "Act 2" }];
+  const step = (n, chapter_id, done, extra = {}) => ({ id: `s${n}`, chapter_id, title: `Step ${n}`, done, ...extra });
+  // Empty / malformed → nothing injected.
+  assert.equal(buildRlogProgressContext(null), "");
+  assert.equal(buildRlogProgressContext({ chapters, items: [] }), "");
+  assert.equal(buildRlogProgressContext({ chapters: "x", items: [{ nope: 1 }] }), "");
+  // None done: no "Recently done", current = first step, rules present.
+  {
+    const out = buildRlogProgressContext({ chapters, items: [step(1, C1, false), step(2, C2, false)] });
+    assert.match(out, /0\/2 steps done/);
+    assert.match(out, /Current step: Act 1: Step 1\n/);
+    assert.ok(!out.includes("Recently done"));
+    assert.ok(!out.includes("Step 2"), "nothing past the current step");
+    assert.match(out, /Do not reveal anything that comes after their current step/);
+  }
+  // All done: finished line, no current step.
+  {
+    const out = buildRlogProgressContext({ chapters, items: [step(1, C1, true), step(2, C2, true)] });
+    assert.match(out, /2\/2 steps done/);
+    assert.match(out, /finished every step/);
+    assert.ok(!out.includes("Current step"));
+  }
+  // Mixed: last 5 done in chapter order, first undone is current, later steps hidden.
+  {
+    const items = [
+      ...Array.from({ length: 7 }, (_, i) => step(i + 1, C1, true)),
+      step(8, C2, false, { note: "  stuck on\nthe door  " }),
+      step(9, C2, false),
+    ];
+    const out = buildRlogProgressContext({ chapters, items });
+    assert.match(out, /7\/9 steps done/);
+    assert.ok(!out.includes("Step 1\n") && !out.includes("Step 2\n"), "only the last 5 done");
+    assert.match(out, /- Act 1: Step 3\n[\s\S]*- Act 1: Step 7\n/);
+    assert.match(out, /Current step: Act 2: Step 8 \(player note: stuck on the door\)/);
+    assert.ok(!out.includes("Step 9"));
+  }
+  // Caps: long titles/notes trimmed, total length bounded, older done steps dropped first.
+  {
+    const long = "x".repeat(5000);
+    const items = [
+      ...Array.from({ length: 20 }, (_, i) => ({ id: `d${i}`, chapter_id: C1, title: `${i}${long}`, done: true, note: long })),
+      { id: "cur", chapter_id: C2, title: long, done: false, note: long },
+    ];
+    const out = buildRlogProgressContext({ chapters: [{ id: C1, title: long }, { id: C2, title: "Act 2" }], items });
+    assert.ok(out.length <= PROGRESS_MAX_CHARS + 2, `capped (${out.length})`);
+    assert.match(out, /Current step: Act 2: x{50}/);
+    assert.match(out, /Rules:/, "rules survive the cap");
+    assert.ok(!out.includes("x".repeat(200)), "per-line caps");
+  }
+  // Privacy: only titles/notes; ids, emails, covers, item ids never appear.
+  {
+    const out = buildRlogProgressContext({
+      chapters: [{ id: "33333333-3333-4333-8333-333333333333", title: "Act 1", email: "p@x.com" }],
+      items: [
+        { id: "22222222-2222-4222-8222-222222222222", chapter_id: "33333333-3333-4333-8333-333333333333", title: "Beat Meg", done: true, cover: "https://img.test/c.jpg", user_id: "u-1", email: "p@x.com" },
+        { id: "44444444-4444-4444-8444-444444444444", chapter_id: "33333333-3333-4333-8333-333333333333", title: "Get boon", done: false },
+      ],
+      game: { rlog_item_id: "11111111-1111-4111-8111-111111111111", cover: "https://img.test/c.jpg" },
+    });
+    for (const leak of ["3333", "2222", "4444", "1111", "p@x.com", "img.test", "u-1"]) assert.ok(!out.includes(leak), leak);
+    assert.match(out, /Beat Meg/);
+  }
+}
+
+// RLog phase 3 (#73): status proxy, archive filter, solve context fetch.
+{
+  const SECRET = "test-secret-not-real";
+  const env = { RLOG_BRIDGE_SECRET: SECRET, RLOG_BASE_URL: "https://rlog.test" };
+  const user = { email: "Player@Example.com", email_confirmed_at: "2026-01-01T00:00:00Z" };
+  const json = (status, body) => new Response(JSON.stringify(body), { status });
+  const id = (n) => `${String(n).repeat(8)}-1111-4111-8111-111111111111`;
+  const st = (n, title, platform, status, igdb_id = null) => ({ rlog_item_id: id(n), igdb_id, title, platform, status, cover: "https://x.test/c.jpg" });
+  {
+    const calls = [];
+    const r = await rlogStatus({ user, env, fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return json(200, { games: [st(1, "Hades", "PS5", "completed", 113112), st(2, "Celeste", "PC", "wishlist"), { rlog_item_id: "bad", status: "playing" }] });
+    } });
+    assert.equal(calls[0].url, "https://rlog.test/api/integration/status");
+    assert.equal(calls[0].init.headers["X-Rlog-User-Email"], "player@example.com");
+    assert.deepEqual(r.body, { matched: true, games: [{ rlog_item_id: id(1), igdb_id: 113112, title: "Hades", platform: "PS5", status: "completed" }] }, "unknown status + bad rows dropped, no cover");
+    assert.deepEqual((await rlogStatus({ user, env, fetchImpl: async () => json(404, {}) })).body, UNMATCHED);
+    assert.deepEqual((await rlogStatus({ user: { email: "a@b.c" }, env, fetchImpl: () => assert.fail("no call") })).body, UNMATCHED);
+    assert.deepEqual((await rlogStatus({ user, env: {}, fetchImpl: () => assert.fail("no call") })).body, UNMATCHED);
+    assert.equal((await rlogStatus({ user, env, fetchImpl: async () => { throw new Error("net"); } })).status, 502);
+  }
+  {
+    const OFF = IGDB_ID_OFFSET;
+    const rooms = [
+      { id: "a", game: "Hades", platform: "PS5", catalog_game_id: OFF + 113112 },
+      { id: "b", game: "Celeste", platform: "PC" },
+      { id: "c", game: "Hollow Knight", platform: "Nintendo Switch" },
+      { id: "d", game: "Tunic", platform: "PC" },
+      { id: "e", game: "Outer Wilds", platform: "PC" },
+    ];
+    const games = [
+      { igdb_id: 113112, title: "Hades (renamed)", platform: "", status: "completed" },
+      { igdb_id: null, title: "celeste", platform: "PC", status: "dropped" },
+      { igdb_id: null, title: "Hollow Knight", platform: "Switch", status: "playing" },
+      { igdb_id: null, title: "Outer Wilds", platform: "PC", status: "completed" },
+      { igdb_id: null, title: "Outer Wilds", platform: "PC", status: "playing" },
+    ];
+    assert.deepEqual(activeRooms(rooms, games, OFF).map((r) => r.id), ["c", "d", "e"], "completed/dropped hidden, playing + unknown stay, playing wins a tie");
+    assert.equal(activeRooms(rooms, null, OFF), rooms, "bridge failed / not matched = normal");
+    assert.equal(activeRooms(rooms, [], OFF), rooms);
+  }
+  {
+    const ITEM = id(1);
+    const detail = {
+      rlog_item_id: ITEM, title: "Hades", platform: "PS5", igdb_id: 113112, progress: { done: 1, total: 2 },
+      checklistChapters: [{ id: id(3), title: "Act 1" }],
+      checklistItems: [
+        { id: id(4), chapter_id: id(3), title: "Get boon", done: true, note: "easy" },
+        { id: id(5), chapter_id: id(3), title: "Beat Meg", done: false, note: null },
+      ],
+    };
+    const room = { igdb: 113112, game: "Hades", platform: "PS5" };
+    const out = await rlogProgressForSolve({ user, env, room, fetchImpl: async () => json(200, detail) });
+    assert.match(out, /Recently done:\n- Act 1: Get boon \(player note: easy\)/);
+    assert.match(out, /Current step: Act 1: Beat Meg/);
+    assert.ok(!out.includes(SECRET) && !out.includes("player@example.com") && !out.includes(ITEM));
+    // Every failure is "" so solve answers as usual.
+    assert.equal(await rlogProgressForSolve({ user, env, room, fetchImpl: async () => { throw new Error("net"); } }), "");
+    assert.equal(await rlogProgressForSolve({ user, env, room, fetchImpl: async () => json(500, {}) }), "");
+    assert.equal(await rlogProgressForSolve({ user, env, room, fetchImpl: async () => json(404, {}) }), "");
+    assert.equal(await rlogProgressForSolve({ user: null, env, room, fetchImpl: () => assert.fail("no call") }), "", "not connected: no call");
+    assert.equal(await rlogProgressForSolve({ user, env: {}, room, fetchImpl: () => assert.fail("no call") }), "");
+    assert.equal(await rlogProgressForSolve({ user, env, room: { igdb: null, game: "<b>", platform: "" }, fetchImpl: () => assert.fail("no call") }), "", "bad room input");
+    const t0 = Date.now();
+    const hung = await rlogProgressForSolve({ user, env, room, timeoutMs: 50, fetchImpl: () => new Promise(() => {}) });
+    assert.equal(hung, "");
+    assert.ok(Date.now() - t0 < 1000, "timeout is short");
+    // The block reaches the summarize prompt only when present.
+    assert.ok(buildPrompt({ question: "q", sources: [], rlogProgress: out }).includes("Current step: Act 1: Beat Meg"));
+    assert.ok(!buildPrompt({ question: "q", sources: [] }).includes("PLAYER PROGRESS"));
+  }
 }
 
 console.log("Self-check passed.");
