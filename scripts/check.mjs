@@ -5547,4 +5547,20 @@ if (!canRunTsChecks) {
   assert.equal(afterDupUndo.length, 1, "Undo skips duplicate when same map already visible");
 }
 
+{
+  const bl = await import("../lib/back-layer.js");
+  assert.equal(bl.nextWouldReload({ gggDepth: 1 }), true, "app entry without __NA would hard-reload");
+  assert.equal(bl.nextWouldReload({ gggDepth: 1, __NA: true }), false);
+  assert.equal(bl.nextWouldReload(null), false);
+  assert.equal(bl.nextWouldReload({ __NA: true }), false, "Next's own entries are left alone");
+  assert.equal(bl.shouldSwallowBack({ hasLayer: true, depth: 2, prevDepth: 3 }), true);
+  assert.equal(bl.shouldSwallowBack({ hasLayer: true, depth: 4, prevDepth: 3 }), false, "forward is not a back");
+  assert.equal(bl.shouldSwallowBack({ hasLayer: false, depth: 2, prevDepth: 3 }), false);
+  let closed = 0;
+  bl.setBackLayer(() => closed++);
+  assert.equal(bl.closeBackLayer(), true);
+  assert.equal(bl.closeBackLayer(), false, "closer is single-use");
+  assert.equal(closed, 1);
+}
+
 console.log("Self-check passed.");

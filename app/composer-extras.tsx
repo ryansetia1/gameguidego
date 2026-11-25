@@ -7,6 +7,7 @@ import { SPOILER_TOGGLE_LABEL } from "@/lib/spoiler-prefs.js";
 import { VOICE_LANGUAGES } from "@/lib/voice.js";
 import { IconArrowLeft, IconCheck, IconPlus, IconStop } from "./icons";
 import { useVoiceInput } from "./voice-input";
+import { setBackLayer } from "../lib/back-layer";
 
 type Props = {
   user: User | null;
@@ -110,6 +111,17 @@ export function ComposerExtras({
     }
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [menuOpen]);
+
+  // Hardware back closes the menu first (page.tsx onPopState, lib/back-layer.js).
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = () => {
+      setMenuOpen(false);
+      setMenuView("main");
+    };
+    setBackLayer(close);
+    return () => setBackLayer(null);
   }, [menuOpen]);
 
   useEffect(() => {

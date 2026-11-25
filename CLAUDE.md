@@ -437,7 +437,14 @@ do not sync to the cloud or use Storage uploads.
   is a no-op. The reading Back arrow pops its "read" entry only when it is on top, else goes
   to the list directly. Likewise in-app "Back to game" (`backToTopicList`) pops history only
   when the chat entry is on top (`chatBackPopsHistory`), else resets to topics in place.
-  X/Esc calls `history.go(-1|-2)` and lets popstate close the pane. The pane is `inert`
+  X/Esc calls `history.go(-1|-2)` and lets popstate close the pane. **Android back (#59):** `onPopState` is registered in the CAPTURE phase and calls
+  `stopImmediatePropagation` when the landing entry has `gggDepth` but no `__NA`
+  (`nextWouldReload` in `lib/back-layer.js`): Next's app router hard-reloads on popstate to such
+  entries (ours are pushed before its history patch), which wiped `historyDepth`/the exit-prompt
+  timer and made back fall through to exit. Layers with no entry of their own (composer "+" menu)
+  register a closer via `setBackLayer`; a back press closes it and steps `history.forward()` onto
+  the popped entry (`shouldSwallowBack`; a `pushState` from inside popstate is not a back target
+  in Android WebView). `pushTopicsHistory` reuses a stripped overlay entry instead of pushing. The pane is `inert`
   while an overlay is open.
 - `lib/voice.js` + `app/voice-input.tsx`: composer mic via the free Web Speech API
   (**all users**). Buffered-until-stop dictation; platform-split capture (desktop
