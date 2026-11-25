@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 
+import { parseDeepLink, stripDeepLinkParams } from "../lib/deep-link.js";
 import { cleanSnippet, focusSection } from "../lib/clean.js";
 import {
   IGDB_GAME_TYPES,
@@ -5593,6 +5594,30 @@ if (!canRunTsChecks) {
   assert.equal(bl.closeBackLayer(), true);
   assert.equal(bl.closeBackLayer(), false, "closer is single-use");
   assert.equal(closed, 1);
+}
+
+{
+  // Deep link (#67)
+  const ok = parseDeepLink("game=Hades&platform=pc&igdb=113112&q=How%20do%20I%20beat%20Meg%3F&rlog_item=a1&step=3&evil=1");
+  assert.deepEqual(ok, { game: "Hades", platform: "PC", catalogGameId: IGDB_ID_OFFSET + 113112, q: "How do I beat Meg?", rlogItem: "a1", step: "3" });
+  assert.equal(parseDeepLink(""), null, "no params");
+  assert.equal(parseDeepLink("platform=PC&q=hi"), null, "missing game");
+  assert.equal(parseDeepLink("game=%20%20"), null, "blank game");
+  const big = parseDeepLink(`game=${"a".repeat(500)}&q=${"b".repeat(5000)}`);
+  assert.equal(big.game.length, 120);
+  assert.equal(big.q.length, 2000);
+  const evil = parseDeepLink("game=%3Cscript%3Ealert(1)%3C%2Fscript%3E&q=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E&rlog_item=%3Cb%3E&step=1%3B2");
+  assert.ok(!/[<>]/.test(evil.game + evil.q), "no angle brackets survive");
+  assert.equal(evil.rlogItem, "");
+  assert.equal(evil.step, "");
+  for (const bad of ["abc", "-5", "0", "1.5", "99999999999", "1e3", ""]) {
+    assert.equal(parseDeepLink(`game=Hades&igdb=${bad}`).catalogGameId, null, `bad igdb ${bad}`);
+  }
+  assert.equal(parseDeepLink("game=Hades&platform=Atari%20Zzz").platform, "", "unknown platform dropped");
+  assert.equal(
+    stripDeepLinkParams("https://x.test/?game=A&q=b&chat=1&igdb=2#h"),
+    "/?chat=1#h",
+  );
 }
 
 console.log("Self-check passed.");

@@ -80,6 +80,7 @@ import {
   type MapsHistoryEntry,
 } from "@/lib/maps-panel.js";
 import type { VGMapsGameEntry, VGMapsMapLink } from "@/lib/vgmaps-parser.js";
+import { parseDeepLink, stripDeepLinkParams } from "@/lib/deep-link.js";
 import { groupChatsByRoom, isTopicColumnDbError, mergeChatsFromServer, normGameKey, syncRoomSharedMeta, syncSharedMetaToLocalGames, topicsForRoom, gameRoomKey, upsertChatInList } from "@/lib/game-room.js";
 import {
   displayTopicTitle,
@@ -997,6 +998,41 @@ export default function Home() {
 
   useEffect(() => {
     if (!authReady || !chatsLoaded || sessionHydratedRef.current) return;
+
+    // Opt-in deep link (#67): open/create the room, prefill q, never submit.
+    const link = parseDeepLink(window.location.search);
+    if (link) {
+      window.history.replaceState(window.history.state, "", stripDeepLinkParams(window.location.href));
+      const roomKey = gameRoomKey(link.game, link.platform);
+      const hit =
+        (link.catalogGameId != null &&
+          chats.find((row) => row.catalog_game_id === link.catalogGameId)) ||
+        chats.find((row) => gameRoomKey(row.game, row.platform) === roomKey);
+      jumpRef.current = true;
+      if (hit) {
+        applyRoomContext(hit);
+      } else {
+        setGame(link.game);
+        setPlatform(link.platform);
+        setCatalogGameId(link.catalogGameId);
+        setPreferredUrls([]);
+        setCover("");
+        setPendingCover(null);
+        setReleaseYear("");
+        conversationGame.current = link.game;
+        conversationPlatform.current = link.platform;
+      }
+      clearPendingImages();
+      setActiveChatId(null);
+      setMessages([]);
+      setEditingGame(false);
+      setInput(link.q);
+      setError("");
+      syncGameView("thread");
+      setChatUrl(null);
+      sessionHydratedRef.current = true;
+      return;
+    }
 
     const chatId = getChatIdFromUrl();
     if (chatId && user) {
