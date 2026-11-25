@@ -80,7 +80,7 @@ import {
   type MapsHistoryEntry,
 } from "@/lib/maps-panel.js";
 import type { VGMapsGameEntry, VGMapsMapLink } from "@/lib/vgmaps-parser.js";
-import { parseDeepLink, stripDeepLinkParams } from "@/lib/deep-link.js";
+import { buildDeepLinkQuestion, parseDeepLink, stripDeepLinkParams } from "@/lib/deep-link.js";
 import { groupChatsByRoom, isTopicColumnDbError, mergeChatsFromServer, normGameKey, syncRoomSharedMeta, syncSharedMetaToLocalGames, topicsForRoom, gameRoomKey, upsertChatInList } from "@/lib/game-room.js";
 import {
   displayTopicTitle,
@@ -114,7 +114,7 @@ import {
   toggleGuideRetrievalMode,
 } from "@/lib/guide-retrieval-mode.js";
 import { guideUrlsBlockingComposer } from "@/lib/guide-source-selection.js";
-import { getSpeechRecognition } from "@/lib/voice.js";
+import { getSpeechRecognition, loadVoiceLang, voiceLangFromUserMetadata } from "@/lib/voice.js";
 import {
   clearSessionDraft,
   getChatIdFromUrl,
@@ -1026,7 +1026,7 @@ export default function Home() {
       setActiveChatId(null);
       setMessages([]);
       setEditingGame(false);
-      setInput(link.q);
+      setInput(buildDeepLinkQuestion(link, voiceLangFromUserMetadata(user?.user_metadata) || loadVoiceLang()));
       setError("");
       syncGameView("thread");
       setChatUrl(null);

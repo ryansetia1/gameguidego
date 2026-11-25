@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { parseDeepLink, stripDeepLinkParams } from "../lib/deep-link.js";
+import { buildDeepLinkQuestion, parseDeepLink, stripDeepLinkParams } from "../lib/deep-link.js";
 import { cleanSnippet, focusSection } from "../lib/clean.js";
 import {
   IGDB_GAME_TYPES,
@@ -5599,7 +5599,7 @@ if (!canRunTsChecks) {
 {
   // Deep link (#67)
   const ok = parseDeepLink("game=Hades&platform=pc&igdb=113112&q=How%20do%20I%20beat%20Meg%3F&rlog_item=a1&step=3&evil=1");
-  assert.deepEqual(ok, { game: "Hades", platform: "PC", catalogGameId: IGDB_ID_OFFSET + 113112, q: "How do I beat Meg?", rlogItem: "a1", step: "3" });
+  assert.deepEqual(ok, { game: "Hades", platform: "PC", catalogGameId: IGDB_ID_OFFSET + 113112, q: "How do I beat Meg?", rlogItem: "a1", step: "3", qt: false });
   assert.equal(parseDeepLink(""), null, "no params");
   assert.equal(parseDeepLink("platform=PC&q=hi"), null, "missing game");
   assert.equal(parseDeepLink("game=%20%20"), null, "blank game");
@@ -5618,6 +5618,17 @@ if (!canRunTsChecks) {
     stripDeepLinkParams("https://x.test/?game=A&q=b&chat=1&igdb=2#h"),
     "/?chat=1#h",
   );
+  // Localized prefill (#69)
+  const L = (qs, lang) => buildDeepLinkQuestion(parseDeepLink(qs), lang);
+  assert.equal(L("game=Hades&q=Beat%20Meg&step=3&qt=1", "id-ID"), 'Bagaimana cara menyelesaikan "Beat Meg" di Hades?');
+  assert.equal(L("game=Hades&q=Beat%20Meg&step=3&qt=1", "en-US"), 'How do I complete "Beat Meg" in Hades?');
+  for (const lang of ["", "ja-JP"]) assert.equal(L("game=Hades&q=Beat%20Meg&qt=1", lang), 'How do I complete "Beat Meg" in Hades?', `fallback ${lang}`);
+  assert.equal(L("game=Hades&qt=1", "id-ID"), "Saya stuck di Hades. Bisa bantu?");
+  assert.equal(L("game=Hades&qt=1", "en-US"), "I'm stuck in Hades. Can you help?");
+  assert.equal(L("game=Hades&q=Old%20sentence", "id-ID"), "Old sentence", "no qt: verbatim");
+  assert.equal(L("game=Hades&q=%3Cb%3E%22x%22&qt=1", "en-US"), 'How do I complete "b "x"" in Hades?', "html stripped");
+  assert.equal(parseDeepLink("game=A&qt=0").qt, false);
+  assert.equal(stripDeepLinkParams("https://x.test/?game=A&qt=1&chat=1"), "/?chat=1");
 }
 
 console.log("Self-check passed.");
