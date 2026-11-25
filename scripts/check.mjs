@@ -4650,7 +4650,7 @@ if (!canRunTsChecks) {
     assert.equal(await status(vc.fetchVGMapsImage(img, "")), 502, "svg refused");
     stub(() => new Response("<html>", { headers: { "content-type": "text/html" } }));
     assert.equal(await status(vc.fetchVGMapsImage(img, "")), 502, "html refused");
-    stub(() => png("x", { "content-length": String(vc.MAX_MAP_BYTES + 1) }));
+    stub(() => png("x", { "content-length": String(vc.MAX_VIEW_MAP_BYTES + 1) }));
     assert.equal(await status(vc.fetchVGMapsImage(img, "")), 413, "declared oversize is 413");
     const capped = vc.capStream(new Response("123456").body, 4);
     assert.equal(await status(new Response(capped).arrayBuffer()), 413, "undeclared oversize stream errors");
@@ -5172,7 +5172,16 @@ if (!canRunTsChecks) {
         headers: { "content-type": "image/png", "content-length": String(bc.MAX_MAP_BLOB_BYTES + 1) },
       });
     const declaredBig = await bc.fetchMapBlob(pUrl).then(() => 200, (e) => (e instanceof bc.MapFetchError ? e.status : -1));
-    assert.equal(declaredBig, bc.MAP_TOO_LARGE_STATUS, "declared >30 MB rejected as 413");
+    assert.equal(declaredBig, 200, "declared 30 MB+1 is viewable (view cap is higher, #55)");
+    // Saving keeps the 30 MB cap: the same response is refused on the save path.
+    const saveBig = await bc.fetchAndCacheMapBlob(pUrl).then(() => 200, (e) => (e instanceof bc.MapFetchError ? e.status : -1));
+    assert.equal(saveBig, bc.MAP_TOO_LARGE_STATUS, "declared >30 MB rejected for saving as 413");
+    globalThis.fetch = async () =>
+      new Response(new Uint8Array([1]), {
+        headers: { "content-type": "image/png", "content-length": String(bc.MAX_VIEW_BLOB_BYTES + 1) },
+      });
+    const viewBig = await bc.fetchMapBlob(pUrl).then(() => 200, (e) => (e instanceof bc.MapFetchError ? e.status : -1));
+    assert.equal(viewBig, bc.MAP_TOO_LARGE_STATUS, "declared >100 MB rejected for viewing as 413");
 
     // cacheMapBlob stores an already-fetched blob for offline Undo.
     const undoBlob = new Blob([new Uint8Array([9, 8, 7])], { type: "image/png" });
@@ -5360,6 +5369,13 @@ if (!canRunTsChecks) {
   assert.equal(mp.isMapOverLimit({ fileSizeBytes: 30 * 1024 * 1024 }), false, "exactly 30 MB allowed");
   assert.equal(mp.isMapOverLimit({ fileSizeBytes: 30 * 1024 * 1024 + 1 }), true, "over 30 MB blocked");
   assert.equal(mp.isMapOverLimit({ fileSizeBytes: null }), false, "unknown size allowed");
+  assert.equal(mp.formatVeryLargeRow(48 * 1024 * 1024), "Very large file, 48 MB. Opens without saving.");
+  assert.match(mp.formatVeryLargeWarning(48 * 1024 * 1024), /^Very large map, about 48 MB\. It may be slow/);
+  assert.match(mp.formatVeryLargeWarning(null), /Size unknown/, "unknown size copy");
+  assert.equal(mp.vgmapsExternalUrl("https://www.vgmaps.com/Atlas/NES/Zelda.htm#a"), "https://www.vgmaps.com/Atlas/NES/Zelda.htm#a");
+  assert.equal(mp.vgmapsExternalUrl("javascript:alert(1)"), "", "non-https refused");
+  assert.equal(mp.vgmapsExternalUrl("https://evil.example/x"), "", "foreign host refused");
+  assert.equal(mp.vgmapsExternalUrl(""), "", "empty refused");
   assert.equal(
     mp.formatDownloadProgressText({ loaded: 3.1 * 1024 * 1024, total: 8.4 * 1024 * 1024 }),
     "Downloading 3.1 / 8.4 MB",

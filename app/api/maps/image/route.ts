@@ -9,7 +9,7 @@ export const maxDuration = 130;
 // Same-origin proxy for a VGMaps map image (no canvas tainting, cacheable offline).
 // GET ?url=<imageUrl>&game=<atlas game url>, exactly that: the image must be one the game's
 // VGMaps page lists, so every CDN cache key is a real map. Every redirect hop re-checked,
-// raster types only, 30 MB cap. No login.
+// raster types only, 100 MB view cap (saving stays 30 MB, client side). No login.
 export async function GET(request: Request) {
   try {
     const { imageUrl, referer } = await resolveMapImageRequest(new URL(request.url).search);
@@ -24,7 +24,7 @@ export async function GET(request: Request) {
     return new Response(image.body, { headers });
   } catch (err) {
     if (err instanceof VGMapsError && (err.status === 400 || err.status === 413)) {
-      const error = err.status === 413 ? "Map is over 30 MB." : err.message;
+      const error = err.status === 413 ? "Map is over 100 MB." : err.message;
       return NextResponse.json({ error }, { status: err.status });
     }
     console.error("VGMaps image failed:", err);

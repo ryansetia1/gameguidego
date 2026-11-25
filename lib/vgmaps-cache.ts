@@ -18,6 +18,10 @@ export const VGMAPS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** The Atlas index is ~2 MB and the NES page ~6 MB; well past that isn't a page we parse. */
 export const MAX_PAGE_BYTES = 16 * 1024 * 1024;
 export const MAX_MAP_BYTES = 30 * 1024 * 1024;
+// View-only ceiling for the image proxy (#55). Maps over MAX_MAP_BYTES can be viewed but never
+// saved (the client enforces the 30 MB save cap). The body is streamed and cut at this cap, so
+// the server never buffers it; past it the client falls back to "Open on VGMaps".
+export const MAX_VIEW_MAP_BYTES = 100 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 const PAGE_TIMEOUT_MS = 15_000;
 // The timeout covers the body too: 2 min keeps a slow 30 MB map (~250 KB/s) from being cut.
@@ -158,7 +162,7 @@ export async function fetchVGMapsText(url: string): Promise<string> {
 
 /**
  * Upstream map image for the proxy route: validated, raster-only, streamed with a byte cap.
- * @throws VGMapsError 400 bad URL, 413 over MAX_MAP_BYTES (declared), 502 upstream/type.
+ * @throws VGMapsError 400 bad URL, 413 over MAX_VIEW_MAP_BYTES (declared), 502 upstream/type.
  */
 export async function fetchVGMapsImage(imageUrl: string, referer: string) {
   const res = await fetchVGMaps(imageUrl, {
@@ -176,12 +180,12 @@ export async function fetchVGMapsImage(imageUrl: string, referer: string) {
     await res.body.cancel();
     throw new VGMapsError("VGMaps didn't send an image.", 502);
   }
-  assertDeclaredSize(res, MAX_MAP_BYTES);
+  assertDeclaredSize(res, MAX_VIEW_MAP_BYTES);
   // ponytail: a body with no Content-Length is streamed and cut at the cap mid-stream (the
   // client sees a failed download, not a 413). Buffering would give a clean 413 but holds
-  // up to 30 MB per request and hits the platform's buffered-response limit.
+  // up to 100 MB per request and hits the platform's buffered-response limit.
   return {
-    body: capStream(res.body, MAX_MAP_BYTES),
+    body: capStream(res.body, MAX_VIEW_MAP_BYTES),
     contentType,
     // fetch decodes gzip/deflate, so an encoded body's length isn't what we send on.
     contentLength: res.headers.get("content-encoding") ? null : res.headers.get("content-length"),

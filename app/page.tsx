@@ -2204,6 +2204,7 @@ export default function Home() {
         lastOffsetX: saved?.lastOffsetX,
         lastOffsetY: saved?.lastOffsetY,
         overLimit: isMapOverLimit(mapLink),
+        sizeBytes: mapLink.fileSizeBytes,
       },
       game: mapsPaneGame || game,
       platform: mapsPanePlatform || platform,
@@ -3758,6 +3759,7 @@ export default function Home() {
         }
         onViewportChange={savedMaps.saveViewport}
         onClose={closeMapViewer}
+        onCanceled={() => setToast("Canceled.")}
       >
         {viewingMap ? snackbar : null}
       </MapViewer>
