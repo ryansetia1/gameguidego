@@ -1346,7 +1346,15 @@ export function MapViewer({
       : null;
 
   const backButton = (
-    <button type="button" className="map-viewer-status-btn" onClick={handleClose}>
+    <button
+      type="button"
+      className="map-viewer-status-btn"
+      onClick={handleClose}
+      ref={(el) => {
+        // With no external link this is the screen's main action, so it takes focus.
+        if (!vgmapsExternalUrl(map?.sourceUrl)) primaryActionRef.current = el;
+      }}
+    >
       ‹ Maps
     </button>
   );
