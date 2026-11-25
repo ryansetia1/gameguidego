@@ -69,6 +69,7 @@ import {
 } from "@/lib/spoiler-prefs.js";
 import { loadVisualAuto } from "@/lib/visual-search-prefs.js";
 import { consumeAnonSaveHint, isSavableReply } from "@/lib/saved-answers.js";
+import { closeBackLayer, hasBackLayer, nextWouldReload, shouldSwallowBack } from "@/lib/back-layer.js";
 import { chatBackPopsHistory, savedPopAction, type SavedEntry } from "@/lib/saved-history.js";
 import { mapProxyUrl, readCachedMapBlob } from "@/lib/map-blob-cache.js";
 import { mapSaveToastMessage } from "@/lib/map-viewport.js";
@@ -180,6 +181,8 @@ let savedListDepth = 0;
 let mapsPanelDepth = 0;
 let mapsPickerDepth = 0;
 let mapViewerDepth = 0;
+// Depth of the entry a swallowed back press must step forward onto (see onPopState).
+let restoreDepth: number | null = null;
 
 function pushAppHistory(state: Record<string, unknown>) {
   const depth = ((window.history.state as { gggDepth?: number } | null)?.gggDepth ?? 0) + 1;
@@ -427,7 +430,12 @@ export default function Home() {
   function pushTopicsHistory() {
     if (typeof window === "undefined") return;
     topicsHistoryPushed.current = true;
-    pushAppHistory({ gggTopics: true });
+    // A stripped overlay entry (library/sidebar closed by opening a game) becomes the
+    // topics entry itself, so back doesn't have to pop a dead entry first.
+    const top = window.history.state as Record<string, unknown> | null;
+    const stale = top?.gggDepth && !Object.keys(top).some((k) => k.startsWith("ggg") && k !== "gggDepth");
+    if (stale) replaceAppHistory({ gggTopics: true });
+    else pushAppHistory({ gggTopics: true });
   }
 
   /** Global loading/status only apply to the open thread; clear when leaving it. */
@@ -654,6 +662,37 @@ export default function Home() {
   useEffect(() => {
     /** Pane-aware back/forward; decision tables live in lib/maps-panel.js & lib/saved-history.js. */
     function onPopState(event: PopStateEvent) {
+      const st = event.state as { gggDepth?: number } | null;
+      if (restoreDepth !== null && st?.gggDepth === restoreDepth) {
+        // The forward() below landing: bookkeeping only.
+        restoreDepth = null;
+        historyDepth = st.gggDepth;
+        currentEntry = event.state as AppHistoryEntry;
+      } else if (
+        shouldSwallowBack({
+          hasLayer: hasBackLayer(),
+          depth: st?.gggDepth ?? 0,
+          prevDepth: historyDepth,
+        })
+      ) {
+        // A layer with no entry of its own (composer menu) is open: close it and step
+        // forward onto the entry this press popped, so one press closes one layer.
+        // (A pushState here is not treated as a back target by Android WebView.)
+        restoreDepth = historyDepth;
+        closeBackLayer();
+        historyDepth = st?.gggDepth ?? 0;
+        currentEntry = event.state as AppHistoryEntry;
+        window.history.forward();
+      } else handlePop(event);
+      // Next's app router hard-reloads on popstate when the landing entry has no `__NA`
+      // marker (our entries pushed before its history patch lack it). The reload wipes
+      // our history bookkeeping mid-flow and back falls through to exit (#59). This
+      // listener runs in the capture phase so Next never sees those entries.
+      // ponytail: Next's tree isn't traversed for them; fine while all app entries share one URL.
+      if (nextWouldReload(event.state)) event.stopImmediatePropagation();
+    }
+
+    function handlePop(event: PopStateEvent) {
       const state = event.state as (AppHistoryEntry & { gggDepth?: number }) | null;
       const depth = state?.gggDepth ?? 0;
       const prevDepth = historyDepth;
@@ -789,8 +828,8 @@ export default function Home() {
       setToast("Press back again to leave");
       pushAppHistory({ gggHomeRoot: true });
     }
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    window.addEventListener("popstate", onPopState, true);
+    return () => window.removeEventListener("popstate", onPopState, true);
   }, [
     authOpen,
     libraryOpen,
