@@ -1353,11 +1353,11 @@ export function MapViewer({
 
         <div className="map-viewer-title-block">
           <div className="map-viewer-title">{map.title}</div>
-          {metaLine && (
-            <div className="map-viewer-meta" aria-live="polite">
-              {metaLine}
-            </div>
-          )}
+          {metaLine && <div className="map-viewer-meta">{metaLine}</div>}
+          {/* Announce the zoom only (it updates once a gesture settles), not W × H each time. */}
+          <span className="visually-hidden" aria-live="polite">
+            {isReady ? `Zoom ${zoomUi.percent}%` : ""}
+          </span>
         </div>
 
         <div className="map-viewer-save-slot">{saveSlot}</div>

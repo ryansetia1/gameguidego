@@ -24,7 +24,9 @@ import {
   formatSavedMapMeta,
   formatSavingText,
   isMapOverLimit,
+  MAPS_SLOW_MS,
   mapsChoiceKey,
+  mapsListFailure,
   mapsLoadStage,
   parseMapsSearchQuery,
   resolveMapsGame,
@@ -64,6 +66,17 @@ function writeChoice(game: string, platform: string, entry: VGMapsGameEntry) {
     localStorage.setItem(CHOICE_STORE, JSON.stringify(next));
   } catch {
     // Quota / private mode: the choice just isn't remembered.
+  }
+}
+
+function forgetChoice(game: string, platform: string) {
+  try {
+    const all = JSON.parse(localStorage.getItem(CHOICE_STORE) ?? "{}") as Record<string, unknown>;
+    if (!all || typeof all !== "object") return;
+    delete all[mapsChoiceKey(game, platform)];
+    localStorage.setItem(CHOICE_STORE, JSON.stringify(all));
+  } catch {
+    // Nothing stored or storage blocked: nothing to forget.
   }
 }
 
@@ -108,9 +121,16 @@ function trapTab(event: KeyboardEvent<HTMLElement>) {
   }
 }
 
+/** A failed API call that got an HTTP status (lets a 4xx be told apart from "unreachable"). */
+class MapsHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${status}`);
+  }
+}
+
 async function fetchJson<T>(url: string, signal: AbortSignal): Promise<T> {
   const res = await fetch(url, { signal });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) throw new MapsHttpError(res.status);
   const data = (await res.json()) as T & { available?: boolean };
   if (data.available === false) throw new Error("VGMaps unavailable");
   return data;
@@ -122,11 +142,14 @@ type VgState =
   | { kind: "loading"; stage: "search" | "list"; entry?: VGMapsGameEntry; since: number }
   | { kind: "pick"; options: VGMapsGameEntry[] }
   | { kind: "notfound"; query: string }
-  | { kind: "error"; canceled: boolean }
+  /** `entry`: the VGMaps game the failed run used (offers "Wrong game?"). */
+  | { kind: "error"; reason: "unreachable" | "missing" | "canceled"; entry?: VGMapsGameEntry }
   | { kind: "done"; entry: VGMapsGameEntry; maps: VGMapsMapLink[] };
 
 type PickerState = {
-  status: "idle" | "loading" | "done" | "error";
+  status: "idle" | "loading" | "done" | "error" | "canceled";
+  /** When the running search started (slow notice after 6s). */
+  since: number;
   query: string;
   submitted: string;
   results: VGMapsGameEntry[];
@@ -207,6 +230,7 @@ export function MapsPanel({
   const [notFoundQuery, setNotFoundQuery] = useState("");
   const [picker, setPicker] = useState<PickerState>({
     status: "idle",
+    since: 0,
     query: "",
     submitted: "",
     results: [],
@@ -229,7 +253,12 @@ export function MapsPanel({
     genRef.current += 1;
     abortRef.current?.abort();
     abortRef.current = null;
-    setVg({ kind: "error", canceled });
+    const running = vgRef.current;
+    setVg({
+      kind: "error",
+      reason: canceled ? "canceled" : "unreachable",
+      entry: running.kind === "loading" ? running.entry : undefined,
+    });
   }, []);
 
   /** Run the VGMaps calls: search (unless the game entry is known), then the map list. */
@@ -241,9 +270,9 @@ export function MapsPanel({
       const gen = ++genRef.current;
       const current = () => gen === genRef.current;
 
+      let entry = opts.entry;
       void (async () => {
         try {
-          let entry = opts.entry;
           if (!entry) {
             const raw = opts.query?.trim() || defaultMapsQuery(game, platform);
             const parsed = opts.query
@@ -284,10 +313,20 @@ export function MapsPanel({
           );
           if (!current()) return;
           setVg({ kind: "done", entry, maps: Array.isArray(data.maps) ? data.maps : [] });
-        } catch {
+        } catch (err) {
           // A newer run, Cancel or the timeout already set the state (and aborted this one).
           if (!current()) return;
-          setVg({ kind: "error", canceled: false });
+          if (!entry) {
+            setVg({ kind: "error", reason: "unreachable" });
+            return;
+          }
+          const failure = mapsListFailure(err instanceof MapsHttpError ? err.status : null);
+          if (failure.forgetChoice) {
+            // The page is gone: never auto-load this entry again; Try again searches fresh.
+            forgetChoice(game, platform);
+            lastEntryRef.current = null;
+          }
+          setVg({ kind: "error", reason: failure.reason, entry });
         } finally {
           if (abortRef.current === controller) abortRef.current = null;
         }
@@ -331,7 +370,11 @@ export function MapsPanel({
     const kind = vgRef.current.kind;
     if (autoKeyRef.current === gameKey && kind !== "idle" && kind !== "error") return;
     // Retry automatically after an offline error, never after an explicit Cancel.
-    if (autoKeyRef.current === gameKey && kind === "error" && (vgRef.current as { canceled: boolean }).canceled) {
+    if (
+      autoKeyRef.current === gameKey &&
+      kind === "error" &&
+      (vgRef.current as { reason: string }).reason !== "unreachable"
+    ) {
       return;
     }
     autoKeyRef.current = gameKey;
@@ -354,16 +397,20 @@ export function MapsPanel({
   const loadingSince = vg.kind === "loading" ? vg.since : null;
   useEffect(() => {
     if (loadingSince === null) return;
-    const tick = setInterval(() => setNow(Date.now()), 1000);
     const timeout = setTimeout(
       () => stopLoading(false),
       Math.max(0, loadingSince + MAPS_TIMEOUT_MS - Date.now()),
     );
-    return () => {
-      clearInterval(tick);
-      clearTimeout(timeout);
-    };
+    return () => clearTimeout(timeout);
   }, [loadingSince, stopLoading]);
+
+  // A clock for the slow notices (main list and picker search), only while one runs.
+  const ticking = loadingSince !== null || (pickerOpen && picker.status === "loading");
+  useEffect(() => {
+    if (!ticking) return;
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, [ticking]);
 
   // Focus close button on open and restore focus to the invoking control on close.
   useEffect(() => {
@@ -474,7 +521,7 @@ export function MapsPanel({
       pickerAbortRef.current?.abort();
       const controller = new AbortController();
       pickerAbortRef.current = controller;
-      setPicker((prev) => ({ ...prev, status: "loading", submitted: trimmed }));
+      setPicker((prev) => ({ ...prev, status: "loading", since: Date.now(), submitted: trimmed }));
       try {
         const parsed = parseMapsSearchQuery(trimmed, game, platform);
         const params = new URLSearchParams({ game: parsed.game });
@@ -508,7 +555,7 @@ export function MapsPanel({
     prevPickerOpenRef.current = pickerOpen;
     if (pickerOpen && !was) {
       const query = defaultMapsQuery(game, platform);
-      setPicker({ status: "idle", query, submitted: "", results: [] });
+      setPicker({ status: "idle", since: 0, query, submitted: "", results: [] });
       if (online) void runPickerSearch(query);
       requestAnimationFrame(() => pickerBackRef.current?.focus());
     } else if (!pickerOpen && was) {
@@ -535,6 +582,12 @@ export function MapsPanel({
   function retryVgmaps() {
     const entry = lastEntryRef.current;
     startVgmaps(entry ? { entry } : {});
+  }
+
+  function cancelPickerSearch() {
+    pickerAbortRef.current?.abort();
+    pickerAbortRef.current = null;
+    setPicker((prev) => ({ ...prev, status: "canceled", results: [] }));
   }
 
   function updateFilter(next: string) {
@@ -623,6 +676,22 @@ export function MapsPanel({
     );
   }
 
+  /** "Game on VGMaps: X. Wrong game?" for the entry a list (or a failed list) used. */
+  function renderGameContext(entry: VGMapsGameEntry) {
+    return (
+      <p className="meta-text maps-context">
+        Game on VGMaps: <strong>{entry.title}</strong>
+        {entry.platform && !squash(entry.title).includes(squash(entry.platform))
+          ? ` (${entry.platform})`
+          : ""}
+        .{" "}
+        <button ref={wrongGameRef} type="button" className="maps-link-btn" onClick={openPicker}>
+          Wrong game?
+        </button>
+      </p>
+    );
+  }
+
   function renderVgBody() {
     if (!online) {
       return (
@@ -638,16 +707,25 @@ export function MapsPanel({
         return renderStage(vg);
       case "error":
         return (
-          <div className="maps-state-block" role="status">
-            {vg.canceled ? (
-              <p className="maps-state-text">Search canceled.</p>
-            ) : (
-              <p className="maps-state-error">Couldn&apos;t reach VGMaps.</p>
-            )}
-            <button type="button" className="maps-btn-secondary" onClick={retryVgmaps}>
-              Try again
-            </button>
-          </div>
+          <>
+            {vg.entry && renderGameContext(vg.entry)}
+            <div className="maps-state-block" role="status">
+              {vg.reason === "missing" ? (
+                <p className="maps-state-text">
+                  VGMaps no longer has a page for this game. Search again or pick another.
+                </p>
+              ) : vg.reason === "canceled" ? (
+                <p className="maps-state-text">
+                  {vg.entry ? "Loading canceled." : "Search canceled."}
+                </p>
+              ) : (
+                <p className="maps-state-error">Couldn&apos;t reach VGMaps.</p>
+              )}
+              <button type="button" className="maps-btn-secondary" onClick={retryVgmaps}>
+                {vg.reason === "missing" ? "Search again" : "Try again"}
+              </button>
+            </div>
+          </>
         );
       case "pick":
         return (
@@ -686,21 +764,7 @@ export function MapsPanel({
       case "done":
         return (
           <>
-            <p className="meta-text maps-context">
-              Game on VGMaps: <strong>{vg.entry.title}</strong>
-              {vg.entry.platform && !squash(vg.entry.title).includes(squash(vg.entry.platform))
-                ? ` (${vg.entry.platform})`
-                : ""}
-              .{" "}
-              <button
-                ref={wrongGameRef}
-                type="button"
-                className="maps-link-btn"
-                onClick={openPicker}
-              >
-                Wrong game?
-              </button>
-            </p>
+            {renderGameContext(vg.entry)}
             {vg.maps.length === 0 ? (
               <div className="maps-state-block" role="status">
                 <p className="maps-state-text">VGMaps lists this game but no maps.</p>
@@ -910,6 +974,25 @@ export function MapsPanel({
             ) : picker.status === "loading" ? (
               <div className="maps-state-block" role="status">
                 <p className="maps-state-text">Searching VGMaps…</p>
+                {now - picker.since >= MAPS_SLOW_MS && (
+                  <div className="maps-stage-slow">
+                    <p className="maps-state-text">VGMaps is slow right now. Still trying…</p>
+                    <button type="button" className="maps-text-btn" onClick={cancelPickerSearch}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : picker.status === "canceled" ? (
+              <div className="maps-state-block" role="status">
+                <p className="maps-state-text">Search canceled.</p>
+                <button
+                  type="button"
+                  className="maps-btn-secondary"
+                  onClick={() => void runPickerSearch(picker.query)}
+                >
+                  Try again
+                </button>
               </div>
             ) : picker.status === "error" ? (
               <div className="maps-state-block" role="status">

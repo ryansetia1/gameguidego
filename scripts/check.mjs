@@ -5348,6 +5348,11 @@ if (!canRunTsChecks) {
     assert.equal(picked.type, "pick");
     assert.equal(picked.type === "pick" && picked.options.length, mp.MAPS_PICK_MAX, "Which game? lists at most 6");
     assert.equal(mp.mapsChoiceKey("Chrono Trigger", "SNES"), mp.mapsChoiceKey("chrono  trigger", "snes"));
+    // A list failure on a remembered game: 4xx means the page is gone, forget the choice.
+    assert.deepEqual(mp.mapsListFailure(400), { reason: "missing", forgetChoice: true });
+    assert.deepEqual(mp.mapsListFailure(404), { reason: "missing", forgetChoice: true });
+    assert.deepEqual(mp.mapsListFailure(502), { reason: "unreachable", forgetChoice: false });
+    assert.deepEqual(mp.mapsListFailure(null), { reason: "unreachable", forgetChoice: false }, "network / timeout keeps it");
     assert.notEqual(mp.mapsChoiceKey("Chrono Trigger", "SNES"), mp.mapsChoiceKey("Chrono Trigger", "DS"));
   }
 

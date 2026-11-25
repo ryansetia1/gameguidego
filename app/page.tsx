@@ -73,7 +73,6 @@ import { chatBackPopsHistory, savedPopAction, type SavedEntry } from "@/lib/save
 import { mapProxyUrl, readCachedMapBlob } from "@/lib/map-blob-cache.js";
 import { mapSaveToastMessage } from "@/lib/map-viewport.js";
 import {
-  formatSavingText,
   isMapOverLimit,
   mapsPopAction,
   type MapsHistoryEntry,
@@ -2064,27 +2063,40 @@ export default function Home() {
     // A ref, not `mapSaves`: a double tap lands before the state re-renders.
     if (mapSavesStartedRef.current.has(url)) return;
     mapSavesStartedRef.current.add(url);
-    let lastText = "";
     setMapSaves((prev) => ({ ...prev, [url]: { loaded: 0, total: mapLink.fileSizeBytes ?? null } }));
-    const result = await savedMaps.saveMap({
-      game: target.game,
-      platform: target.platform,
-      gameEntry,
-      mapLink,
-      blob,
-      onProgress: (progress) => {
-        const text = formatSavingText(progress);
-        if (text === lastText) return;
-        lastText = text;
-        setMapSaves((prev) => (prev[url] ? { ...prev, [url]: progress } : prev));
-      },
-    });
-    mapSavesStartedRef.current.delete(url);
-    setMapSaves((prev) => {
-      const next = { ...prev };
-      delete next[url];
-      return next;
-    });
+    // Progress re-renders the page, so it lands in 5% steps and at most 4 times a second;
+    // a large map stays smooth to pan while it saves.
+    let lastPct = -1;
+    let lastAt = 0;
+    let result: Awaited<ReturnType<typeof savedMaps.saveMap>>;
+    try {
+      result = await savedMaps.saveMap({
+        game: target.game,
+        platform: target.platform,
+        gameEntry,
+        mapLink,
+        blob,
+        onProgress: (progress) => {
+          const pct = progress.total ? Math.floor((progress.loaded / progress.total) * 100) : -1;
+          const now = performance.now();
+          if (pct === lastPct) return;
+          if (pct < 100 && (pct - lastPct < 5 || now - lastAt < 250)) return;
+          lastPct = pct;
+          lastAt = now;
+          setMapSaves((prev) => (prev[url] ? { ...prev, [url]: progress } : prev));
+        },
+      });
+    } catch {
+      result = { status: "error" };
+    } finally {
+      // Always release the row, or it would read "Saving…" for the rest of the session.
+      mapSavesStartedRef.current.delete(url);
+      setMapSaves((prev) => {
+        const next = { ...prev };
+        delete next[url];
+        return next;
+      });
+    }
     setMapsCacheVersion((v) => v + 1);
     if (result.status === "saved") {
       const item = result.item;

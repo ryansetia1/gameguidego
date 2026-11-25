@@ -9241,8 +9241,8 @@ details.sources small {
 
 /* Inline underlined text button ("Wrong game?"); the padding keeps a 44px tap target. */
 .maps-link-btn {
-  margin: -12px 0;
-  padding: 12px 0;
+  margin: -14px 0;
+  padding: 14px 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -9255,7 +9255,7 @@ details.sources small {
 }
 
 .maps-state-block .maps-link-btn {
-  margin: -12px 0;
+  margin: -14px 0;
 }
 
 .maps-back-btn:focus-visible,

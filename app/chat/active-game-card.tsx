@@ -382,7 +382,7 @@ export function ActiveGameCard({
           Maps
           {savedMapsCount > 0 && (
             <span className="game-card-maps-count" aria-hidden="true">
-              {savedMapsCount}
+              ({savedMapsCount})
             </span>
           )}
         </button>
