@@ -3221,32 +3221,15 @@ details.sources small {
   cursor: pointer;
 }
 
-/* Labelled "Maps" / "Maps 2": same 32px height as its neighbours, grows leftwards. */
-.game-card-maps {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  width: auto;
-  min-width: 52px;
-  padding: 0 9px;
-  font-family: var(--font-sans);
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  line-height: 1;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
 .game-card-maps.beside-incognito {
   right: 92px;
 }
 
-@media (max-width: 340px) {
-  .game-card-maps-count {
-    display: none;
-  }
+/* 44px tap target around the 32px map icon (8px gap to incognito, no overlap). */
+.game-card-maps::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
 }
 
 .game-card-incognito:hover:not(:disabled),
@@ -3275,27 +3258,7 @@ details.sources small {
   padding-right: 124px;
 }
 
-.game-card-meta.has-quick-maps {
-  padding-right: 120px;
-}
-
-.game-card-meta.has-quick-maps-2 {
-  padding-right: 160px;
-}
-
-@media (max-width: 340px) {
-  .game-card-meta.has-quick-maps {
-    padding-right: 104px;
-  }
-
-  .game-card-meta.has-quick-maps-2 {
-    padding-right: 144px;
-  }
-}
-
 .game-card-meta.has-quick h2,
-.game-card-meta.has-quick-maps h2,
-.game-card-meta.has-quick-maps-2 h2,
 .game-card-meta.has-quick-2 h2 {
   padding-right: 0;
 }
@@ -3325,30 +3288,28 @@ details.sources small {
   cursor: not-allowed;
 }
 
-/* Sticky mini-header "Maps": reach maps mid-chat without scrolling up. */
+/* Sticky mini-header map icon: reach maps mid-chat without scrolling up. */
 .sticky-maps {
   position: relative;
   flex-shrink: 0;
   margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 34px;
   height: 34px;
-  padding: 0 10px;
+  padding: 0;
   border: 1.5px solid var(--ink);
   border-radius: 0;
   background: var(--paper-strong);
   color: var(--ink);
-  font-family: var(--font-sans);
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   cursor: pointer;
 }
 
-/* 44px tap target without growing the 34px bar button. */
+/* 44px tap target without growing the 34px bar button (12px flex gap, no overlap). */
 .sticky-maps::after {
   content: "";
   position: absolute;
-  inset: -5px -2px;
+  inset: -5px;
 }
 
 .sticky-maps:hover {

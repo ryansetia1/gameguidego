@@ -7,6 +7,7 @@ import {
   IconChevronDown,
   IconDotsVertical,
   IconIncognito,
+  IconMap,
   IconPlus,
   IconRefresh,
 } from "../icons";
@@ -361,14 +362,9 @@ export function ActiveGameCard({
   const showIncognito = !temporary && (Boolean(activeChatId) || menuVariant === "topics");
   const showMaps = Boolean(onOpenMaps);
   const mapsLabel = savedMapsCount > 0 ? `Maps, ${savedMapsCount} saved` : "Maps";
-  // The labelled Maps button is wider than the square incognito one; reserve its room.
-  const metaQuickClass = showMaps
-    ? showIncognito
-      ? " has-quick-maps-2"
-      : " has-quick-maps"
-    : showIncognito
-      ? " has-quick"
-      : "";
+  const quickCount = (showIncognito ? 1 : 0) + (showMaps ? 1 : 0);
+  const metaQuickClass =
+    quickCount === 2 ? " has-quick-2" : quickCount === 1 ? " has-quick" : "";
 
   return (
     <section className={gameCardClass} aria-label="Game" ref={topRef}>
@@ -376,15 +372,11 @@ export function ActiveGameCard({
         <button
           type="button"
           className={`game-card-maps${showIncognito ? " beside-incognito" : ""}`}
+          title={mapsLabel}
           aria-label={mapsLabel}
           onClick={onOpenMaps}
         >
-          Maps
-          {savedMapsCount > 0 && (
-            <span className="game-card-maps-count" aria-hidden="true">
-              ({savedMapsCount})
-            </span>
-          )}
+          <IconMap size={18} />
         </button>
       )}
       {showIncognito && (
