@@ -138,6 +138,13 @@ do not sync to the cloud or use Storage uploads.
   back in (`home-setup.tsx`), game-card Checklist button + kebab item, `app/chat/checklist-panel.tsx`
   (pane in the Saved answers shell, history entry `{ gggChecklist: true }`, mutually exclusive with
   Saved/Maps) and the deep-link `step=` banner ("Mark done in RLog"). Unmatched users see nothing.
+  **Phase 3 (#73):** `/api/solve` calls `rlogProgressForSolve` (same bridge, session's verified email
+  from `getAuthedUser`, 2.5s cap, "" on any failure) beside rewrite/retrieval and injects
+  `buildRlogProgressContext` (`lib/rlog-checklist.js`: last 5 done + current step + done/total,
+  titles/notes only, 1200-char cap, "don't spoil past the current step") into the summarize prompt.
+  `GET /api/rlog/status` (`rlogStatus`, RLog `/api/integration/status`) feeds `useRlogStatus`;
+  `activeRooms` drops rooms whose RLog game is completed/dropped from the Jump back in rail only
+  (search + library still list them; null status = no filter).
 - `lib/deep-link.js`: opt-in entry deep link (#67) `/?game=&platform=&igdb=&q=&rlog_item=&step=`. `parseDeepLink` validates/caps every param (no `<>`/control chars, platform via `platformLabelFor`, igdb digits only, offset by `IGDB_ID_OFFSET`); null without a valid `game`. The session-hydration effect in `page.tsx` matches a room by `catalog_game_id` then name+platform, else starts an unsaved one, prefills the composer with `q` (never submits) and strips the params. `step` drives the RLog "Mark done in RLog" banner (#71, `rlogStep` in `page.tsx`); `rlog_item` is parsed but unused.
 - `app/platform-select.tsx`: custom themed, searchable, keyboard-accessible
   platform combobox. Delegates filtering to `lib/platforms.js`.

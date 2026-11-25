@@ -88,6 +88,9 @@ export type HomeSetupProps = {
   onSaveGameMeta: () => void;
   onSaveNewGame: () => void;
   onGuideCommitted?: (info: { label: string; updated?: boolean }) => void;
+  /** Rooms for the Jump back in rail: savedGames minus RLog completed/dropped (#73).
+   * Search and the library still list every room. Defaults to savedGames. */
+  jumpGames?: Chat[];
   /** RLog "playing" games (#71); null/empty renders nothing. */
   playing?: RlogGame[] | null;
   /** Home with no saved rooms: render the playing strip on its own. */
@@ -140,6 +143,7 @@ export function HomeSetup({
   onSaveGameMeta,
   onSaveNewGame,
   onGuideCommitted,
+  jumpGames,
   playing = null,
   showPlayingOnly = false,
   onOpenPlaying,
@@ -153,7 +157,7 @@ export function HomeSetup({
   const filteredGames = isSearching
     ? savedGames.filter((chat) => (chat.game || "").toLowerCase().includes(term))
     : savedGames;
-  const recentGames = isSearching ? filteredGames : savedGames.slice(0, quickLimit);
+  const recentGames = isSearching ? filteredGames : (jumpGames ?? savedGames).slice(0, quickLimit);
   const moreGamesCount = isSearching ? 0 : savedGames.length - recentGames.length;
   const playingStrip =
     playing && playing.length > 0 && onOpenPlaying ? (

@@ -57,21 +57,34 @@ function writeCache(key: string, value: unknown) {
   }
 }
 
+export type RlogStatusGame = Pick<RlogGame, "rlog_item_id" | "igdb_id" | "title" | "platform"> & {
+  status: "playing" | "completed" | "dropped";
+};
+
 /** RLog games with status "playing"; null = nothing to show (not matched, loading, error). */
 export function useRlogPlaying(userId: string | null) {
-  const [games, setGames] = useState<RlogGame[] | null>(null);
+  return useRlogGames<RlogGame>(userId, "playing");
+}
+
+/** Playing/completed/dropped RLog games (#73, Jump back in auto-archive); null = no filter. */
+export function useRlogStatus(userId: string | null) {
+  return useRlogGames<RlogStatusGame>(userId, "status");
+}
+
+function useRlogGames<T>(userId: string | null, path: "playing" | "status") {
+  const [games, setGames] = useState<T[] | null>(null);
   useEffect(() => {
     if (!userId) {
       setGames(null);
       return;
     }
-    const key = `gg:rlog-playing:${userId}`;
-    setGames(readCache<RlogGame[]>(key));
+    const key = `gg:rlog-${path}:${userId}`;
+    setGames(readCache<T[]>(key));
     let alive = true;
-    rlogFetch("/api/rlog/playing")
+    rlogFetch(`/api/rlog/${path}`)
       .then((data) => {
         if (!alive) return;
-        const next = data.matched && Array.isArray(data.games) ? (data.games as RlogGame[]) : null;
+        const next = data.matched && Array.isArray(data.games) ? (data.games as T[]) : null;
         writeCache(key, next);
         setGames(next);
       })
@@ -81,7 +94,7 @@ export function useRlogPlaying(userId: string | null) {
     return () => {
       alive = false;
     };
-  }, [userId]);
+  }, [userId, path]);
   return games;
 }
 
