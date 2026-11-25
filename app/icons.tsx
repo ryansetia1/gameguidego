@@ -312,3 +312,11 @@ export function IconMap(props: IconProps) {
     </Svg>
   );
 }
+
+export function IconChecklist(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path {...base} d="M4 7l2 2 3.5-4M4 14h5v5H4zM12 7h8M12 16.5h8" />
+    </Svg>
+  );
+}

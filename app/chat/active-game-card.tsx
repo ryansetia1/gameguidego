@@ -7,6 +7,7 @@ import {
   IconChevronDown,
   IconDotsVertical,
   IconIncognito,
+  IconChecklist,
   IconMap,
   IconPlus,
   IconRefresh,
@@ -84,6 +85,9 @@ export type ActiveGameCardProps = {
   /** Saved VGMaps maps for this game; button + menu item open the Maps panel. */
   savedMapsCount?: number;
   onOpenMaps?: () => void;
+  /** RLog checklist (#71): set only when this room matches a playing RLog game with steps. */
+  checklistProgress?: { done: number; total: number } | null;
+  onOpenChecklist?: () => void;
   className?: string;
 };
 
@@ -140,6 +144,8 @@ export function ActiveGameCard({
   onOpenSaved,
   savedMapsCount = 0,
   onOpenMaps,
+  checklistProgress = null,
+  onOpenChecklist,
   className,
 }: ActiveGameCardProps) {
   const hasBlocked = preferredUrls.some(
@@ -362,12 +368,36 @@ export function ActiveGameCard({
   const showIncognito = !temporary && (Boolean(activeChatId) || menuVariant === "topics");
   const showMaps = Boolean(onOpenMaps);
   const mapsLabel = savedMapsCount > 0 ? `Maps, ${savedMapsCount} saved` : "Maps";
-  const quickCount = (showIncognito ? 1 : 0) + (showMaps ? 1 : 0);
+  const showChecklist = Boolean(onOpenChecklist && checklistProgress);
+  const checklistLabel = checklistProgress
+    ? `Checklist, ${checklistProgress.done} of ${checklistProgress.total} done`
+    : "Checklist";
+  // Quick buttons stack leftward from the kebab in 40px steps.
+  const checklistRight = 52 + 40 * ((showIncognito ? 1 : 0) + (showMaps ? 1 : 0));
+  const quickCount = (showIncognito ? 1 : 0) + (showMaps ? 1 : 0) + (showChecklist ? 1 : 0);
   const metaQuickClass =
-    quickCount === 2 ? " has-quick-2" : quickCount === 1 ? " has-quick" : "";
+    quickCount === 3
+      ? " has-quick-3"
+      : quickCount === 2
+        ? " has-quick-2"
+        : quickCount === 1
+          ? " has-quick"
+          : "";
 
   return (
     <section className={gameCardClass} aria-label="Game" ref={topRef}>
+      {showChecklist && (
+        <button
+          type="button"
+          className="game-card-maps game-card-checklist"
+          style={{ right: checklistRight }}
+          title="Checklist"
+          aria-label={checklistLabel}
+          onClick={onOpenChecklist}
+        >
+          <IconChecklist size={18} />
+        </button>
+      )}
       {showMaps && (
         <button
           type="button"
@@ -407,6 +437,11 @@ export function ActiveGameCard({
             {onOpenSaved && (
               <button type="button" className="row-menu-item" onClick={onOpenSaved}>
                 Saved answers{savedCount > 0 ? ` (${savedCount})` : ""}
+              </button>
+            )}
+            {showChecklist && checklistProgress && (
+              <button type="button" className="row-menu-item" onClick={onOpenChecklist}>
+                Checklist ({checklistProgress.done}/{checklistProgress.total})
               </button>
             )}
             {onOpenMaps && (

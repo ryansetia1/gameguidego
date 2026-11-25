@@ -3258,8 +3258,13 @@ details.sources small {
   padding-right: 124px;
 }
 
+.game-card-meta.has-quick-3 {
+  padding-right: 164px;
+}
+
 .game-card-meta.has-quick h2,
-.game-card-meta.has-quick-2 h2 {
+.game-card-meta.has-quick-2 h2,
+.game-card-meta.has-quick-3 h2 {
   padding-right: 0;
 }
 
@@ -9309,5 +9314,237 @@ details.sources small {
   .maps-row.is-returned {
     outline: none;
     border-left: 3px solid var(--ink);
+  }
+}
+
+/* --- RLog checklist pane + deep-link step banner (#71) --- */
+.checklist-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px 18px;
+}
+
+.checklist-skeleton .library-skeleton-bar {
+  height: 14px;
+}
+
+.checklist-skeleton .library-skeleton-bar:nth-child(even) {
+  width: 70%;
+}
+
+.checklist-retry {
+  width: auto;
+  border: 1.5px solid var(--ink);
+}
+
+.checklist-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 0 24px;
+}
+
+.checklist-chapter + .checklist-chapter {
+  border-top: 1px solid var(--line);
+}
+
+.checklist-chapter-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 18px 8px 12px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.checklist-chapter-head strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checklist-chapter-count {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.checklist-chevron {
+  flex-shrink: 0;
+  transition: transform 140ms ease-out;
+}
+
+.checklist-chapter-head[aria-expanded="true"] .checklist-chevron {
+  transform: rotate(90deg);
+}
+
+.checklist-body:not([hidden]) {
+  animation: checklist-fade 140ms ease-out;
+}
+
+.checklist-body ul {
+  margin: 0;
+  padding: 0 0 6px;
+  list-style: none;
+}
+
+.checklist-step {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 44px;
+  padding: 12px 18px 12px 36px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.checklist-step input {
+  appearance: none;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  display: grid;
+  place-content: center;
+  cursor: pointer;
+  transition: background-color 100ms ease-out;
+}
+
+.checklist-step input::before {
+  content: "";
+  width: 9px;
+  height: 5px;
+  margin-top: -2px;
+  border-left: 2px solid var(--paper);
+  border-bottom: 2px solid var(--paper);
+  transform: rotate(-45deg);
+  opacity: 0;
+  transition: opacity 100ms ease-out;
+}
+
+.checklist-step input:checked {
+  background: var(--ink);
+}
+
+.checklist-step input:checked::before {
+  opacity: 1;
+}
+
+.checklist-step input:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.checklist-step input:focus-visible {
+  outline: 3px solid var(--signal-dark);
+  outline-offset: 2px;
+}
+
+.checklist-step.is-done span {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.checklist-step::after {
+  content: "";
+  position: absolute;
+  inset: 2px 8px;
+  outline: 2px solid var(--ink);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease-out;
+}
+
+.checklist-step.is-highlight::after {
+  opacity: 1;
+}
+
+.checklist-chapter-head:focus-visible {
+  outline: 3px solid var(--signal-dark);
+  outline-offset: -3px;
+}
+
+.checklist-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 4px 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper-strong);
+  animation: checklist-fade 140ms ease-out;
+}
+
+.checklist-banner-box {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--ink);
+}
+
+.checklist-banner-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+
+.checklist-banner .checklist-banner-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.checklist-banner-x {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.checklist-banner-btn:focus-visible,
+.checklist-banner-x:focus-visible,
+.checklist-retry:focus-visible {
+  outline: 3px solid var(--signal-dark);
+  outline-offset: -3px;
+}
+
+@keyframes checklist-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .checklist-body:not([hidden]),
+  .checklist-banner,
+  .checklist-chevron,
+  .checklist-step::after,
+  .checklist-step input,
+  .checklist-step input::before {
+    animation: none;
+    transition: none;
   }
 }

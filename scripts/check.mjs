@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 
 import { buildDeepLinkQuestion, parseDeepLink, stripDeepLinkParams } from "../lib/deep-link.js";
+import {
+  UNMATCHED,
+  bridgeEmail,
+  matchPlayingGame,
+  parseChecklistQuery,
+  parseToggleBody,
+  rlogChecklist,
+  rlogConfig,
+  rlogPlaying,
+  rlogToggle,
+} from "../lib/rlog-bridge.js";
+import { firstOpenGroup, groupChecklist } from "../lib/rlog-checklist.js";
 import { cleanSnippet, focusSection } from "../lib/clean.js";
 import {
   IGDB_GAME_TYPES,
@@ -5629,6 +5641,148 @@ if (!canRunTsChecks) {
   assert.equal(L("game=Hades&q=%3Cb%3E%22x%22&qt=1", "en-US"), 'How do I complete "b "x"" in Hades?', "html stripped");
   assert.equal(parseDeepLink("game=A&qt=0").qt, false);
   assert.equal(stripDeepLinkParams("https://x.test/?game=A&qt=1&chat=1"), "/?chat=1");
+}
+
+// RLog bridge (#71): fake secret + mocked fetch only.
+{
+  const SECRET = "test-secret-not-real";
+  const env = { RLOG_BRIDGE_SECRET: SECRET, RLOG_BASE_URL: "https://rlog.test" };
+  const user = { email: "Player@Example.com", email_confirmed_at: "2026-01-01T00:00:00Z" };
+  const ITEM = "11111111-1111-4111-8111-111111111111";
+  const STEP = "22222222-2222-4222-8222-222222222222";
+  const CH = "33333333-3333-4333-8333-333333333333";
+  const game = { rlog_item_id: ITEM, title: "Hades", platform: "PS5", cover: "https://img.test/c.jpg", igdb_id: 113112, progress: { done: 1, total: 2 } };
+  const detail = {
+    ...game,
+    checklistChapters: [{ id: CH, title: "Act 1", pos: "a" }],
+    checklistItems: [
+      { id: STEP, chapter_id: CH, title: "Beat Meg", pos: "a", done: false, note: null },
+      { id: "44444444-4444-4444-8444-444444444444", chapter_id: CH, title: "Get boon", pos: "b", done: true, note: null },
+    ],
+  };
+  const json = (status, body) => new Response(JSON.stringify(body), { status });
+  /** Mock RLog; records every call. `route(url, init)` → Response. */
+  const mock = (route) => {
+    const calls = [];
+    const fetchImpl = async (url, init) => {
+      calls.push({ url: String(url), init });
+      return route(String(url), init);
+    };
+    return { calls, fetchImpl };
+  };
+
+  // Identity: only a confirmed, real email; config only with a secret.
+  assert.equal(bridgeEmail(user), "player@example.com");
+  assert.equal(bridgeEmail({ email: "a@b.c" }), "", "unverified email");
+  assert.equal(bridgeEmail({ email: "steam_1@steam.gameguidego.local", email_confirmed_at: "x" }), "", "synthetic steam");
+  assert.equal(bridgeEmail(null), "");
+  assert.equal(rlogConfig({}), null);
+  assert.deepEqual(rlogConfig({ RLOG_BRIDGE_SECRET: "s" }), { base: "https://r-log.vercel.app", secret: "s" });
+  assert.equal(rlogConfig({ RLOG_BRIDGE_SECRET: "s", RLOG_BASE_URL: "http://evil.test" }), null, "https only");
+
+  // Match: playing list proxied with secret + verified email header.
+  {
+    const m = mock(() => json(200, { games: [game, { rlog_item_id: "bad" }] }));
+    const r = await rlogPlaying({ user, env, fetchImpl: m.fetchImpl });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { matched: true, games: [game] }, "bad rows dropped");
+    assert.equal(m.calls[0].url, "https://rlog.test/api/integration/playing");
+    assert.equal(m.calls[0].init.headers.Authorization, `Bearer ${SECRET}`);
+    assert.equal(m.calls[0].init.headers["X-Rlog-User-Email"], "player@example.com");
+    assert.ok(!JSON.stringify(r.body).includes(SECRET), "secret never in a response");
+  }
+  // No match: RLog 404, 401, unverified email, no session, no secret → one identical body.
+  for (const [label, ctx] of [
+    ["rlog 404", { user, env, fetchImpl: mock(() => json(404, { error: "Not found" })).fetchImpl }],
+    ["rlog 401", { user, env, fetchImpl: mock(() => json(401, { error: "Unauthorized" })).fetchImpl }],
+    ["unverified", { user: { email: "a@b.c" }, env, fetchImpl: () => assert.fail("must not call RLog") }],
+    ["signed out", { user: null, env, fetchImpl: () => assert.fail("must not call RLog") }],
+    ["no secret", { user, env: {}, fetchImpl: () => assert.fail("must not call RLog") }],
+  ]) {
+    const r = await rlogPlaying(ctx);
+    assert.equal(r.status, 200, label);
+    assert.deepEqual(r.body, UNMATCHED, label);
+  }
+  {
+    const r = await rlogPlaying({ user, env, fetchImpl: async () => { throw new Error("net"); } });
+    assert.equal(r.status, 502);
+    assert.ok(!JSON.stringify(r.body).includes(SECRET));
+    assert.equal((await rlogPlaying({ user, env, fetchImpl: async () => json(500, {}) })).status, 502);
+    assert.equal((await rlogPlaying({ user, env, fetchImpl: async () => json(429, {}) })).status, 502);
+    assert.equal((await rlogPlaying({ user, env, fetchImpl: async () => json(400, {}) })).status, 502, "400 is a bug, not unmatched");
+  }
+
+  // Room matching: igdb first, then normalized title + platform label.
+  assert.equal(matchPlayingGame([game], { igdb: 113112, game: "x", platform: "" }), game);
+  assert.equal(matchPlayingGame([game], { igdb: null, game: "hades", platform: "PlayStation 5" }), game);
+  assert.equal(matchPlayingGame([game], { igdb: null, game: "Hades", platform: "PC" }), null, "platform differs");
+  assert.equal(matchPlayingGame([game], { igdb: 1, game: "Hades II", platform: "PS5" }), null);
+
+  // Checklist via igdb (one call).
+  {
+    const m = mock(() => json(200, detail));
+    const r = await rlogChecklist({ user, env, fetchImpl: m.fetchImpl, params: new URLSearchParams("igdb=113112&game=Hades&platform=PS5") });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.matched, true);
+    assert.equal(r.body.game.rlog_item_id, ITEM);
+    assert.deepEqual(r.body.chapters, [{ id: CH, title: "Act 1" }]);
+    assert.deepEqual(r.body.items[0], { id: STEP, chapter_id: CH, title: "Beat Meg", done: false });
+    assert.equal(m.calls.length, 1);
+    assert.equal(m.calls[0].url, "https://rlog.test/api/integration/playing?igdb=113112");
+  }
+  // igdb unknown to RLog → name+platform fallback via the list, then ?item=.
+  {
+    const m = mock((url) =>
+      url.includes("igdb=") ? json(404, { error: "Not found" }) : url.includes("item=") ? json(200, detail) : json(200, { games: [game] }),
+    );
+    const r = await rlogChecklist({ user, env, fetchImpl: m.fetchImpl, params: new URLSearchParams("igdb=9&game=Hades&platform=PlayStation%205") });
+    assert.equal(r.body.matched, true);
+    assert.equal(m.calls[2].url, `https://rlog.test/api/integration/playing?item=${ITEM}`);
+  }
+  // Account matches but the room's game isn't playing in RLog → same unmatched body.
+  {
+    const m = mock(() => json(200, { games: [game] }));
+    const r = await rlogChecklist({ user, env, fetchImpl: m.fetchImpl, params: new URLSearchParams("game=Celeste&platform=PC") });
+    assert.deepEqual(r.body, UNMATCHED);
+  }
+  // Invalid input: 400 before any RLog call.
+  for (const q of ["", "igdb=abc", "igdb=0", "igdb=12345678901", "game=%3Cb%3E", `game=${"a".repeat(121)}`, "platform=PC"]) {
+    assert.equal(parseChecklistQuery(new URLSearchParams(q)), null, q);
+    const r = await rlogChecklist({ user, env, fetchImpl: () => assert.fail("no call"), params: new URLSearchParams(q) });
+    assert.equal(r.status, 400, q);
+  }
+
+  // Toggle.
+  {
+    const body = { item_id: ITEM, checklist_item_id: STEP, done: true };
+    let n = 0;
+    const m = mock((url, init) => (++n === 1 ? json(409, {}) : json(200, { ok: true, done: true, changed: true })));
+    const r = await rlogToggle({ user, env, fetchImpl: m.fetchImpl, body });
+    assert.deepEqual(r.body, { matched: true, done: true }, "409 retried once");
+    assert.equal(m.calls[0].init.method, "POST");
+    assert.deepEqual(JSON.parse(m.calls[0].init.body), body, "only validated fields forwarded");
+    assert.deepEqual((await rlogToggle({ user, env, fetchImpl: async () => json(404, {}), body })).body, UNMATCHED);
+    assert.equal((await rlogToggle({ user, env, fetchImpl: async () => json(500, {}), body })).status, 502);
+    assert.deepEqual((await rlogToggle({ user: { email: "a@b.c" }, env, fetchImpl: () => assert.fail("no call"), body })).body, UNMATCHED);
+    for (const bad of [null, [], { ...body, done: "true" }, { ...body, item_id: "x" }, { ...body, checklist_item_id: 5 }]) {
+      assert.equal(parseToggleBody(bad), null);
+      assert.equal((await rlogToggle({ user, env, fetchImpl: () => assert.fail("no call"), body: bad })).status, 400);
+    }
+    assert.deepEqual(parseToggleBody({ ...body, user_id: "spoof" }), body, "extra fields dropped");
+  }
+}
+
+{
+  const chapters = [{ id: "c1", title: "Act 1" }, { id: "c2", title: " " }];
+  const items = [
+    { id: "s1", chapter_id: "c1", title: "a", done: true },
+    { id: "s2", chapter_id: "c2", title: "b", done: false },
+    { id: "s3", chapter_id: "gone", title: "c", done: true },
+  ];
+  const g = groupChecklist(chapters, items);
+  assert.deepEqual(g.map((x) => [x.id, x.title, x.done, x.total]), [["general", "General", 1, 1], ["c1", "Act 1", 1, 1], ["c2", "General", 0, 1]]);
+  assert.equal(firstOpenGroup(g), "c2");
+  assert.equal(firstOpenGroup(groupChecklist(chapters, items.map((s) => ({ ...s, done: true })))), null);
 }
 
 console.log("Self-check passed.");

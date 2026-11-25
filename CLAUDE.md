@@ -124,7 +124,21 @@ do not sync to the cloud or use Storage uploads.
   no gap. "+ New game" collapses the hero (`.hero-shell--exit`) and reveals the
   setup form below the carousel with a push-up entrance (`.setup--from-quick`).
   Sidebar + library are ungated for anon (Steam/profile controls stay `user`-only).
-- `lib/deep-link.js`: opt-in entry deep link (#67) `/?game=&platform=&igdb=&q=&rlog_item=&step=`. `parseDeepLink` validates/caps every param (no `<>`/control chars, platform via `platformLabelFor`, igdb digits only, offset by `IGDB_ID_OFFSET`); null without a valid `game`. The session-hydration effect in `page.tsx` matches a room by `catalog_game_id` then name+platform, else starts an unsaved one, prefills the composer with `q` (never submits) and strips the params. `rlog_item`/`step` are parsed but not stored yet (Phase 2). No UI.
+- **RLog bridge (#71):** `lib/rlog-bridge.js` (pure, tested in `npm run check` with a fake secret
+  + mocked fetch) behind `GET /api/rlog/playing`, `GET /api/rlog/checklist?igdb=&game=&platform=`
+  and `POST /api/rlog/checklist` (`lib/rlog-route.ts` verifies the Bearer token with Supabase Auth).
+  Proxies RLog `/api/integration/*` with `RLOG_BRIDGE_SECRET` + `X-Rlog-User-Email` = the session's
+  email only when `email_confirmed_at` is set (Steam synthetic emails excluded). Every not-matched case
+  (signed out, unverified, bridge unset, RLog 401/404, room's game not playing) returns the same 200
+  `{ matched: false }`; upstream errors 502; bad input 400. Room → RLog game: `igdb_id`, else
+  `normGameKey` + platform label (`matchPlayingGame`, also used client-side to skip calls for
+  unmatched rooms). Client `app/chat/use-rlog.tsx` (`useRlogPlaying`, `useRlogChecklist`: one store
+  per room, optimistic toggles serialized per step, rollback + "Couldn't update. Try again.",
+  sessionStorage cache for SWR/offline read-only). UI: home **Currently playing** strip above Jump
+  back in (`home-setup.tsx`), game-card Checklist button + kebab item, `app/chat/checklist-panel.tsx`
+  (pane in the Saved answers shell, history entry `{ gggChecklist: true }`, mutually exclusive with
+  Saved/Maps) and the deep-link `step=` banner ("Mark done in RLog"). Unmatched users see nothing.
+- `lib/deep-link.js`: opt-in entry deep link (#67) `/?game=&platform=&igdb=&q=&rlog_item=&step=`. `parseDeepLink` validates/caps every param (no `<>`/control chars, platform via `platformLabelFor`, igdb digits only, offset by `IGDB_ID_OFFSET`); null without a valid `game`. The session-hydration effect in `page.tsx` matches a room by `catalog_game_id` then name+platform, else starts an unsaved one, prefills the composer with `q` (never submits) and strips the params. `step` drives the RLog "Mark done in RLog" banner (#71, `rlogStep` in `page.tsx`); `rlog_item` is parsed but unused.
 - `app/platform-select.tsx`: custom themed, searchable, keyboard-accessible
   platform combobox. Delegates filtering to `lib/platforms.js`.
 - `lib/platforms.js`: owns the `PLATFORMS` list and `matchPlatforms(query)`, a
@@ -922,6 +936,11 @@ Server-only secrets (never expose via `NEXT_PUBLIC_`, never commit `.env.local`)
   keep their old index. Guide file upload/remove (`/api/guide-upload`) returns 503 without it.
   Safe to deploy without it (uploads disabled). Also the only writer of `public.vgmaps_cache`; without it the
   VGMaps cache is per-instance memory only.
+
+- `RLOG_BRIDGE_SECRET` (optional, server-only; NEVER `NEXT_PUBLIC_`, never logged). Shared
+  secret for the RLog bridge (#71); identical to RLog's. `RLOG_BASE_URL` (optional, default
+  `https://r-log.vercel.app`, https only). Unset = every `/api/rlog/*` answers `{ matched: false }`
+  and no RLog UI renders.
 
 Public client vars (safe to expose; protected by RLS), optional — enable
 accounts, saved chats, and the search cache:
