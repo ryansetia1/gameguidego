@@ -16,7 +16,7 @@ import { MapsPanel } from "./chat/maps-panel";
 import { MapViewer, type MapViewerItem } from "./chat/map-viewer";
 import { SavedAnswersPanel } from "./chat/saved-answers-panel";
 import { type SavedAnswer, useSavedAnswers } from "./chat/use-saved-answers";
-import { type SavedMap, useSavedMaps } from "./chat/use-saved-maps";
+import { type MapDownloadProgress, type SavedMap, useSavedMaps } from "./chat/use-saved-maps";
 import { TopicList } from "./chat/topic-list";
 import { TopicTitleTypewriter } from "./chat/topic-title-typewriter";
 import { PromptDialog, usePromptDialog } from "./chat/use-prompt-dialog";
@@ -71,7 +71,12 @@ import { loadVisualAuto } from "@/lib/visual-search-prefs.js";
 import { consumeAnonSaveHint, isSavableReply } from "@/lib/saved-answers.js";
 import { chatBackPopsHistory, savedPopAction, type SavedEntry } from "@/lib/saved-history.js";
 import { mapProxyUrl, readCachedMapBlob } from "@/lib/map-blob-cache.js";
-import { mapsPopAction, type MapsHistoryEntry } from "@/lib/maps-panel.js";
+import { mapSaveToastMessage } from "@/lib/map-viewport.js";
+import {
+  isMapOverLimit,
+  mapsPopAction,
+  type MapsHistoryEntry,
+} from "@/lib/maps-panel.js";
 import type { VGMapsGameEntry, VGMapsMapLink } from "@/lib/vgmaps-parser.js";
 import { groupChatsByRoom, isTopicColumnDbError, mergeChatsFromServer, normGameKey, syncRoomSharedMeta, syncSharedMetaToLocalGames, topicsForRoom, gameRoomKey, upsertChatInList } from "@/lib/game-room.js";
 import {
@@ -173,6 +178,7 @@ let currentEntry: AppHistoryEntry =
   typeof window === "undefined" ? null : (window.history.state as AppHistoryEntry);
 let savedListDepth = 0;
 let mapsPanelDepth = 0;
+let mapsPickerDepth = 0;
 let mapViewerDepth = 0;
 
 function pushAppHistory(state: Record<string, unknown>) {
@@ -318,6 +324,13 @@ export default function Home() {
   const [mapsPaneGame, setMapsPaneGame] = useState("");
   const [mapsPanePlatform, setMapsPanePlatform] = useState("");
   const [mapsCacheVersion, setMapsCacheVersion] = useState(0);
+  // "Wrong game?" picker: an in-panel view with its own history entry.
+  const [mapsPickerOpen, setMapsPickerOpen] = useState(false);
+  const mapsPickerOpenRef = useRef(false);
+  // Running map saves keyed by image URL. Page-level so Back / closing the panel or the
+  // viewer never stops one; the row and the viewer both read it.
+  const [mapSaves, setMapSaves] = useState<Record<string, MapDownloadProgress>>({});
+  const mapSavesStartedRef = useRef(new Set<string>());
   type ViewingMapState = {
     item: MapViewerItem;
     game: string;
@@ -626,11 +639,17 @@ export default function Home() {
     setMapsCacheVersion((v) => v + 1);
   }, []);
 
+  const closeMapsPickerState = useCallback(() => {
+    mapsPickerOpenRef.current = false;
+    setMapsPickerOpen(false);
+  }, []);
+
   const closeMapsState = useCallback(() => {
     mapsPanelOpenRef.current = false;
     setMapsPanelOpen(false);
+    closeMapsPickerState();
     if (viewingMapRef.current) closeMapViewerState();
-  }, [closeMapViewerState]);
+  }, [closeMapViewerState, closeMapsPickerState]);
 
   useEffect(() => {
     /** Pane-aware back/forward; decision tables live in lib/maps-panel.js & lib/saved-history.js. */
@@ -644,16 +663,22 @@ export default function Home() {
 
       const mapsAction = mapsPopAction({
         panelOpen: mapsPanelOpenRef.current,
+        pickerOpen: mapsPickerOpenRef.current,
         viewerOpen: viewingMapRef.current !== null,
         depth,
         prevDepth,
         panelDepth: mapsPanelDepth,
+        pickerDepth: mapsPickerDepth,
         viewerDepth: mapViewerDepth,
         left,
         landing: state,
       });
       if (mapsAction.type === "close-viewer") {
         closeMapViewerState();
+        return;
+      }
+      if (mapsAction.type === "close-picker") {
+        closeMapsPickerState();
         return;
       }
       if (mapsAction.type === "close-panel") {
@@ -778,6 +803,7 @@ export default function Home() {
     newGameOpen,
     editingGame,
     closeMapViewerState,
+    closeMapsPickerState,
     closeMapsState,
   ]);
 
@@ -1998,17 +2024,104 @@ export default function Home() {
     mapsPanelDepth = historyDepth;
   }
 
+  /** X / Esc: close the whole panel, popping its entries (panel, picker, viewer) at once. */
   function closeMapsPanel() {
     const tag = (window.history.state as MapsHistoryEntry)?.gggMaps;
-    if (tag === "panel") {
-      window.history.back();
-      return;
-    }
-    if (tag === "viewer") {
-      window.history.go(-2);
+    if (tag && mapsPanelDepth > 0 && historyDepth >= mapsPanelDepth) {
+      window.history.go(mapsPanelDepth - 1 - historyDepth);
       return;
     }
     closeMapsState();
+  }
+
+  function openMapsPicker() {
+    if (mapsPickerOpenRef.current) return;
+    mapsPickerOpenRef.current = true;
+    setMapsPickerOpen(true);
+    pushAppHistory({ gggOverlay: true, gggMaps: "picker" });
+    mapsPickerDepth = historyDepth;
+  }
+
+  const closeMapsPicker = useCallback(() => {
+    if (!mapsPickerOpenRef.current) return;
+    if ((window.history.state as MapsHistoryEntry)?.gggMaps === "picker") {
+      window.history.back();
+      return;
+    }
+    closeMapsPickerState();
+  }, [closeMapsPickerState]);
+
+  /**
+   * Save the open map to this device. Runs page-level: the download keeps going after
+   * Back or closing the panel, the row and the viewer show "Saving N%", and the result
+   * toasts wherever the player is (inside the viewer while it is open).
+   */
+  async function saveMapFromViewer(target: ViewingMapState, blob: Blob | null) {
+    const { gameEntry, mapLink } = target;
+    if (!gameEntry || !mapLink) return;
+    const url = mapLink.imageUrl;
+    // A ref, not `mapSaves`: a double tap lands before the state re-renders.
+    if (mapSavesStartedRef.current.has(url)) return;
+    mapSavesStartedRef.current.add(url);
+    setMapSaves((prev) => ({ ...prev, [url]: { loaded: 0, total: mapLink.fileSizeBytes ?? null } }));
+    // Progress re-renders the page, so it lands in 5% steps and at most 4 times a second;
+    // a large map stays smooth to pan while it saves.
+    let lastPct = -1;
+    let lastAt = 0;
+    let result: Awaited<ReturnType<typeof savedMaps.saveMap>>;
+    try {
+      result = await savedMaps.saveMap({
+        game: target.game,
+        platform: target.platform,
+        gameEntry,
+        mapLink,
+        blob,
+        onProgress: (progress) => {
+          const pct = progress.total ? Math.floor((progress.loaded / progress.total) * 100) : -1;
+          const now = performance.now();
+          if (pct === lastPct) return;
+          if (pct < 100 && (pct - lastPct < 5 || now - lastAt < 250)) return;
+          lastPct = pct;
+          lastAt = now;
+          setMapSaves((prev) => (prev[url] ? { ...prev, [url]: progress } : prev));
+        },
+      });
+    } catch {
+      result = { status: "error" };
+    } finally {
+      // Always release the row, or it would read "Saving…" for the rest of the session.
+      mapSavesStartedRef.current.delete(url);
+      setMapSaves((prev) => {
+        const next = { ...prev };
+        delete next[url];
+        return next;
+      });
+    }
+    setMapsCacheVersion((v) => v + 1);
+    if (result.status === "saved") {
+      const item = result.item;
+      showActionToast("Saved on this device.", "Undo", () => {
+        void savedMaps.removeMap(item).then(() => setMapsCacheVersion((v) => v + 1));
+      });
+      return;
+    }
+    if (result.status === "aborted") {
+      showPlainToast("Canceled.");
+      return;
+    }
+    if (result.status === "unlisted") {
+      showPlainToast("This map is no longer on VGMaps.");
+      return;
+    }
+    showPlainToast(mapSaveToastMessage(result.status) ?? "Couldn't save. Check your connection.");
+  }
+
+  function showPlainToast(message: string) {
+    setToastOpensJournal(false);
+    setToastAction(null);
+    pendingMapUndoGenerationRef.current += 1;
+    pendingMapUndoRef.current = null;
+    setToast(message);
   }
 
   function openSavedMapInViewer(item: SavedMap) {
@@ -2051,6 +2164,7 @@ export default function Home() {
         lastZoom: saved?.lastZoom,
         lastOffsetX: saved?.lastOffsetX,
         lastOffsetY: saved?.lastOffsetY,
+        overLimit: isMapOverLimit(mapLink),
       },
       game: mapsPaneGame || game,
       platform: mapsPanePlatform || platform,
@@ -2780,6 +2894,7 @@ export default function Home() {
     messages.length > 0 ||
     Boolean(activeChatId && game.trim()) ||
     editingGame;
+  const savedMapsCount = savedMaps.forGame(game).length;
   unsavedSetupRef.current = { started, editingGame, preferredUrls, game, platform, cover, user };
 
   const handlePreferredUrlsChange = useCallback(
@@ -2960,7 +3075,7 @@ export default function Home() {
       onJourneyToast={showJournalToast}
       savedCount={savedAnswers.forGame(game).length}
       onOpenSaved={game.trim() ? openSavedAnswers : undefined}
-      savedMapsCount={savedMaps.forGame(game).length}
+      savedMapsCount={savedMapsCount}
       onOpenMaps={game.trim() ? openMapsPanel : undefined}
     />
   );
@@ -2977,6 +3092,58 @@ export default function Home() {
         lastOffsetY: liveViewingSaved?.lastOffsetY ?? viewingMap.item.lastOffsetY,
       }
     : null;
+
+  // The page toast. While the map viewer (a top-layer <dialog>) is open it renders inside it.
+  const snackbar = toast ? (
+    <div
+      className={`snackbar${toastOpensJournal ? " snackbar-action" : ""}${toastAction?.message === toast ? " snackbar-with-btn" : ""}`}
+      role="status"
+      aria-live="polite"
+      tabIndex={toastOpensJournal ? 0 : undefined}
+      onClick={
+        toastOpensJournal
+          ? () => {
+              setJourneyExpanded(true);
+              pendingMapUndoGenerationRef.current += 1;
+              pendingMapUndoRef.current = null;
+              setToast("");
+              setToastOpensJournal(false);
+            }
+          : undefined
+      }
+      onKeyDown={
+        toastOpensJournal
+          ? (event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              setJourneyExpanded(true);
+              pendingMapUndoGenerationRef.current += 1;
+              pendingMapUndoRef.current = null;
+              setToast("");
+              setToastOpensJournal(false);
+            }
+          : undefined
+      }
+    >
+      {toast}
+      {toastAction?.message === toast && (
+        <button
+          type="button"
+          className="snackbar-btn"
+          onClick={() => {
+            const { run } = toastAction;
+            pendingMapUndoGenerationRef.current += 1;
+            pendingMapUndoRef.current = null;
+            setToast("");
+            setToastAction(null);
+            run();
+          }}
+        >
+          {toastAction.label}
+        </button>
+      )}
+    </div>
+  ) : null;
 
   const sidePaneInert =
     sidebarOpen ||
@@ -3179,6 +3346,21 @@ export default function Home() {
               </small>
             ) : null}
           </div>
+          {game.trim() && (
+            <button
+              type="button"
+              className="sticky-maps"
+              aria-label={savedMapsCount > 0 ? `Maps, ${savedMapsCount} saved` : "Maps"}
+              onClick={(event) => {
+                event.stopPropagation();
+                openMapsPanel();
+              }}
+              // The bar itself scrolls to top on Enter/Space; keep keys on this button.
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              Maps
+            </button>
+          )}
           {activeChatId && !temporary && (
             <button
               type="button"
@@ -3333,6 +3515,8 @@ export default function Home() {
           const composer = (
         <ComposerShell
           started={started}
+          onOpenMaps={started && game.trim() && !editingGame ? openMapsPanel : undefined}
+          mapsCount={savedMapsCount}
           temporary={temporary}
           spoilerMajor={spoilerPrefs.major}
           inlineEdit={editingIndex !== null}
@@ -3476,56 +3660,7 @@ export default function Home() {
         />
       )}
 
-      {toast && (
-        <div
-          className={`snackbar${toastOpensJournal ? " snackbar-action" : ""}${toastAction?.message === toast ? " snackbar-with-btn" : ""}`}
-          role="status"
-          aria-live="polite"
-          tabIndex={toastOpensJournal ? 0 : undefined}
-          onClick={
-            toastOpensJournal
-              ? () => {
-                  setJourneyExpanded(true);
-                  pendingMapUndoGenerationRef.current += 1;
-                  pendingMapUndoRef.current = null;
-                  setToast("");
-                  setToastOpensJournal(false);
-                }
-              : undefined
-          }
-          onKeyDown={
-            toastOpensJournal
-              ? (event) => {
-                  if (event.key !== "Enter" && event.key !== " ") return;
-                  event.preventDefault();
-                  setJourneyExpanded(true);
-                  pendingMapUndoGenerationRef.current += 1;
-                  pendingMapUndoRef.current = null;
-                  setToast("");
-                  setToastOpensJournal(false);
-                }
-              : undefined
-          }
-        >
-          {toast}
-          {toastAction?.message === toast && (
-            <button
-              type="button"
-              className="snackbar-btn"
-              onClick={() => {
-                const { run } = toastAction;
-                pendingMapUndoGenerationRef.current += 1;
-                pendingMapUndoRef.current = null;
-                setToast("");
-                setToastAction(null);
-                run();
-              }}
-            >
-              {toastAction.label}
-            </button>
-          )}
-        </div>
-      )}
+      {!viewingMap && snackbar}
     </main>
       {savedOpen && (
         <SavedAnswersPanel
@@ -3559,19 +3694,14 @@ export default function Home() {
           syncFailed={savedMaps.syncFailed}
           syncAvailable={savedMaps.syncAvailable}
           findSaved={savedMaps.findSaved}
-          isDownloading={savedMaps.isDownloading}
-          onSaveMap={savedMaps.saveMap}
-          onCancelDownload={savedMaps.cancelDownload}
+          saveProgress={mapSaves}
+          onCancelSave={savedMaps.cancelDownload}
+          pickerOpen={mapsPickerOpen}
+          onOpenPicker={openMapsPicker}
+          onClosePicker={closeMapsPicker}
           onOpenSavedMap={openSavedMapInViewer}
           onOpenFindMap={openFindMapInViewer}
           onRemoveSavedMap={(item) => void removeSavedMapWithUndo(item)}
-          onToast={(message) => {
-            setToastOpensJournal(false);
-            setToastAction(null);
-            pendingMapUndoGenerationRef.current += 1;
-            pendingMapUndoRef.current = null;
-            setToast(message);
-          }}
           onClose={closeMapsPanel}
         />
       )}
@@ -3581,21 +3711,17 @@ export default function Home() {
         isSaved={Boolean(liveViewingSaved)}
         openMap={savedMaps.openMap}
         cancelDownload={savedMaps.cancelDownload}
+        saveProgress={viewingMap ? (mapSaves[viewingMap.item.imageUrl] ?? null) : null}
         onSave={
           viewingMap?.gameEntry && viewingMap?.mapLink
-            ? (onProgress) =>
-                savedMaps.saveMap({
-                  game: viewingMap.game,
-                  platform: viewingMap.platform,
-                  gameEntry: viewingMap.gameEntry!,
-                  mapLink: viewingMap.mapLink!,
-                  onProgress,
-                })
+            ? (blob) => void saveMapFromViewer(viewingMap, blob)
             : undefined
         }
         onViewportChange={savedMaps.saveViewport}
         onClose={closeMapViewer}
-      />
+      >
+        {viewingMap ? snackbar : null}
+      </MapViewer>
     </div>
   );
 }

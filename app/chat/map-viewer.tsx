@@ -2,21 +2,16 @@
 
 import {
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useRef,
   useState,
 } from "react";
 
-import { IconX } from "../icons";
-import type {
-  MapDownloadProgress,
-  MapRef,
-  MapViewport,
-  OpenMapResult,
-  SaveMapResult,
-} from "./use-saved-maps";
+import type { MapDownloadProgress, MapRef, MapViewport, OpenMapResult } from "./use-saved-maps";
 import { MAX_MAP_BLOB_BYTES } from "@/lib/map-blob-cache.js";
+import { formatSavingText } from "@/lib/maps-panel.js";
 import {
   actualSizeScale,
   applyOverscrollResistance,
@@ -32,7 +27,6 @@ import {
   formatDimensionsLabel,
   formatMegabytes,
   formatZoomPercent,
-  mapSaveToastMessage,
   shouldRenderHdOverlay,
   wheelZoomFactor,
 } from "@/lib/map-viewport.js";
@@ -48,6 +42,8 @@ export type MapViewerItem = {
   lastZoom?: number;
   lastOffsetX?: number;
   lastOffsetY?: number;
+  /** Listed by VGMaps as over 30 MB: shown as a viewer state, never downloaded (#55 adds a fallback). */
+  overLimit?: boolean;
 };
 
 export type MapViewerProps = {
@@ -60,9 +56,14 @@ export type MapViewerProps = {
     onProgress?: (progress: MapDownloadProgress) => void,
   ) => Promise<OpenMapResult>;
   cancelDownload?: (map: MapRef) => void;
-  onSave?: (onProgress: (progress: MapDownloadProgress) => void) => Promise<SaveMapResult>;
+  /** Progress of this map's save; the save itself runs page-level and survives closing. */
+  saveProgress?: MapDownloadProgress | null;
+  /** Start saving with the image already on screen (absent when it can't be saved from here). */
+  onSave?: (blob: Blob | null) => void;
   onViewportChange?: (savedId: string, state: MapViewport) => void;
   onClose: () => void;
+  /** Rendered inside the dialog's top layer (the page toast while the viewer is open). */
+  children?: ReactNode;
 };
 
 type ViewerState =
@@ -70,6 +71,10 @@ type ViewerState =
   | { kind: "ready"; naturalW: number; naturalH: number }
   | { kind: "offline" }
   | { kind: "too_large" }
+  /** 404/400 from the proxy: VGMaps no longer lists this map. */
+  | { kind: "unlisted" }
+  /** Downloaded, but this device couldn't decode it (memory, corrupt file). */
+  | { kind: "decode_failed" }
   | { kind: "failed" };
 
 type DecodedAsset = {
@@ -96,8 +101,11 @@ const MAX_OVERSCROLL_PX = 24;
 const DOUBLE_TAP_WINDOW_MS = 300;
 const DOUBLE_TAP_MAX_DIST = 28;
 const TAP_MAX_DRAG = 10;
-const TOAST_MS = 4500;
 const CANVAS_BG = "#0e1112";
+
+// Unsaved maps keep their zoom/offset for this session (saved maps persist on the record).
+const sessionViewports = new Map<string, MapViewport>();
+const SESSION_VIEWPORTS_MAX = 50;
 
 // Session fallback when sessionStorage is unavailable (e.g. strict private browsing).
 let memoryPixelCrisp = false;
@@ -262,9 +270,11 @@ export function MapViewer({
   isSaved,
   openMap,
   cancelDownload,
+  saveProgress = null,
   onSave,
   onViewportChange,
   onClose,
+  children,
 }: MapViewerProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -282,9 +292,6 @@ export function MapViewer({
   const [pixelCrisp, setPixelCrisp] = useState<boolean>(() => readSessionPixelCrisp());
   const [isDragging, setIsDragging] = useState(false);
   const [zoomUi, setZoomUi] = useState({ percent: 100, atMin: true, atMax: false });
-  const [savingProgress, setSavingProgress] = useState<MapDownloadProgress | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
   const [retryToken, setRetryToken] = useState(0);
 
   // Hot mutable refs keep gesture & rAF rendering off React state (zero per-frame churn).
@@ -305,9 +312,10 @@ export function MapViewer({
   const animRafRef = useRef<number | null>(null);
   const hdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wheelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const loadGenRef = useRef(0);
+  // The downloaded image of the open map, handed to Save so it isn't fetched twice.
+  const blobRef = useRef<Blob | null>(null);
 
   // Keep latest callbacks/props readable from imperative event handlers without re-binding.
   const mapRef = useRef(map);
@@ -338,15 +346,6 @@ export function MapViewer({
   useEffect(() => {
     pixelCrispRef.current = pixelCrisp;
   }, [pixelCrisp]);
-
-  const showToast = useCallback((message: string) => {
-    setToast(message);
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = setTimeout(() => {
-      toastTimerRef.current = null;
-      setToast(null);
-    }, TOAST_MS);
-  }, []);
 
   const getVisibleBox = useCallback(() => {
     const vp = viewportRef.current;
@@ -385,13 +384,23 @@ export function MapViewer({
 
   const persistViewport = useCallback(() => {
     const currentMap = mapRef.current;
-    if (!isSavedRef.current || !currentMap?.savedId || !onViewportChangeRef.current) return;
+    if (!currentMap || !assetRef.current) return;
     const { scale, offset } = transformRef.current;
-    onViewportChangeRef.current(currentMap.savedId, {
+    const state = {
       lastZoom: scale,
       lastOffsetX: Math.round(offset.x * 100) / 100,
       lastOffsetY: Math.round(offset.y * 100) / 100,
-    });
+    };
+    if (isSavedRef.current && currentMap.savedId && onViewportChangeRef.current) {
+      onViewportChangeRef.current(currentMap.savedId, state);
+    } else {
+      sessionViewports.delete(currentMap.imageUrl);
+      sessionViewports.set(currentMap.imageUrl, state);
+      // Oldest first (insertion order): keep the session memory bounded.
+      if (sessionViewports.size > SESSION_VIEWPORTS_MAX) {
+        sessionViewports.delete(sessionViewports.keys().next().value as string);
+      }
+    }
   }, []);
 
   const renderNow = useCallback(
@@ -629,10 +638,10 @@ export function MapViewer({
       if (rafRef.current !== null) window.cancelAnimationFrame(rafRef.current);
       if (hdTimerRef.current) clearTimeout(hdTimerRef.current);
       if (wheelTimerRef.current) clearTimeout(wheelTimerRef.current);
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
       abortRef.current?.abort();
       disposeAsset(assetRef.current);
       assetRef.current = null;
+      blobRef.current = null;
     };
   }, [cancelAnimation]);
 
@@ -658,18 +667,12 @@ export function MapViewer({
     hadMultiTouchRef.current = false;
     interactingRef.current = false;
     setIsDragging(false);
-    setSavingProgress(null);
-    setIsSaving(false);
-    if (toastTimerRef.current) {
-      clearTimeout(toastTimerRef.current);
-      toastTimerRef.current = null;
-    }
-    setToast(null);
 
     abortRef.current?.abort();
     abortRef.current = null;
     disposeAsset(assetRef.current);
     assetRef.current = null;
+    blobRef.current = null;
 
     if (!mapImageUrl || !mapSourceUrl || !currentMap) {
       if (canvasRef.current) {
@@ -682,10 +685,16 @@ export function MapViewer({
     // Clear previous map pixels immediately before showing the next map's loading/status overlay.
     renderNow(false);
 
+    if (currentMap.overLimit) {
+      setViewerState({ kind: "too_large" });
+      return;
+    }
+
     const controller = new AbortController();
     abortRef.current = controller;
     let active = true;
     let openedUrl: string | null = null;
+    let decoding = false;
     let isBig = false;
     let latestProgress: MapDownloadProgress | null = null;
     let lastEmitAt = 0;
@@ -734,6 +743,7 @@ export function MapViewer({
           if (res.status === "aborted") return;
           if (res.status === "offline") setViewerState({ kind: "offline" });
           else if (res.status === "too_large") setViewerState({ kind: "too_large" });
+          else if (res.status === "unlisted") setViewerState({ kind: "unlisted" });
           else setViewerState({ kind: "failed" });
           return;
         }
@@ -751,7 +761,9 @@ export function MapViewer({
           prev.kind === "loading" ? { ...prev, phase: "preparing", progress: null } : prev,
         );
 
+        decoding = true;
         const asset = await decodeMapAsset(res.blob, openedUrl);
+        if (loadGenRef.current === gen && !res.fromCache) blobRef.current = res.blob;
         openedUrl = null; // Asset owns or already revoked it.
 
         if (!active || loadGenRef.current !== gen) {
@@ -766,11 +778,17 @@ export function MapViewer({
         const { visibleW, visibleH } = getVisibleBox();
         const maxZoom = calculateMapMaxZoom(asset.naturalW, asset.naturalH, visibleW, visibleH);
         const latestMap = mapRef.current;
-        if (isSavedRef.current && latestMap) {
+        const restored =
+          latestMap && isSavedRef.current
+            ? latestMap
+            : latestMap
+              ? sessionViewports.get(latestMap.imageUrl)
+              : undefined;
+        if (restored) {
           transformRef.current = clampRestoredViewport({
-            lastZoom: latestMap.lastZoom,
-            lastOffsetX: latestMap.lastOffsetX,
-            lastOffsetY: latestMap.lastOffsetY,
+            lastZoom: restored.lastZoom,
+            lastOffsetX: restored.lastOffsetX,
+            lastOffsetY: restored.lastOffsetY,
             naturalW: asset.naturalW,
             naturalH: asset.naturalH,
             visibleW,
@@ -792,7 +810,7 @@ export function MapViewer({
         }
         if (!active || loadGenRef.current !== gen) return;
         if ((err as { name?: string })?.name === "AbortError") return;
-        setViewerState({ kind: looksLikeMemoryDecodeError(err) ? "too_large" : "failed" });
+        setViewerState({ kind: decoding || looksLikeMemoryDecodeError(err) ? "decode_failed" : "failed" });
       }
     };
 
@@ -951,48 +969,11 @@ export function MapViewer({
     onCloseRef.current();
   }, []);
 
-  const handleSaveOffline = useCallback(async () => {
-    if (!onSave || isSaving || isSavedRef.current) return;
-    const gen = loadGenRef.current;
-    let lastEmitAt = 0;
-    let lastPercent: number | null = null;
-    setIsSaving(true);
-    setSavingProgress({ loaded: 0, total: null });
-    try {
-      const res = await onSave((progress) => {
-        if (loadGenRef.current !== gen) return;
-        const pct =
-          progress.total && progress.total > 0
-            ? Math.min(100, Math.round((progress.loaded / progress.total) * 100))
-            : null;
-        const now = performance.now();
-        if (pct !== 100 && (pct === lastPercent || now - lastEmitAt < 100)) return;
-        lastEmitAt = now;
-        lastPercent = pct;
-        setSavingProgress(progress);
-      });
-      if (loadGenRef.current !== gen) return;
-      if (res.status === "saved") {
-        // Persist current pan/zoom immediately onto the newly created saved record.
-        if (assetRef.current && onViewportChangeRef.current) {
-          const { scale, offset } = transformRef.current;
-          onViewportChangeRef.current(res.item.id, {
-            lastZoom: scale,
-            lastOffsetX: Math.round(offset.x * 100) / 100,
-            lastOffsetY: Math.round(offset.y * 100) / 100,
-          });
-        }
-      } else {
-        const msg = mapSaveToastMessage(res.status);
-        if (msg) showToast(msg);
-      }
-    } finally {
-      if (loadGenRef.current === gen) {
-        setIsSaving(false);
-        setSavingProgress(null);
-      }
-    }
-  }, [isSaving, onSave, showToast]);
+  // Right after a save lands, keep the current pan/zoom on the new saved record.
+  const savedId = map?.savedId ?? null;
+  useEffect(() => {
+    if (savedId && isSaved && assetRef.current) persistViewport();
+  }, [savedId, isSaved, persistViewport]);
 
   // Wheel / trackpad pinch zoom (non-passive so scrolling is prevented).
   useEffect(() => {
@@ -1299,11 +1280,7 @@ export function MapViewer({
     viewerState.kind === "ready"
       ? formatDimensionsLabel(viewerState.naturalW, viewerState.naturalH)
       : formatDimensionsLabel(map.width, map.height, map.dimensions);
-
-  const savePercent =
-    savingProgress && savingProgress.total && savingProgress.total > 0
-      ? Math.min(100, Math.round((savingProgress.loaded / savingProgress.total) * 100))
-      : null;
+  const metaLine = [metaDimensions, isReady ? `${zoomUi.percent}%` : ""].filter(Boolean).join(" · ");
 
   const loadPercent =
     viewerState.kind === "loading" &&
@@ -1312,6 +1289,34 @@ export function MapViewer({
     viewerState.progress.total > 0
       ? Math.min(100, Math.round((viewerState.progress.loaded / viewerState.progress.total) * 100))
       : null;
+
+  const backButton = (
+    <button type="button" className="map-viewer-status-btn" onClick={handleClose}>
+      ‹ Maps
+    </button>
+  );
+
+  let saveSlot: ReactNode = null;
+  if (isSaved) {
+    saveSlot = <span className="map-viewer-saved">Saved</span>;
+  } else if (saveProgress) {
+    saveSlot = (
+      <span className="map-viewer-saved" role="status">
+        {formatSavingText(saveProgress)}
+      </span>
+    );
+  } else if (viewerState.kind === "too_large") {
+    saveSlot = <span className="map-viewer-save-reason">Over 30 MB</span>;
+  } else if ((online || blobRef.current) && onSave && viewerState.kind === "ready") {
+    saveSlot = (
+      <button type="button" className="map-viewer-save" onClick={() => onSave(blobRef.current)}>
+        <span className="map-viewer-save-long">Save offline</span>
+        <span className="map-viewer-save-short" aria-hidden="true">
+          Save
+        </span>
+      </button>
+    );
+  }
 
   return (
     <dialog
@@ -1341,29 +1346,21 @@ export function MapViewer({
           type="button"
           className="map-viewer-close"
           onClick={handleClose}
-          aria-label="Close map"
+          aria-label="Back to maps"
         >
-          <IconX size={20} />
+          ‹ Maps
         </button>
 
         <div className="map-viewer-title-block">
           <div className="map-viewer-title">{map.title}</div>
-          {metaDimensions && <div className="map-viewer-meta">{metaDimensions}</div>}
+          {metaLine && <div className="map-viewer-meta">{metaLine}</div>}
+          {/* Announce the zoom only (it updates once a gesture settles), not W × H each time. */}
+          <span className="visually-hidden" aria-live="polite">
+            {isReady ? `Zoom ${zoomUi.percent}%` : ""}
+          </span>
         </div>
 
-        <div className="map-viewer-save-slot">
-          {isSaved ? (
-            <span className="map-viewer-saved">Saved</span>
-          ) : isSaving ? (
-            <button type="button" className="map-viewer-save is-saving" disabled>
-              {savePercent !== null ? `Saving ${savePercent}%` : "Saving…"}
-            </button>
-          ) : online && onSave && viewerState.kind !== "too_large" ? (
-            <button type="button" className="map-viewer-save" onClick={handleSaveOffline}>
-              Save offline
-            </button>
-          ) : null}
-        </div>
+        <div className="map-viewer-save-slot">{saveSlot}</div>
       </header>
 
       {viewerState.kind === "loading" && (
@@ -1388,7 +1385,7 @@ export function MapViewer({
               <div className="map-viewer-progress" aria-hidden="true">
                 <div
                   className="map-viewer-progress-fill"
-                  style={{ width: `${loadPercent ?? 25}%` }}
+                  style={{ transform: `scaleX(${(loadPercent ?? 25) / 100})` }}
                 />
               </div>
               <div className="map-viewer-status-actions">
@@ -1401,47 +1398,31 @@ export function MapViewer({
         </div>
       )}
 
-      {viewerState.kind === "offline" && (
+      {viewerState.kind !== "loading" && viewerState.kind !== "ready" && (
         <div className="map-viewer-status" role="status">
           <div className="map-viewer-status-block">
-            <p className="map-viewer-status-text">You&apos;re offline and this map isn&apos;t saved.</p>
+            <p className="map-viewer-status-text">
+              {viewerState.kind === "offline"
+                ? "You're offline and this map isn't saved."
+                : viewerState.kind === "too_large"
+                  ? "This map is too large to open here (over 30 MB)."
+                  : viewerState.kind === "unlisted"
+                    ? "This map is no longer on VGMaps."
+                    : viewerState.kind === "decode_failed"
+                      ? "This device couldn't open this map."
+                      : "Couldn't open this map."}
+            </p>
             <div className="map-viewer-status-actions">
-              <button type="button" className="map-viewer-status-btn" onClick={handleClose}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {viewerState.kind === "too_large" && (
-        <div className="map-viewer-status" role="status">
-          <div className="map-viewer-status-block">
-            <p className="map-viewer-status-text">This map is too large to open here (over 30 MB).</p>
-            <div className="map-viewer-status-actions">
-              <button type="button" className="map-viewer-status-btn" onClick={handleClose}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {viewerState.kind === "failed" && (
-        <div className="map-viewer-status" role="status">
-          <div className="map-viewer-status-block">
-            <p className="map-viewer-status-text">Couldn&apos;t open this map.</p>
-            <div className="map-viewer-status-actions">
-              <button
-                type="button"
-                className="map-viewer-status-btn"
-                onClick={() => setRetryToken((n) => n + 1)}
-              >
-                Try again
-              </button>
-              <button type="button" className="map-viewer-status-btn" onClick={handleClose}>
-                Close
-              </button>
+              {viewerState.kind === "failed" && (
+                <button
+                  type="button"
+                  className="map-viewer-status-btn"
+                  onClick={() => setRetryToken((n) => n + 1)}
+                >
+                  Try again
+                </button>
+              )}
+              {backButton}
             </div>
           </div>
         </div>
@@ -1457,9 +1438,6 @@ export function MapViewer({
         >
           −
         </button>
-        <span className="map-viewer-readout" role="status" aria-live="polite">
-          {isReady ? `${zoomUi.percent}%` : "—"}
-        </span>
         <button
           type="button"
           className="map-viewer-zoom-btn"
@@ -1498,16 +1476,7 @@ export function MapViewer({
         </button>
       </div>
 
-      {toast && (
-        <div
-          className="snackbar map-viewer-toast"
-          role="status"
-          aria-live="polite"
-          onClick={() => setToast(null)}
-        >
-          {toast}
-        </div>
-      )}
+      {children}
     </dialog>
   );
 }

@@ -273,6 +273,8 @@ export function useSavedMaps(user: User | null) {
       gameEntry: Pick<VGMapsGameEntry, "url">;
       mapLink: VGMapsMapLink;
       onProgress?: (progress: MapDownloadProgress) => void;
+      /** The image already downloaded by the viewer; saves it without a second download. */
+      blob?: Blob | null;
     }): Promise<SaveMapResult> => {
       const item = buildSavedMap({
         owner,
@@ -300,7 +302,7 @@ export function useSavedMaps(user: User | null) {
               const saved = findSavedMap(added.items, owner, input.game, item.imageUrl) as SavedMap;
               return { saved: true, out: { status: "saved", item: saved } };
             },
-            { onProgress: input.onProgress },
+            { onProgress: input.onProgress, blob: input.blob },
           ),
         );
         if (result.saved) {

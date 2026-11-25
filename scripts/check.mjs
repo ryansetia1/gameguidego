@@ -5191,12 +5191,6 @@ if (!canRunTsChecks) {
   const mp = await import("../lib/maps-panel.js");
   const sm = await import("../lib/saved-maps.js");
 
-  // Default tab selection + in-memory last-used tab preference.
-  assert.equal(mp.defaultMapsTab(0), "find", "0 saved maps defaults to Find");
-  assert.equal(mp.defaultMapsTab(2), "saved", ">0 saved maps defaults to Saved");
-  assert.equal(mp.defaultMapsTab(2, "find"), "find", "remembered Find tab wins over count");
-  assert.equal(mp.defaultMapsTab(0, "saved"), "saved", "remembered Saved tab wins");
-
   // Prefilled query + parsing for /api/maps/search.
   assert.equal(mp.defaultMapsQuery("Chrono Trigger", "SNES"), "Chrono Trigger SNES");
   assert.equal(mp.defaultMapsQuery("Chrono Trigger", ""), "Chrono Trigger");
@@ -5249,12 +5243,118 @@ if (!canRunTsChecks) {
       format: "PNG",
       author: "Rick",
     }),
-    "4096 × 3072 · 5.2 MB · PNG · Rick",
+    "4096 × 3072 · 5.2 MB · Rick",
   );
   assert.equal(
     mp.formatFindMapMeta({ dimensions: "", fileSize: "1.1 MB", format: "GIF", author: "" }),
-    "1.1 MB · GIF",
+    "1.1 MB",
   );
+  assert.equal(
+    mp.formatFindMapMeta({ width: 2048, height: 2048, fileSize: "5.2 MB", author: "" }, { saved: true }),
+    "2048 × 2048 · 5.2 MB · On this device",
+    "a saved VGMaps row ends its meta with On this device",
+  );
+
+  // Filter (#56): name / area / author, case-insensitive, both sections, "N of M maps".
+  {
+    const saved = [
+      { title: "Dark World", author: "Rick" },
+      { title: "Dungeon 3", author: "Peter" },
+    ];
+    const vgmaps = [
+      { mapName: "Overworld (Light World)", author: "Rick" },
+      { mapName: "Palace of Darkness", author: "Sam" },
+      { mapName: "Tower", area: "Death Mountain", author: "" },
+    ];
+    assert.equal(mp.mapMatchesFilter({ title: "Dark World" }, "dark"), true, "name match ignores case");
+    assert.equal(mp.mapMatchesFilter({ mapName: "Tower", area: "Death Mountain" }, "mountain"), true, "area match");
+    assert.equal(mp.mapMatchesFilter({ mapName: "Tower", author: "Rick" }, "RICK"), true, "author match");
+    assert.equal(mp.mapMatchesFilter({ mapName: "Tower" }, "  "), true, "blank query matches all");
+    assert.equal(mp.mapMatchesFilter({ mapName: "Tower" }, "dark"), false);
+    const all = mp.filterMapsSections({ saved, vgmaps, query: "" });
+    assert.equal(all.filtering, false);
+    assert.equal(all.countText, "", "no count line while not filtering");
+    assert.equal(all.shown, 5);
+    const dark = mp.filterMapsSections({ saved, vgmaps, query: "dark" });
+    assert.deepEqual(dark.saved.map((m) => m.title), ["Dark World"], "filter narrows Saved");
+    assert.deepEqual(dark.vgmaps.map((m) => m.mapName), ["Palace of Darkness"], "filter narrows On VGMaps");
+    assert.equal(dark.countText, "2 of 5 maps");
+    const rick = mp.filterMapsSections({ saved, vgmaps, query: "rick" });
+    assert.equal(rick.shown, 2, "author filter spans both sections");
+    const none = mp.filterMapsSections({ saved, vgmaps, query: "zzz" });
+    assert.equal(none.shown, 0);
+    assert.equal(none.countText, "0 of 5 maps");
+    assert.equal(
+      mp.filterMapsSections({ saved: [], vgmaps: [{ mapName: "A" }], query: "a" }).countText,
+      "1 of 1 map",
+    );
+  }
+
+  // Staged loading (#56): search 33% → list 66%, slow at 6s, timeout at 20s.
+  {
+    const s1 = mp.mapsLoadStage("search", { elapsedMs: 0 });
+    assert.equal(s1.ratio, 0.33);
+    assert.equal(s1.text, "Finding the game on VGMaps…");
+    assert.equal(s1.slow, false);
+    const s2 = mp.mapsLoadStage("list", { gameTitle: "Legend of Zelda, The: ALttP", elapsedMs: 1000 });
+    assert.equal(s2.ratio, 0.66);
+    assert.equal(s2.text, "Found Legend of Zelda, The: ALttP. Reading its map list…");
+    assert.equal(mp.mapsLoadStage("search", { elapsedMs: mp.MAPS_SLOW_MS - 1 }).slow, false);
+    assert.equal(mp.mapsLoadStage("search", { elapsedMs: mp.MAPS_SLOW_MS }).slow, true, "slow at 6s");
+    assert.equal(mp.mapsLoadStage("list", { elapsedMs: mp.MAPS_TIMEOUT_MS - 1 }).timedOut, false);
+    assert.equal(mp.mapsLoadStage("list", { elapsedMs: mp.MAPS_TIMEOUT_MS }).timedOut, true, "timeout at 20s");
+    assert.equal(mp.MAPS_SLOW_MS, 6000);
+    assert.equal(mp.MAPS_TIMEOUT_MS, 20000);
+  }
+
+  // Ambiguity rule (#56): auto-resolve only when exact/unique, else "Which game?".
+  {
+    const alttpSnes = { title: "Legend of Zelda, The: A Link to the Past", platform: "SNES", url: "u:alttp-snes" };
+    const alttpGba = { title: "Legend of Zelda, The: A Link to the Past", platform: "GBA", url: "u:alttp-gba" };
+    const zelda1 = { title: "Legend of Zelda, The", platform: "NES", url: "u:z1" };
+    const zelda2 = { title: "Zelda II: The Adventure of Link", platform: "NES", url: "u:z2" };
+    const ct = { title: "Chrono Trigger", platform: "SNES", url: "u:ct" };
+    const ctDs = { title: "Chrono Trigger", platform: "DS", url: "u:ct-ds" };
+
+    assert.deepEqual(mp.resolveMapsGame("Chrono Trigger", "SNES", [ct]), { type: "resolved", entry: ct });
+    assert.deepEqual(
+      mp.resolveMapsGame("The Legend of Zelda: A Link to the Past", "SNES", [alttpSnes, alttpGba, zelda1]),
+      { type: "resolved", entry: alttpSnes },
+      "several exact titles: the one on the active platform wins",
+    );
+    assert.deepEqual(
+      mp.resolveMapsGame("Chrono Trigger", "", [ct, ctDs]),
+      { type: "pick", options: [ct, ctDs] },
+      "exact title on two consoles with no platform asks",
+    );
+    assert.deepEqual(
+      mp.resolveMapsGame("Zelda", "", [zelda1, zelda2, alttpSnes]),
+      { type: "pick", options: [zelda1, zelda2, alttpSnes] },
+      "similar titles with no exact match ask Which game?",
+    );
+    assert.deepEqual(
+      mp.resolveMapsGame("Zelda", "SNES", [zelda1, zelda2, alttpSnes]),
+      { type: "pick", options: [zelda1, zelda2, alttpSnes] },
+      "a lone fuzzy match on the active platform still asks (only exact/unique resolves)",
+    );
+    assert.deepEqual(
+      mp.resolveMapsGame("Zelda Adventure", "NES", [zelda2]),
+      { type: "resolved", entry: zelda2 },
+      "a single result resolves",
+    );
+    assert.deepEqual(mp.resolveMapsGame("Nothing", "SNES", []), { type: "none" });
+    const many = Array.from({ length: 9 }, (_, i) => ({ title: `Mario ${i}`, platform: "NES", url: `u:m${i}` }));
+    const picked = mp.resolveMapsGame("Mario", "NES", many);
+    assert.equal(picked.type, "pick");
+    assert.equal(picked.type === "pick" && picked.options.length, mp.MAPS_PICK_MAX, "Which game? lists at most 6");
+    assert.equal(mp.mapsChoiceKey("Chrono Trigger", "SNES"), mp.mapsChoiceKey("chrono  trigger", "snes"));
+    // A list failure on a remembered game: 4xx means the page is gone, forget the choice.
+    assert.deepEqual(mp.mapsListFailure(400), { reason: "missing", forgetChoice: true });
+    assert.deepEqual(mp.mapsListFailure(404), { reason: "missing", forgetChoice: true });
+    assert.deepEqual(mp.mapsListFailure(502), { reason: "unreachable", forgetChoice: false });
+    assert.deepEqual(mp.mapsListFailure(null), { reason: "unreachable", forgetChoice: false }, "network / timeout keeps it");
+    assert.notEqual(mp.mapsChoiceKey("Chrono Trigger", "SNES"), mp.mapsChoiceKey("Chrono Trigger", "DS"));
+  }
 
   // 30 MB limit and progress formatting/ratio.
   assert.equal(mp.isMapOverLimit({ fileSizeBytes: 30 * 1024 * 1024 }), false, "exactly 30 MB allowed");
@@ -5271,6 +5371,10 @@ if (!canRunTsChecks) {
   assert.equal(mp.formatDownloadProgressText(null), "Downloading…");
   assert.equal(mp.downloadProgressRatio({ loaded: 50, total: 100 }), 0.5);
   assert.equal(mp.downloadProgressRatio({ loaded: 200, total: 100 }), 1);
+  assert.equal(mp.formatSavingText({ loaded: 43, total: 100 }), "Saving 43%");
+  assert.equal(mp.formatSavingText({ loaded: 999, total: 100 }), "Saving 100%");
+  assert.equal(mp.formatSavingText({ loaded: 5, total: null }), "Saving…");
+  assert.equal(mp.formatSavingText(null), "Saving…");
 
   // Back/forward history: Back closes MapViewer first, then MapsPanel; split chat entries passthrough.
   assert.deepEqual(
@@ -5343,6 +5447,77 @@ if (!canRunTsChecks) {
     { type: "none" },
     "Leftover gggMaps entry when closed is a no-op",
   );
+
+  // History (#56): panel → picker → viewer, Back pops exactly one step.
+  {
+    const base = { panelOpen: true, panelDepth: 2, viewerDepth: 0, pickerDepth: 3 };
+    assert.deepEqual(
+      mp.mapsPopAction({
+        ...base,
+        pickerOpen: true,
+        viewerOpen: false,
+        depth: 2,
+        prevDepth: 3,
+        left: { gggMaps: "picker" },
+        landing: { gggMaps: "panel" },
+      }),
+      { type: "close-picker" },
+      "Back from the picker returns to the list",
+    );
+    assert.deepEqual(
+      mp.mapsPopAction({
+        ...base,
+        pickerOpen: true,
+        viewerOpen: false,
+        depth: 1,
+        prevDepth: 3,
+        left: { gggMaps: "picker" },
+        landing: null,
+      }),
+      { type: "close-panel" },
+      "multi-step Back below the panel closes picker and panel",
+    );
+    assert.deepEqual(
+      mp.mapsPopAction({
+        ...base,
+        pickerOpen: true,
+        viewerOpen: false,
+        depth: 4,
+        prevDepth: 3,
+        left: { gggMaps: "picker" },
+        landing: { gggMaps: "viewer" },
+      }),
+      { type: "none" },
+      "Forward never closes anything",
+    );
+    assert.deepEqual(
+      mp.mapsPopAction({
+        ...base,
+        pickerOpen: false,
+        viewerOpen: true,
+        viewerDepth: 3,
+        depth: 2,
+        prevDepth: 3,
+        left: { gggMaps: "viewer" },
+        landing: { gggMaps: "panel" },
+      }),
+      { type: "close-viewer" },
+      "Back from the viewer returns to the list (one step)",
+    );
+    assert.deepEqual(
+      mp.mapsPopAction({
+        ...base,
+        pickerOpen: false,
+        viewerOpen: false,
+        depth: 1,
+        prevDepth: 2,
+        left: { gggMaps: "panel" },
+        landing: null,
+      }),
+      { type: "close-panel" },
+      "Back from the list returns to chat",
+    );
+  }
 
   // restoreSavedMap revives removed synced tombstone and avoids duplicates.
   const baseMap = sm.buildSavedMap({

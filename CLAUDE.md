@@ -523,7 +523,18 @@ do not sync to the cloud or use Storage uploads.
   missing). `openMap` returns `unlisted` when a map is neither cached nor on its game's list;
   `isMapListed` flags saved maps missing from the current list. Binaries never go to Supabase.
   `app/chat/maps-panel.tsx` and `app/chat/map-viewer.tsx` implement the mutually exclusive
-  side pane and modal dual-layer canvas viewer. Viewer assets and object URLs are released
+  side pane and modal dual-layer canvas viewer. **Maps v2 (#56):** one list, no tabs:
+  "Saved on this device" then "On VGMaps" (game auto-resolved by `resolveMapsGame` in
+  `lib/maps-panel.js`, else a "Which game?" list; choice remembered in
+  `gg:maps-game-choice`; "Wrong game?" opens an in-panel picker with its own history entry
+  `gggMaps: "picker"`). Staged loading follows the real search → list calls
+  (`mapsLoadStage`, slow notice + Cancel at 6s, timeout at 20s), filter covers both sections
+  (`filterMapsSections`, session-only per game). Entry points: labelled "Maps N" game-card
+  button, composer "+" menu row, sticky mini-header button. Saves run page-level
+  (`saveMapFromViewer` in `page.tsx`, `mapSaves` state) so Back/close never stops one; the
+  page toast renders inside the viewer `<dialog>` while it is open. Rows open the viewer
+  (Save lives there); unsaved maps keep zoom/offset per session. ≤600px the panel is a
+  full-screen sheet. Viewer assets and object URLs are released
   on map change/close; saved image binaries remain device-local. The Maps pane works signed
   out; signed-in users sync metadata only, and a missing `saved_maps` table degrades quietly.
   Parser regression fixtures live in `scripts/check.mjs`. Plan:

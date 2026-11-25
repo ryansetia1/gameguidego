@@ -26,6 +26,10 @@ type Props = {
   onToggleSkipGuide?: () => void;
   onToggleSupplementGuide?: () => void;
   onToggleKnowledgeOnly?: () => void;
+  /** Opens the Maps panel; set only while a game is active. */
+  onOpenMaps?: () => void;
+  /** Saved maps for the active game, shown as "Maps (N)". */
+  mapsCount?: number;
   onTranscript: (text: string) => void;
   onListeningChange?: (listening: boolean) => void;
   onSelectImages: (files: FileList | null) => void;
@@ -82,6 +86,8 @@ export function ComposerExtras({
   onToggleSkipGuide,
   onToggleSupplementGuide,
   onToggleKnowledgeOnly,
+  onOpenMaps,
+  mapsCount = 0,
   onTranscript,
   onListeningChange,
   onSelectImages,
@@ -215,6 +221,21 @@ export function ComposerExtras({
               {voiceSupported && (
                 <button type="button" role="menuitem" onClick={handleVoiceClick}>
                   Voice input
+                </button>
+              )}
+              {onOpenMaps && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setMenuView("main");
+                    // Focus "+" first so the panel returns focus here when it closes.
+                    triggerRef.current?.focus();
+                    onOpenMaps();
+                  }}
+                >
+                  Maps{mapsCount > 0 ? ` (${mapsCount})` : ""}
                 </button>
               )}
               {showGuideRetrievalToggles && (

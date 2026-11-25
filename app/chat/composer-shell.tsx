@@ -21,6 +21,9 @@ export type PendingImage = {
 
 export type ComposerShellProps = {
   started: boolean;
+  /** Opens the Maps panel from the "+" menu; set only while a game is active. */
+  onOpenMaps?: () => void;
+  mapsCount?: number;
   temporary: boolean;
   spoilerMajor: boolean;
   inlineEdit: boolean;
@@ -66,6 +69,8 @@ export type ComposerShellProps = {
 
 export function ComposerShell({
   started,
+  onOpenMaps,
+  mapsCount,
   temporary,
   spoilerMajor,
   inlineEdit,
@@ -276,6 +281,8 @@ export function ComposerShell({
             onToggleSkipGuide={onToggleSkipGuide}
             onToggleSupplementGuide={onToggleSupplementGuide}
             onToggleKnowledgeOnly={onToggleKnowledgeOnly}
+            onOpenMaps={onOpenMaps}
+            mapsCount={mapsCount}
             onListeningChange={onVoiceListeningChange}
             onTranscript={onVoiceTranscript}
             onSelectImages={(files) => void onSelectImages(files)}
