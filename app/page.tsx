@@ -3610,6 +3610,7 @@ export default function Home() {
         onSaveNewGame={() => void saveNewGame()}
         onGuideCommitted={handleGuideCommitted}
         playing={user ? rlogPlaying : null}
+        showPlayingOnly={isMounted && homeMode && !hasRecent && !started}
         onOpenPlaying={(g) => guardUnsavedSetup(() => openPlayingGame(g))}
       />
 

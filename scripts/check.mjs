@@ -5780,8 +5780,8 @@ if (!canRunTsChecks) {
     { id: "s3", chapter_id: "gone", title: "c", done: true },
   ];
   const g = groupChecklist(chapters, items);
-  assert.deepEqual(g.map((x) => [x.id, x.title, x.done, x.total]), [["general", "General", 1, 1], ["c1", "Act 1", 1, 1], ["c2", "General", 0, 1]]);
-  assert.equal(firstOpenGroup(g), "c2");
+  assert.deepEqual(g.map((x) => [x.id, x.title, x.done, x.total]), [["general", "General", 1, 2], ["c1", "Act 1", 1, 1]], "orphans + untitled share one General");
+  assert.equal(firstOpenGroup(g), "general");
   assert.equal(firstOpenGroup(groupChecklist(chapters, items.map((s) => ({ ...s, done: true })))), null);
 }
 

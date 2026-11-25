@@ -90,6 +90,8 @@ export type HomeSetupProps = {
   onGuideCommitted?: (info: { label: string; updated?: boolean }) => void;
   /** RLog "playing" games (#71); null/empty renders nothing. */
   playing?: RlogGame[] | null;
+  /** Home with no saved rooms: render the playing strip on its own. */
+  showPlayingOnly?: boolean;
   onOpenPlaying?: (game: RlogGame) => void;
 };
 
@@ -139,6 +141,7 @@ export function HomeSetup({
   onSaveNewGame,
   onGuideCommitted,
   playing = null,
+  showPlayingOnly = false,
   onOpenPlaying,
 }: HomeSetupProps) {
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
@@ -152,35 +155,9 @@ export function HomeSetup({
     : savedGames;
   const recentGames = isSearching ? filteredGames : savedGames.slice(0, quickLimit);
   const moreGamesCount = isSearching ? 0 : savedGames.length - recentGames.length;
-  return (
-    <>
-      {showHero && (
-        <div
-          className={`hero-shell${newGameOpen && hasRecent ? " hero-shell--exit" : ""}`}
-          aria-hidden={newGameOpen && hasRecent}
-        >
-          <section className={`hero${hasRecent ? " hero--quick" : ""}`}>
-            <p className="eyebrow">
-              Companion for <RotatingWord />
-            </p>
-            <RotatingHeadline />
-            {!hasRecent && (
-              <p className="intro">
-                Say the game and ask away. Add a walkthrough you trust and answers come straight from it.
-              </p>
-            )}
-          </section>
-        </div>
-      )}
-
-      {showCarousel && (
-        <section
-          className={`quick-home${newGameOpen ? " quick-home--form-open" : ""}`}
-          aria-label="Recent games"
-          ref={topRef}
-        >
-          {playing && playing.length > 0 && onOpenPlaying && (
-            <>
+  const playingStrip =
+    playing && playing.length > 0 && onOpenPlaying ? (
+      <>
               <div className="quick-head">
                 <h2>Currently playing</h2>
               </div>
@@ -212,7 +189,42 @@ export function HomeSetup({
                 ))}
               </div>
             </>
-          )}
+    ) : null;
+  return (
+    <>
+      {showHero && (
+        <div
+          className={`hero-shell${newGameOpen && hasRecent ? " hero-shell--exit" : ""}`}
+          aria-hidden={newGameOpen && hasRecent}
+        >
+          <section className={`hero${hasRecent ? " hero--quick" : ""}`}>
+            <p className="eyebrow">
+              Companion for <RotatingWord />
+            </p>
+            <RotatingHeadline />
+            {!hasRecent && (
+              <p className="intro">
+                Say the game and ask away. Add a walkthrough you trust and answers come straight from it.
+              </p>
+            )}
+          </section>
+        </div>
+      )}
+
+      {showPlayingOnly && playingStrip && (
+        // Matched RLog user with no saved rooms yet: the strip alone, form stays below.
+        <section className="quick-home quick-home--form-open" aria-label="Currently playing">
+          {playingStrip}
+        </section>
+      )}
+
+      {showCarousel && (
+        <section
+          className={`quick-home${newGameOpen ? " quick-home--form-open" : ""}`}
+          aria-label="Recent games"
+          ref={topRef}
+        >
+          {playingStrip}
           <div className="quick-head">
             <h2>Jump back in</h2>
           </div>
