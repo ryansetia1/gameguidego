@@ -15,6 +15,8 @@ import { MessageList } from "./chat/message-list";
 import { MapsPanel } from "./chat/maps-panel";
 import { MapViewer, type MapViewerItem } from "./chat/map-viewer";
 import { SavedAnswersPanel } from "./chat/saved-answers-panel";
+import { ChecklistPanel, ChecklistStepBanner } from "./chat/checklist-panel";
+import { type RlogGame, useRlogChecklist, useRlogPlaying } from "./chat/use-rlog";
 import { type SavedAnswer, useSavedAnswers } from "./chat/use-saved-answers";
 import { type MapDownloadProgress, type SavedMap, useSavedMaps } from "./chat/use-saved-maps";
 import { TopicList } from "./chat/topic-list";
@@ -54,7 +56,8 @@ import { HltbRow } from "./hltb-row";
 import { type SteamGame } from "./steam-library";
 import { ProfileMenu, type NavMenu } from "./profile-menu";
 import { Lightbox } from "./lightbox";
-import { tgdbPlatformToLabel } from "@/lib/platforms.js";
+import { platformLabelFor, tgdbPlatformToLabel } from "@/lib/platforms.js";
+import { IGDB_ID_OFFSET } from "@/lib/games.js";
 import {
   effectiveSpoilerPrefs,
   loadGameSpoilerPrefs,
@@ -176,11 +179,12 @@ let historyDepth =
 
 // The current entry's state (what a popstate "left") and the depth of the saved / maps
 // pane entries; they feed savedPopAction (lib/saved-history.js) and mapsPopAction (lib/maps-panel.js).
-type AppHistoryEntry = (SavedEntry & MapsHistoryEntry) | null;
+type AppHistoryEntry = (SavedEntry & MapsHistoryEntry & { gggChecklist?: boolean }) | null;
 let currentEntry: AppHistoryEntry =
   typeof window === "undefined" ? null : (window.history.state as AppHistoryEntry);
 let savedListDepth = 0;
 let mapsPanelDepth = 0;
+let checklistDepth = 0;
 let mapsPickerDepth = 0;
 let mapViewerDepth = 0;
 // Depth of the entry a swallowed back press must step forward onto (see onPopState).
@@ -326,6 +330,11 @@ export default function Home() {
   const [savedPaneGame, setSavedPaneGame] = useState("");
   const [mapsPanelOpen, setMapsPanelOpen] = useState(false);
   const mapsPanelOpenRef = useRef(false);
+  // RLog checklist pane (#71): one entry { gggChecklist: true }; mutually exclusive with
+  // Saved answers and Maps. rlogStep = deep-link `step=` id for the one-tap banner.
+  const [checklistOpen, setChecklistOpen] = useState(false);
+  const checklistOpenRef = useRef(false);
+  const [rlogStep, setRlogStep] = useState<string | null>(null);
   const [mapsPaneGame, setMapsPaneGame] = useState("");
   const [mapsPanePlatform, setMapsPanePlatform] = useState("");
   const [mapsCacheVersion, setMapsCacheVersion] = useState(0);
@@ -536,6 +545,16 @@ export default function Home() {
   const coverEnabled = Boolean(user);
   const savedAnswers = useSavedAnswers(user);
   const savedMaps = useSavedMaps(user);
+  const rlogPlaying = useRlogPlaying(user?.id ?? null);
+  const checklist = useRlogChecklist({
+    userId: user?.id ?? null,
+    playing: rlogPlaying,
+    game,
+    platform,
+    catalogGameId,
+    online: savedAnswers.online,
+    onError: setToast,
+  });
 
   const {
     guideMeta,
@@ -661,6 +680,11 @@ export default function Home() {
     if (viewingMapRef.current) closeMapViewerState();
   }, [closeMapViewerState, closeMapsPickerState]);
 
+  const closeChecklistState = useCallback(() => {
+    checklistOpenRef.current = false;
+    setChecklistOpen(false);
+  }, []);
+
   useEffect(() => {
     /** Pane-aware back/forward; decision tables live in lib/maps-panel.js & lib/saved-history.js. */
     function onPopState(event: PopStateEvent) {
@@ -701,6 +725,16 @@ export default function Home() {
       const left = currentEntry;
       historyDepth = depth;
       currentEntry = state;
+
+      // Checklist pane: back below its entry closes it. With it closed, forward onto a
+      // leftover entry is a no-op; stepping back off one is an ordinary back.
+      const goingForward = depth > prevDepth;
+      if (checklistOpenRef.current) {
+        if (!goingForward && (depth < checklistDepth || left?.gggChecklist)) {
+          closeChecklistState();
+          return;
+        }
+      } else if (state?.gggChecklist && goingForward) return;
 
       const mapsAction = mapsPopAction({
         panelOpen: mapsPanelOpenRef.current,
@@ -846,6 +880,7 @@ export default function Home() {
     closeMapViewerState,
     closeMapsPickerState,
     closeMapsState,
+    closeChecklistState,
   ]);
 
   // Give the browser a history entry to pop when a chat thread is showing (including
@@ -1003,33 +1038,9 @@ export default function Home() {
     const link = parseDeepLink(window.location.search);
     if (link) {
       window.history.replaceState(window.history.state, "", stripDeepLinkParams(window.location.href));
-      const roomKey = gameRoomKey(link.game, link.platform);
-      const hit =
-        (link.catalogGameId != null &&
-          chats.find((row) => row.catalog_game_id === link.catalogGameId)) ||
-        chats.find((row) => gameRoomKey(row.game, row.platform) === roomKey);
-      jumpRef.current = true;
-      if (hit) {
-        applyRoomContext(hit);
-      } else {
-        setGame(link.game);
-        setPlatform(link.platform);
-        setCatalogGameId(link.catalogGameId);
-        setPreferredUrls([]);
-        setCover("");
-        setPendingCover(null);
-        setReleaseYear("");
-        conversationGame.current = link.game;
-        conversationPlatform.current = link.platform;
-      }
-      clearPendingImages();
-      setActiveChatId(null);
-      setMessages([]);
-      setEditingGame(false);
+      enterLinkedRoom(link);
       setInput(buildDeepLinkQuestion(link, voiceLangFromUserMetadata(user?.user_metadata) || loadVoiceLang()));
-      setError("");
-      syncGameView("thread");
-      setChatUrl(null);
+      setRlogStep(link.step || null);
       sessionHydratedRef.current = true;
       return;
     }
@@ -1665,6 +1676,61 @@ export default function Home() {
     setGameSpoilerMajor(loadTopicSpoilerPrefs(chat, chat.game).major);
   }
 
+  /** Saved room for a linked game (IGDB id first, then name + platform). */
+  function findLinkedRoom(target: { game: string; platform: string; catalogGameId: number | null }) {
+    const roomKey = gameRoomKey(target.game, target.platform);
+    return (
+      (target.catalogGameId != null && chats.find((row) => row.catalog_game_id === target.catalogGameId)) ||
+      chats.find((row) => gameRoomKey(row.game, row.platform) === roomKey)
+    );
+  }
+
+  /** Open (or start, unsaved) the room for a linked game in the thread view (#67/#71). */
+  function enterLinkedRoom(target: { game: string; platform: string; catalogGameId: number | null; cover?: string }) {
+    const hit = findLinkedRoom(target);
+    jumpRef.current = true;
+    if (hit) {
+      applyRoomContext(hit);
+    } else {
+      setGame(target.game);
+      setPlatform(target.platform);
+      setCatalogGameId(target.catalogGameId);
+      setPreferredUrls([]);
+      if (cover.startsWith("blob:")) URL.revokeObjectURL(cover);
+      setCover(coverEnabled ? (target.cover ?? "") : "");
+      setPendingCover(null);
+      setReleaseYear("");
+      conversationGame.current = target.game;
+      conversationPlatform.current = target.platform;
+    }
+    clearPendingImages();
+    setActiveChatId(null);
+    setMessages([]);
+    setEditingGame(false);
+    setInput("");
+    setError("");
+    syncGameView("thread");
+    setChatUrl(null);
+  }
+
+  /** Home "Currently playing" card: its saved room, else a new one with RLog's cover. */
+  function openPlayingGame(g: RlogGame) {
+    const target = {
+      game: g.title,
+      platform: platformLabelFor(g.platform) || g.platform,
+      catalogGameId: g.igdb_id ? IGDB_ID_OFFSET + g.igdb_id : null,
+      cover: g.cover,
+    };
+    const hit = findLinkedRoom(target);
+    if (hit) {
+      openGameRoom(hit);
+      return;
+    }
+    clearActiveTurnUi();
+    setTemporary(false);
+    enterLinkedRoom(target);
+  }
+
   function openGameRoom(chat: Chat) {
     clearActiveTurnUi();
     jumpRef.current = true;
@@ -2061,8 +2127,11 @@ export default function Home() {
     setMenuOpenId(null);
     if (savedOpenRef.current) return;
     // Mutual exclusivity: never show both Saved answers and Maps panels at once.
-    const replacingMaps = mapsPanelOpenRef.current && currentEntry?.gggMaps === "panel";
+    const replacingMaps =
+      (mapsPanelOpenRef.current && currentEntry?.gggMaps === "panel") ||
+      (checklistOpenRef.current && Boolean(currentEntry?.gggChecklist));
     if (mapsPanelOpenRef.current) closeMapsState();
+    if (checklistOpenRef.current) closeChecklistState();
     // From the toast's View: don't open under the sidebar/libraries (like openSavedLibrary).
     setSidebarOpen(false);
     setLibraryOpen(false);
@@ -2083,8 +2152,11 @@ export default function Home() {
     setMenuOpenId(null);
     if (mapsPanelOpenRef.current) return;
     // Mutual exclusivity: never show both Saved answers and Maps panels at once.
-    const replacingSaved = savedOpenRef.current && currentEntry?.gggSaved === "list";
+    const replacingSaved =
+      (savedOpenRef.current && currentEntry?.gggSaved === "list") ||
+      (checklistOpenRef.current && Boolean(currentEntry?.gggChecklist));
     if (savedOpenRef.current) closeSavedState();
+    if (checklistOpenRef.current) closeChecklistState();
     setSidebarOpen(false);
     setLibraryOpen(false);
     setSteamLibraryOpen(false);
@@ -2099,6 +2171,35 @@ export default function Home() {
     }
     mapsPanelDepth = historyDepth;
   }
+
+  function openChecklist() {
+    setMenuOpenId(null);
+    if (checklistOpenRef.current) return;
+    const replacing =
+      (savedOpenRef.current && currentEntry?.gggSaved === "list") ||
+      (mapsPanelOpenRef.current && currentEntry?.gggMaps === "panel");
+    if (savedOpenRef.current) closeSavedState();
+    if (mapsPanelOpenRef.current) closeMapsState();
+    setSidebarOpen(false);
+    setLibraryOpen(false);
+    setSteamLibraryOpen(false);
+    checklistOpenRef.current = true;
+    setChecklistOpen(true);
+    if (replacing) replaceAppHistory({ gggOverlay: true, gggChecklist: true });
+    else pushAppHistory({ gggOverlay: true, gggChecklist: true });
+    checklistDepth = historyDepth;
+  }
+
+  /** X / Esc: pop our entry when it is on top (popstate closes); else close in place. */
+  const closeChecklist = useCallback(() => {
+    if (currentEntry?.gggChecklist && historyDepth >= checklistDepth) window.history.back();
+    else closeChecklistState();
+  }, [closeChecklistState]);
+
+  // The match went away (or the room changed to an unmatched game): drop the pane quietly.
+  useEffect(() => {
+    if (checklistOpen && !checklist.available && checklist.status !== "loading") closeChecklist();
+  }, [checklistOpen, checklist.available, checklist.status, closeChecklist]);
 
   /** X / Esc: close the whole panel, popping its entries (panel, picker, viewer) at once. */
   function closeMapsPanel() {
@@ -2541,6 +2642,8 @@ export default function Home() {
     // pane showing "gone". Leftover pane history entries are no-ops.
     if (savedOpenRef.current) closeSavedState();
     if (mapsPanelOpenRef.current || viewingMapRef.current) closeMapsState();
+    if (checklistOpenRef.current) closeChecklistState();
+    setRlogStep(null);
     pendingMapUndoGenerationRef.current += 1;
     pendingMapUndoRef.current = null;
     setToastAction(null);
@@ -3154,6 +3257,8 @@ export default function Home() {
       onOpenSaved={game.trim() ? openSavedAnswers : undefined}
       savedMapsCount={savedMapsCount}
       onOpenMaps={game.trim() ? openMapsPanel : undefined}
+      checklistProgress={checklist.available ? checklist.progress : null}
+      onOpenChecklist={checklist.available ? openChecklist : undefined}
     />
   );
 
@@ -3235,7 +3340,7 @@ export default function Home() {
   return (
     // Two-panel shell: the open side pane (saved answers or maps) becomes a second grid
     // column at the split breakpoint (CSS only); below it the pane is a fixed overlay.
-    <div className={`app-split${savedOpen || mapsPanelOpen ? " has-pane" : ""}`}>
+    <div className={`app-split${savedOpen || mapsPanelOpen || checklistOpen ? " has-pane" : ""}`}>
     <main>
       <nav className="nav" aria-label="Brand">
         <div className="nav-left">
@@ -3504,6 +3609,9 @@ export default function Home() {
         onSaveGameMeta={() => void saveGameMeta()}
         onSaveNewGame={() => void saveNewGame()}
         onGuideCommitted={handleGuideCommitted}
+        playing={user ? rlogPlaying : null}
+        showPlayingOnly={isMounted && homeMode && !hasRecent && !started}
+        onOpenPlaying={(g) => guardUnsavedSetup(() => openPlayingGame(g))}
       />
 
       {showTopicList ? (
@@ -3524,6 +3632,15 @@ export default function Home() {
       ) : null}
 
       {showThread ? renderActiveGameCard("thread") : null}
+      {showThread && rlogStep ? (
+        <ChecklistStepBanner
+          key={rlogStep}
+          store={checklist}
+          stepId={rlogStep}
+          online={savedAnswers.online}
+          onDismiss={() => setRlogStep(null)}
+        />
+      ) : null}
 
       {showThread ? (
         <MessageList
@@ -3756,6 +3873,16 @@ export default function Home() {
           onBack={backToSavedList}
           onClose={closeSavedPane}
           onRemove={removeSavedAnswer}
+        />
+      )}
+      {checklistOpen && (
+        <ChecklistPanel
+          game={game}
+          store={checklist}
+          online={savedAnswers.online}
+          focusStepId={rlogStep}
+          inert={sidePaneInert}
+          onClose={closeChecklist}
         />
       )}
       {mapsPanelOpen && (

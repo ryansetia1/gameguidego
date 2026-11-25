@@ -32,7 +32,7 @@ function subscribeSplit(fn: () => void) {
   return () => mq.removeEventListener("change", fn);
 }
 
-function useSplitLayout() {
+export function useSplitLayout() {
   return useSyncExternalStore(
     subscribeSplit,
     () => window.matchMedia(SPLIT_QUERY).matches,
@@ -41,11 +41,11 @@ function useSplitLayout() {
 }
 
 /** Keep Tab inside the full-screen dialog (narrow layout only). */
-function trapTab(event: KeyboardEvent<HTMLElement>) {
+export function trapTab(event: KeyboardEvent<HTMLElement>) {
   if (event.key !== "Tab") return;
   const focusables = Array.from(
     event.currentTarget.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+      'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
     ),
   );
   if (focusables.length === 0) return;

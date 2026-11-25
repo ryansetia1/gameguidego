@@ -11,6 +11,7 @@ import { IconGrid, IconPlus, IconX } from "../icons";
 import { guideUrlsSummary } from "@/lib/guide-urls.js";
 import type { Chat } from "@/lib/supabase";
 import { CoverThumb, displayPlatform } from "./cover-thumb";
+import type { RlogGame } from "./use-rlog";
 import { RotatingHeadline, RotatingWord, SteamIcon } from "./hero-marketing";
 import { SpoilerToggle } from "./spoiler-toggle";
 
@@ -87,6 +88,11 @@ export type HomeSetupProps = {
   onSaveGameMeta: () => void;
   onSaveNewGame: () => void;
   onGuideCommitted?: (info: { label: string; updated?: boolean }) => void;
+  /** RLog "playing" games (#71); null/empty renders nothing. */
+  playing?: RlogGame[] | null;
+  /** Home with no saved rooms: render the playing strip on its own. */
+  showPlayingOnly?: boolean;
+  onOpenPlaying?: (game: RlogGame) => void;
 };
 
 export function HomeSetup({
@@ -134,6 +140,9 @@ export function HomeSetup({
   onSaveGameMeta,
   onSaveNewGame,
   onGuideCommitted,
+  playing = null,
+  showPlayingOnly = false,
+  onOpenPlaying,
 }: HomeSetupProps) {
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
   const [quickSearch, setQuickSearch] = useState("");
@@ -146,6 +155,41 @@ export function HomeSetup({
     : savedGames;
   const recentGames = isSearching ? filteredGames : savedGames.slice(0, quickLimit);
   const moreGamesCount = isSearching ? 0 : savedGames.length - recentGames.length;
+  const playingStrip =
+    playing && playing.length > 0 && onOpenPlaying ? (
+      <>
+              <div className="quick-head">
+                <h2>Currently playing</h2>
+              </div>
+              <div className="quick-rail">
+                {playing.map((g) => (
+                  <button
+                    key={g.rlog_item_id}
+                    type="button"
+                    className="quick-card"
+                    aria-label={
+                      g.progress.total > 0
+                        ? `${g.title}, ${g.progress.done} of ${g.progress.total} steps done`
+                        : g.title
+                    }
+                    onClick={() => onOpenPlaying(g)}
+                  >
+                    <CoverThumb cover={g.cover} name={g.title} className="cover-lg" />
+                    <span className="quick-card-meta">
+                      <strong>{g.title || "Untitled game"}</strong>
+                      {(g.platform || g.progress.total > 0) && (
+                        <small>
+                          {[g.platform, g.progress.total > 0 ? `${g.progress.done} / ${g.progress.total}` : ""]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </small>
+                      )}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+    ) : null;
   return (
     <>
       {showHero && (
@@ -167,12 +211,20 @@ export function HomeSetup({
         </div>
       )}
 
+      {showPlayingOnly && playingStrip && (
+        // Matched RLog user with no saved rooms yet: the strip alone, form stays below.
+        <section className="quick-home quick-home--form-open" aria-label="Currently playing">
+          {playingStrip}
+        </section>
+      )}
+
       {showCarousel && (
         <section
           className={`quick-home${newGameOpen ? " quick-home--form-open" : ""}`}
           aria-label="Recent games"
           ref={topRef}
         >
+          {playingStrip}
           <div className="quick-head">
             <h2>Jump back in</h2>
           </div>
